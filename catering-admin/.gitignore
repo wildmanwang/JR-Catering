@@ -1,0 +1,197 @@
+# ==================== 依赖和包管理 ====================
+# Node.js 依赖
+node_modules/
+.pnp
+.pnp.js
+
+# 包管理器锁文件（根据团队约定决定是否提交）
+# 注意：pnpm-lock.yaml 通常应该提交到版本控制，以保持依赖一致性
+# pnpm-lock.yaml  # 如果团队决定不提交锁文件，取消注释此行
+# package-lock.json  # npm
+# yarn.lock  # yarn
+
+# ==================== 构建输出 ====================
+# 构建产物
+dist/
+dist-pro/
+dist-ssr/
+build/
+.output/
+.nuxt/
+.vite/
+.cache/
+
+# ==================== 环境变量和配置 ====================
+# 环境变量文件（包含敏感信息）
+.env
+.env.local
+.env.*.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.production
+
+# 本地配置文件
+*.local
+config.local.*
+
+# ==================== IDE 和编辑器 ====================
+# Visual Studio Code
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# JetBrains IDEs (WebStorm, IntelliJ IDEA)
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+.vim/
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# ==================== 操作系统文件 ====================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.directory
+.Trash-*
+
+# ==================== 日志和调试 ====================
+# 日志文件
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# 调试文件
+.vscode-test/
+*.pid
+*.seed
+*.pid.lock
+
+# ==================== 测试和覆盖率 ====================
+# 测试覆盖率报告
+coverage/
+*.lcov
+.nyc_output/
+.jest/
+
+# 测试结果
+test-results/
+playwright-report/
+playwright/.cache/
+
+# ==================== 临时文件 ====================
+# 临时文件
+tmp/
+temp/
+*.tmp
+*.temp
+*.swp
+*.swo
+*.bak
+*.backup
+*~
+
+# 备份文件
+*_bak.*
+*_backup.*
+*.bak
+*.backup
+
+# ==================== 缓存和临时数据 ====================
+# Vite 缓存
+.vite/
+node_modules/.vite/
+node_modules/.cache/
+
+# 其他缓存
+.cache/
+.parcel-cache/
+.eslintcache
+.stylelintcache
+*.tsbuildinfo
+
+# ==================== 构建工具 ====================
+# Rollup
+.rollup.cache/
+
+# Webpack
+.webpack/
+
+# Turbo
+.turbo/
+
+# ==================== 其他 ====================
+# 统计文件
+stats.html
+bundle-analyzer-report.html
+
+# 本地开发服务器
+.local
+
+# 压缩文件（如果不需要版本控制）
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+
+# 文档生成
+docs/.vuepress/dist/
+docs/.vitepress/dist/
+
+# 本地数据库（如果有）
+*.db
+*.sqlite
+*.sqlite3
+
+# 敏感文件
+*.pem
+*.key
+*.cert
+secrets.json
+secrets.yaml
+
+# 个人笔记和草稿
+notes/
+drafts/
+TODO.md
+NOTES.md

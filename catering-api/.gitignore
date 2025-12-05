@@ -1,0 +1,287 @@
+# ==================== Python ====================
+# Python 字节码文件
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Python 分发/打包
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# ==================== 虚拟环境 ====================
+# 虚拟环境目录
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+.ENV/
+virtualenv/
+.virtualenv/
+pipenv/
+.pipenv/
+
+# ==================== IDE 和编辑器 ====================
+# Visual Studio Code
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# JetBrains IDEs (PyCharm, IntelliJ IDEA)
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+.vim/
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# ==================== 环境变量和配置 ====================
+# 环境变量文件（包含敏感信息）
+.env
+.env.local
+.env.*.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.production
+.env.development
+.env.test
+
+# 本地配置文件
+config.local.*
+settings.local.*
+
+# ==================== 数据库文件 ====================
+# SQLite 数据库
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+
+# 数据库备份
+*.sql.bak
+*.dump
+*.backup
+
+# ==================== 日志文件 ====================
+# 日志目录（保留目录结构，但忽略日志文件）
+logs/*.log
+logs/*.txt
+!logs/.gitkeep
+
+# 应用日志
+*.log
+*.log.*
+
+# ==================== 临时文件和目录 ====================
+# 临时目录（保留目录结构，但忽略内容）
+temp/*
+!temp/.gitkeep
+tmp/*
+!tmp/.gitkeep
+
+# 临时文件
+*.tmp
+*.temp
+*.swp
+*.swo
+*.bak
+*.backup
+*~
+
+# 备份文件
+*_bak.*
+*_backup.*
+
+# ==================== 上传和静态文件 ====================
+# 用户上传的文件（保留目录结构，但忽略上传的文件）
+static/system/*/
+!static/system/.gitkeep
+!static/system/favicon.ico
+!static/system/logo.png
+
+# 临时上传文件
+uploads/temp/
+uploads/tmp/
+
+# ==================== Alembic 数据库迁移 ====================
+# Alembic 临时迁移文件（如果存在）
+alembic/versions/*.pyc
+alembic/versions/__pycache__/
+
+# 注意：
+# 1. alembic/versions/*.py 迁移文件通常应该提交到版本控制
+# 2. 如果需要忽略某些临时或测试迁移文件，可以在下面单独指定
+# 3. 例如：alembic/versions/temp_*.py 或 alembic/versions/test_*.py
+
+# ==================== 操作系统文件 ====================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.directory
+.Trash-*
+
+# ==================== 缓存和临时数据 ====================
+# Python 缓存
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# ==================== 文档和构建 ====================
+# Sphinx 文档
+docs/_build/
+docs/.doctrees/
+
+# MkDocs
+site/
+
+# ==================== 其他 ====================
+# 压缩文件（如果不需要版本控制）
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+
+# 敏感文件
+*.pem
+*.key
+*.cert
+*.p12
+*.pfx
+secrets.json
+secrets.yaml
+secrets.yml
+
+# 个人笔记和草稿
+notes/
+drafts/
+TODO.md
+NOTES.md
+
+# 数据文件（Excel、CSV 等临时数据文件）
+*.xlsx.bak
+*.csv.bak
+data/temp/
+data/tmp/
+
+# 脚本生成的临时文件
+scripts/temp/
+scripts/tmp/
+
+# 性能分析文件
+*.prof
+*.pstats
+
+# Celery（如果使用）
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath
+*.sage.py
+
+# Spyder
+.spyderproject
+.spyproject
+
+# Rope
+.ropeproject
+
+# mkdocs
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre
+.pyre/
+
+# pytype
+.pytype/
+
+# Cython
+cython_debug/
