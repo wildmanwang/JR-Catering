@@ -6,7 +6,7 @@ const props = defineProps({
     type: String,
     required: true,
     validator: (value) => {
-        const validValues = ['new', 'modify', 'delete', 'save', 'copy', 'batch', 'query', 'select', 'refresh', 'ok', 'cancel', 'import', 'export', 'print', 'setting', 'return', 'normal']
+        const validValues = ['new', 'newcontinue', 'modify', 'delete', 'save', 'copy', 'batch', 'query', 'select', 'refresh', 'ok', 'cancel', 'import', 'export', 'print', 'setting', 'return', 'normal']
         const isValid = validValues.includes(value.toLowerCase())
         if (!isValid) {
           throw new Error(`ButtonPre组件stype属性值${value}无效，应取以下值之一：${validValues.join(',')}`)
@@ -82,6 +82,7 @@ const props = defineProps({
 const emits = defineEmits(['click'])
 const btnMap = {
     "new": ["新增", new URL("@/assets/svgs/btn/btn-new.svg", import.meta.url).href, 'rgb(99, 161, 3)', 'rgb(255, 255, 255)', '1px solid rgb(99, 161, 3)'],
+    "newcontinue": ["繼續新增", new URL("@/assets/svgs/btn/btn-new.svg", import.meta.url).href, 'rgb(99, 161, 3)', 'rgb(255, 255, 255)', '1px solid rgb(99, 161, 3)'],
     "modify": ["修改", new URL("@/assets/svgs/btn/btn-modify.svg", import.meta.url).href, 'rgb(2, 125, 180)', 'rgb(255, 255, 255)', '1px solid rgb(2, 125, 180)'],
     "delete": ["删除", new URL("@/assets/svgs/btn/btn-delete.svg", import.meta.url).href, 'rgb(217, 0, 27)', 'rgb(255, 255, 255)', '1px solid rgb(217, 0, 27)'],
     "save": ["保存", new URL("@/assets/svgs/btn/btn-save.svg", import.meta.url).href, 'rgb(245, 154, 35)', 'rgb(255, 255, 255)', '1px solid rgb(245, 154, 35)'],

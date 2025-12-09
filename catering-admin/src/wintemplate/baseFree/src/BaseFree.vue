@@ -350,17 +350,11 @@ const convertFormSchema = (schema: FreeFormField[]): FormSchema[] => {
                 const sourceIndex = parseInt(event.dataTransfer!.getData('text/plain'))
                 if (sourceIndex !== targetIndex && sourceIndex >= 0 && targetIndex >= 0) {
                   const images_display = [...data[imageDisplayField]]
-                  if (images_display[1] === 'original') {
-                    images_display[1] = 'update'
-                  }
                   const [movedItem1] = images_display.splice(sourceIndex, 1)
                   images_display.splice(targetIndex, 0, movedItem1)
                   data[imageDisplayField] = images_display
 
                   const images_data = [...data[imageField]]
-                  if (images_data[1] === 'original') {
-                    images_data[1] = 'update'
-                  }
                   const [movedItem2] = images_data.splice(sourceIndex, 1)
                   images_data.splice(targetIndex, 0, movedItem2)
                   data[imageField] = images_data
@@ -515,15 +509,38 @@ const initFormData = async () => {
         const imageField = field.field
         const imageDisplayField = `${field.field}_display`
         if (formData[imageField] && Array.isArray(formData[imageField])) {
-          formData[imageDisplayField] = formData[imageField].map((img: any) => {
-            if (typeof img === 'string') {
+          // 编辑模式下，对图片进行排序并标记为 original（参考 Dish.vue 第537-540行）
+          if (props.mode === 'edit') {
+            // 排序图片（参考 Dish.vue 第537行）
+            formData[imageField].sort((a: string, b: string) => a.localeCompare(b))
+            // 提取图片路径（参考 Dish.vue 第538行：item.split('-')[1]）
+            formData[imageField] = formData[imageField].map((item: string) => {
+              if (item.includes('-')) {
+                return item.split('-')[1]
+              }
+              // 如果包含 '?'，提取前面的部分（移除已有标记）
+              if (item.includes('?')) {
+                return item.split('?')[0]
+              }
+              return item
+            })
+            // 设置显示字段（参考 Dish.vue 第539行）
+            formData[imageDisplayField] = [...formData[imageField]]
+            // 标记为 original（参考 Dish.vue 第540行）
+            formData[imageField] = formData[imageField].map((item: string) => `${item}?original`)
+          } else {
+            // 查看模式下，直接设置显示字段
+            formData[imageDisplayField] = formData[imageField].map((img: any) => {
+              if (typeof img === 'string') {
+                // 移除标记，只显示路径
+                return img.includes('?') ? img.split('?')[0] : img
+              }
+              if (Array.isArray(img) && img.length > 0) {
+                return img[0]
+              }
               return img
-            }
-            if (Array.isArray(img) && img.length > 0) {
-              return img[0]
-            }
-            return img
-          })
+            })
+          }
         }
       }
     })
@@ -597,6 +614,78 @@ watch(() => {
 
 // ==================== 方法 ====================
 /**
+ * 上传文件（参考 Dish.vue 的 uploadFile 函数）
+ */
+const uploadFile = async (file: FormData) => {
+  try {
+    const res = await fetch('/api/vadmin/system/upload/image/to/local', {
+      method: 'POST',
+      body: file,
+      headers: {
+        'Authorization': token.value || ''
+      }
+    })
+
+    if (!res.ok) {
+      throw new Error(`HTTP错误！状态：${res.status}`)
+    }
+
+    const data = await res.json()
+    return {
+      success: true,
+      message: '上传成功',
+      data: data
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : '未知的错误.'
+    return {
+      success: false,
+      message: msg
+    }
+  }
+}
+
+/**
+ * 处理图片上传（参考 Dish.vue 的 handleImageUpload 函数）
+ * 将图片字段中的数组格式（包含文件对象）转换为字符串格式（图片路径）
+ */
+const handleImageUpload = async (formData: any) => {
+  // 遍历所有图片字段
+  for (const field of props.formSchema) {
+    if (field.type === 'image') {
+      const imageField = field.field
+      const imageDisplayField = `${field.field}_display`
+      
+      // 检查字段是否存在且为数组
+      if (!formData[imageField] || !Array.isArray(formData[imageField])) {
+        continue
+      }
+      
+      // 处理每个图片项
+      for (let index = 0; index < formData[imageField].length; index++) {
+        const fileData = formData[imageField][index]
+        
+        // 如果是数组格式（包含文件对象），说明是未上传的图片，需要上传
+        if (Array.isArray(fileData)) {
+          const fileForm = new FormData()
+          fileForm.append('file', fileData[3].raw)
+          fileForm.append('path', 'system')
+          const res = await uploadFile(fileForm)
+          if (!res.success) {
+            throw new Error(`图片上传错误：${res.message}`)
+          }
+          // 转换为字符串格式：路径 + 操作类型（add/update/delete）
+          formData[imageField][index] = `${res.data.data.remote_path}?${fileData[1]}`
+          formData[imageDisplayField][index] = `${res.data.data.remote_path}?${fileData[1]}`
+        }
+        // 如果已经是字符串格式，保持不变
+        // 如果包含 ?delete 标记，保持原样（用于删除操作）
+      }
+    }
+  }
+}
+
+/**
  * 处理保存
  */
 const handleSave = async () => {
@@ -617,6 +706,16 @@ const handleSave = async () => {
   if (!valid) return
 
   let formData = await getFormData()
+  
+  // ==================== 处理图片字段上传 ====================
+  // 如果存在未上传的图片，则处理上传
+  try {
+    await handleImageUpload(formData)
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : '图片上传失败'
+    ElMessage.error(errorMessage)
+    return
+  }
   
   // ==================== 扩展点3：提交前的数据处理钩子 ====================
   if (props.beforeSubmit) {
