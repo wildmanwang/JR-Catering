@@ -147,6 +147,9 @@ const isViewMode = computed(() => props.mode === 'view')
 /** 是否显示保存按钮 */
 const showSaveButton = computed(() => !isViewMode.value)
 
+/** 是否显示继续新增按钮（仅在新增模式下显示） */
+const showContinueNewButton = computed(() => props.mode === 'add')
+
 /** 计算抽屉宽度：左侧留600px，最小700px */
 const drawerWidth = computed(() => {
   const defaultWidth = '700px'
@@ -686,9 +689,70 @@ const handleImageUpload = async (formData: any) => {
 }
 
 /**
- * 处理保存
+ * 重置表单为新增模式的初始值
+ * 确保所有字段都被重置，不保留上次的输入结果
+ * 逻辑与 initFormData 的新增模式保持一致
  */
-const handleSave = async () => {
+const resetFormToInitial = async () => {
+  // 先重置表单字段（清除所有字段的值和验证状态）
+  const formInstance = await getElFormExpose()
+  if (formInstance) {
+    formInstance.resetFields()
+    await nextTick()
+  }
+  
+  // 构建新增模式的初始表单数据（与 initFormData 逻辑一致）
+  const newFormData: any = {}
+  
+  // 只设置有默认值的字段（与 initFormData 的新增模式逻辑一致）
+  props.formSchema.forEach(field => {
+    if (field.value !== undefined) {
+      newFormData[field.field] = field.value
+    }
+  })
+  
+  // 处理图片字段的初始化（确保图片字段被重置为空数组）
+  props.formSchema.forEach(field => {
+    if (field.type === 'image') {
+      const imageField = field.field
+      const imageDisplayField = `${field.field}_display`
+      // 即使没有默认值，也要确保图片字段被重置为空数组
+      if (newFormData[imageField] === undefined) {
+        newFormData[imageField] = []
+      }
+      if (newFormData[imageDisplayField] === undefined) {
+        newFormData[imageDisplayField] = []
+      }
+    }
+  })
+  
+  // 设置初始值
+  await setValues(newFormData)
+  await nextTick()
+  
+  // 清除验证状态
+  if (formInstance) {
+    formInstance.clearValidate()
+  }
+  
+  // 保存新的初始表单数据
+  initialFormData.value = JSON.parse(JSON.stringify(newFormData))
+  isFormModified.value = false
+  
+  // ==================== 扩展点4：初始化后的钩子 ====================
+  if (props.afterInit) {
+    props.afterInit(newFormData)
+  }
+}
+
+/**
+ * 公共的保存数据流程
+ * 包含：数据校验、图片上传、提交前钩子处理、数据提交
+ * 
+ * @param onSuccess 保存成功后的回调函数
+ * @returns 返回处理后的表单数据，如果处理失败则返回 null
+ */
+const processSaveData = async (onSuccess?: () => Promise<void> | void): Promise<any | null> => {
   // 等待表单注册完成
   if (!isFormRegistered.value) {
     // 等待多个 nextTick 确保表单已注册
@@ -699,11 +763,15 @@ const handleSave = async () => {
   const elForm = await getElFormExpose()
   if (!elForm) {
     ElMessage.error('表单未注册，请稍后重试')
-    return
+    return null
   }
   
+  // ==================== 1. 数据校验 ====================
   const valid = await elForm.validate()
-  if (!valid) return
+  if (!valid) {
+    // 校验失败，操作中断，显示校验错误信息（逻辑不变）
+    return null
+  }
 
   let formData = await getFormData()
   
@@ -713,8 +781,9 @@ const handleSave = async () => {
     await handleImageUpload(formData)
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : '图片上传失败'
-    ElMessage.error(errorMessage)
-    return
+    // 在 PrompInfo 中显示错误信息
+    showInfo('error', errorMessage)
+    return null
   }
   
   // ==================== 扩展点3：提交前的数据处理钩子 ====================
@@ -722,28 +791,70 @@ const handleSave = async () => {
     try {
       formData = await props.beforeSubmit(formData) || formData
     } catch (error) {
-      // 如果钩子抛出错误，停止提交
-      return
+      // 如果钩子抛出错误，在 PrompInfo 中显示错误信息
+      const errorMessage = error instanceof Error ? error.message : '数据处理失败'
+      showInfo('error', errorMessage)
+      return null
     }
   }
   
-  // 如果有提交接口，调用接口
+  // ==================== 2. 数据保存 ====================
   if (props.submitApi) {
     try {
       await props.submitApi(formData)
-      ElMessage.success(props.mode === 'add' ? '新增成功' : '修改成功')
       // 保存成功后，重置修改标记
       isFormModified.value = false
       initialFormData.value = null
       emit('success')
-      drawerVisible.value = false
+      
+      // 执行成功回调
+      if (onSuccess) {
+        await onSuccess()
+      }
+      
+      return formData
     } catch (error) {
-      // 提交失败时的错误处理由父组件或全局错误处理机制处理
+      // 保存失败，不关闭窗口，在 PrompInfo 中显示错误信息
+      const errorMessage = error instanceof Error ? error.message : '保存失败'
+      showInfo('error', errorMessage)
+      return null
     }
   } else {
     // 否则触发 save 事件，由父组件处理
     emit('save', formData)
+    // 执行成功回调（如果父组件处理成功）
+    if (onSuccess) {
+      await nextTick()
+      await onSuccess()
+    }
+    return formData
   }
+}
+
+/**
+ * 处理保存
+ */
+const handleSave = async () => {
+  await processSaveData(async () => {
+    // 保存成功后的处理：显示成功消息并关闭窗口
+    ElMessage.success(props.mode === 'add' ? '新增成功' : '修改成功')
+    drawerVisible.value = false
+  })
+}
+
+/**
+ * 处理继续新增
+ * 先保存当前数据，保存成功后重置表单为新增状态，继续新增下一条记录
+ */
+const handleContinueNew = async () => {
+  await processSaveData(async () => {
+    // 保存成功后的处理：重置表单为新增状态并显示提示信息
+    // ==================== 3. 新增数据：窗口进入新增状态 ====================
+    await resetFormToInitial()
+    
+    // ==================== 4. PrompInfo：提示成功信息 ====================
+    showInfo('info', '数据保存成功，继续新增下一条...')
+  })
 }
 
 /**
@@ -809,7 +920,7 @@ defineExpose({
           <div class="response-container">
             <!-- 按钮区域：提示信息 + 按钮 -->
             <!-- ==================== 扩展点6：按钮区域自定义 ==================== -->
-            <slot name="buttons" :save="handleSave" :cancel="handleCancel" :mode="props.mode" :save-loading="props.saveLoading">
+            <slot name="buttons" :save="handleSave" :cancel="handleCancel" :continue-new="handleContinueNew" :mode="props.mode" :save-loading="props.saveLoading" :show-continue-new="showContinueNewButton">
               <div class="response-buttons-wrapper">
                 <div class="response-buttons-info">
                   <PrompInfo ref="prompInfoRef" />
@@ -820,6 +931,12 @@ defineExpose({
                     stype="save"
                     :loading="props.saveLoading"
                     @click="handleSave"
+                  />
+                  <ButtonPre
+                    v-if="showContinueNewButton"
+                    stype="newcontinue"
+                    :loading="props.saveLoading"
+                    @click="handleContinueNew"
                   />
                   <ButtonPre
                     stype="return"

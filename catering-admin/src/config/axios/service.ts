@@ -90,15 +90,19 @@ service.interceptors.response.use(
       }
       return response.data
     } else if (code === unauthorized_code) {
-      // 因token无效，token过期导致
+      // Token 无效或过期，尝试刷新 Token
       refreshToken().then((res) => {
         const authStore = useAuthStoreWithOut()
         authStore.setToken(`${res.data.token_type} ${res.data.access_token}`)
         authStore.setRefreshToken(res.data.refresh_token)
         ElMessage.error('操作失败，请重试')
       })
+      // 返回 rejected promise，让调用方能够捕获错误
+      return Promise.reject(new Error(message))
     } else {
+      // 业务错误：显示错误消息，并返回 rejected promise 让调用方能够捕获并处理
       ElMessage.error(message)
+      return Promise.reject(new Error(message))
     }
   },
   (error: AxiosError) => {
@@ -106,49 +110,76 @@ service.interceptors.response.use(
     let { message } = error
     const authStore = useAuthStoreWithOut()
     const status = error.response?.status
+    
+    /**
+     * 从响应数据中提取错误信息
+     * 优先使用后端返回的详细错误消息，支持多种可能的字段名
+     */
+    const responseData = error.response?.data
+    const responseMessage = 
+      responseData?.message || 
+      responseData?.msg || 
+      responseData?.error || 
+      responseData?.detail ||
+      (typeof responseData === 'string' ? responseData : null)
+    
+    /**
+     * 根据 HTTP 状态码设置错误消息
+     * 优先使用后端返回的详细错误信息，如果没有则使用默认消息
+     */
     switch (status) {
       case 400:
-        message = '请求错误'
+        message = responseMessage || '请求错误'
         break
       case 401:
-        // 强制要求重新登录，因账号已冻结，账号已过期，手机号码错误，刷新token无效等问题导致
+        // 认证失败：账号已冻结、账号已过期、手机号码错误、刷新token无效等
         authStore.logout()
-        message = '认证已失效，请重新登录'
+        message = responseMessage || '认证已失效，请重新登录'
         break
       case 403:
-        // 强制要求重新登录，因无系统权限，而进入到系统访问等问题导致
+        // 权限不足：无系统权限访问等问题
         authStore.logout()
-        message = '无权限访问，请联系管理员'
+        message = responseMessage || '无权限访问，请联系管理员'
         break
       case 404:
-        message = `请求地址出错: ${error.response?.config.url}`
+        message = responseMessage || `请求地址出错: ${error.response?.config.url}`
         break
       case 408:
-        message = '请求超时'
+        message = responseMessage || '请求超时'
         break
       case 500:
-        message = '服务器内部错误'
+        // 服务器内部错误：优先显示后端返回的详细错误信息
+        message = responseMessage || '服务器内部错误'
         break
       case 501:
-        message = '服务未实现'
+        message = responseMessage || '服务未实现'
         break
       case 502:
-        message = '网关错误'
+        message = responseMessage || '网关错误'
         break
       case 503:
-        message = '服务不可用'
+        message = responseMessage || '服务不可用'
         break
       case 504:
-        message = '网关超时'
+        message = responseMessage || '网关超时'
         break
       case 505:
-        message = 'HTTP版本不受支持'
+        message = responseMessage || 'HTTP版本不受支持'
         break
       default:
+        // 其他状态码：如果有响应消息则使用，否则保持原始错误消息
+        if (responseMessage) {
+          message = responseMessage
+        }
         break
     }
+    
+    // 显示错误提示
     ElMessage.error(message)
-    return Promise.reject(error)
+    
+    // 返回包含详细错误信息的 Error 对象，让调用方能够捕获并处理
+    // 这样 BaseFree.vue 等组件可以在 PrompInfo 中显示详细的错误信息
+    return Promise.reject(new Error(message))
   }
 )
 

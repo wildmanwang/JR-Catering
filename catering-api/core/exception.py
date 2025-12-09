@@ -130,19 +130,31 @@ def register_exception(app: FastAPI):
     @app.exception_handler(Exception)
     async def all_exception_handler(request: Request, exc: Exception):
         """
-        捕获全部异常
+        捕获全部未处理的异常
+        
+        此处理器会捕获所有未被其他异常处理器处理的异常，并返回统一的错误响应格式。
+        返回实际的异常消息，方便前端显示详细的错误信息。
+        
+        :param request: FastAPI 请求对象
+        :param exc: 捕获的异常对象
+        :return: JSONResponse 包含错误信息和状态码
         """
         if DEBUG:
             print("请求地址", request.url.__str__())
             print("捕捉到全局异常：all_exception_handler")
             print(exc.__str__())
+        
         # 打印栈信息，方便追踪排查异常
         logger.exception(exc)
+        
+        # 提取实际的异常消息，如果异常对象为空则使用默认消息
+        exception_message = str(exc) if exc else "接口异常！"
+        
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content=jsonable_encoder(
                 {
-                    "message": "接口异常！",
+                    "message": exception_message,
                     "code": status.HTTP_500_INTERNAL_SERVER_ERROR
                 }
             ),
