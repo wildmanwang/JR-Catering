@@ -71,7 +71,7 @@ class Dish(BaseModel):
     description: Mapped[str | None] = mapped_column(String(255), comment="简介")
     description_english: Mapped[str | None] = mapped_column(String(255), comment="英文简介")
     
-    dish_kitchen_name_unique = column_property(
+    kitchen_name_unique = column_property(
         select(DishKitchen.name_unique)
         .where(DishKitchen.id == kitchen_id)
         .correlate_except(DishKitchen)

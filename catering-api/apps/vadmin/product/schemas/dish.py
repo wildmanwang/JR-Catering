@@ -50,6 +50,6 @@ class DishOut(Dish):
     create_datetime: DatetimeStr | None = None
     update_datetime: DatetimeStr | None = None
 
-    dish_kitchen_name_unique: str = Field(None, alias="dish_kitchen_name_unique", title="所属厨部")
+    kitchen_name_unique: str = Field(None, alias="kitchen_name_unique", title="所属厨部")
 
     dish_images: List[str] = Field(default_factory=list)
