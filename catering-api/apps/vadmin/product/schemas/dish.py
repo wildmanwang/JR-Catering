@@ -15,7 +15,7 @@ class DishStatusEnum(int, Enum):
 
 
 class Dish(BaseModel):
-    name_unique: Annotated[str, Field(max_length=10)]
+    name_unique: Annotated[str, Field(max_length=50)]
     kitchen_id: int
     name_display: str
     name_english: str | None = None

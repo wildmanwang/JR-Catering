@@ -13,7 +13,8 @@ export const formSchema: FreeFormField[] = [
     colProps: {
       span: 24
     },
-    component: 'Input'
+    component: 'Input',
+    newCopy: true
   },
   {
     field: 'name_display',
@@ -21,7 +22,8 @@ export const formSchema: FreeFormField[] = [
     colProps: {
       span: 24
     },
-    component: 'Input'
+    component: 'Input',
+    newCopy: true
   },
   {
     field: 'name_english',
@@ -29,7 +31,8 @@ export const formSchema: FreeFormField[] = [
     colProps: {
       span: 24
     },
-    component: 'Input'
+    component: 'Input',
+    newCopy: true
   },
   {
     field: 'kitchen_id',
@@ -44,7 +47,8 @@ export const formSchema: FreeFormField[] = [
         label: 'name_unique',
         value: 'id'
       }
-    }
+    },
+    newCopy: true
     // 选项数据从主窗口传入，无需在此定义 optionApi
   },
   {
@@ -61,7 +65,8 @@ export const formSchema: FreeFormField[] = [
     colProps: {
       span: 12
     },
-    component: 'Input'
+    component: 'Input',
+    newCopy: true
   },
   {
     field: 'description',
@@ -106,7 +111,8 @@ export const formSchema: FreeFormField[] = [
     type: 'image',
     colProps: {
       span: 24
-    }
+    },
+    newCopy: true
   }
 ]
 

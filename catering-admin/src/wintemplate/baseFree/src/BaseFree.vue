@@ -13,13 +13,45 @@ defineOptions({
 })
 
 // ==================== 类型定义 ====================
-/** 表单字段配置 */
+/**
+ * 表单字段配置接口
+ * 扩展了 FormSchema，添加了 BaseFree 模板特有的字段配置选项
+ */
 export interface FreeFormField extends FormSchema {
-  /** 列类型，用于决定列的显示样式和处理逻辑 */
+  /** 
+   * 列类型，用于决定列的显示样式和处理逻辑
+   * @example 'image' | 'text' | 'status' | 'number' | 'select' | 'dropdown'
+   */
   type?: 'image' | 'text' | 'status' | 'number' | 'select' | 'dropdown'
-  // 自定义字段转换函数：如果提供，将使用此函数替代模板的默认处理
-  // 参数：field（字段配置）、data（表单数据）、mode（模式）
-  // 返回：FormSchema 或 null（null 表示使用模板默认处理）
+  
+  /** 
+   * 拷贝新增时是否保留上一条记录的值
+   * - true: 拷贝新增时，该字段保留上一条记录的值
+   * - false: 拷贝新增时，该字段使用初始化新增时的默认值
+   * @default false
+   * @example 
+   * // 在表单字段配置中设置
+   * { field: 'name', label: '名称', newCopy: true }
+   */
+  newCopy?: boolean
+  
+  /** 
+   * 自定义字段转换函数
+   * 如果提供，将使用此函数替代模板的默认处理逻辑
+   * 
+   * @param field - 字段配置对象
+   * @param data - 当前表单数据
+   * @param mode - 当前操作模式（'add' | 'edit' | 'view'）
+   * @returns FormSchema 或 null（返回 null 表示使用模板默认处理）
+   * 
+   * @example
+   * customConvert: (field, data, mode) => {
+   *   if (mode === 'edit') {
+   *     return { ...field, disabled: true }
+   *   }
+   *   return null // 使用默认处理
+   * }
+   */
   customConvert?: (field: FreeFormField, data: any, mode: 'add' | 'edit' | 'view') => FormSchema | null
 }
 
@@ -46,7 +78,7 @@ interface Props {
   rules?: Record<string, any> // 表单验证规则
   currentRow?: any // 当前行数据（编辑/查看时使用）
   // 数据接口
-  submitApi?: (data: any) => Promise<any> // 提交接口（新增/编辑）
+  submitApi?: (data: any, mode?: 'add' | 'edit') => Promise<any> // 提交接口（新增/编辑），mode 参数用于区分新增/修改
   // Tab 配置
   tabs?: FreeTab[] // Tab 配置，fields 为空时显示所有字段
   // 扩展钩子函数
@@ -118,19 +150,42 @@ const handleBeforeClose = async (done: () => void) => {
 }
 
 /** 抽屉标题 */
+// ==================== 内部模式管理 ====================
+/**
+ * 当前实际的操作模式
+ * 用于处理拷贝新增时从修改模式切换到新增模式的情况
+ * - 初始值：props.mode
+ * - 拷贝新增时：切换为 'add'
+ * - 窗口打开时：重置为 props.mode
+ */
+const currentMode = ref<'add' | 'edit' | 'view'>(props.mode)
+
+// 监听 props.mode 变化，同步更新内部模式（窗口重新打开时）
+watch(() => props.mode, (newMode) => {
+  currentMode.value = newMode
+})
+
+// 监听窗口打开/关闭，重置内部模式
+watch(() => drawerVisible.value, (val) => {
+  if (val) {
+    // 窗口打开时，重置为 props.mode
+    currentMode.value = props.mode
+  }
+})
+
 const drawerTitle = computed(() => {
   // 如果提供了 title，直接使用（优先级最高）
   if (props.title) {
     return props.title
   }
   
-  // 根据模式生成操作方式
+  // 根据模式生成操作方式（使用内部模式，支持拷贝新增时的模式切换）
   const operationMap = {
     add: '新增',
     edit: '修改',
     view: '查看'
   }
-  const operation = operationMap[props.mode] || '操作'
+  const operation = operationMap[currentMode.value] || '操作'
   
   // 如果提供了 pageTitle，返回 "主窗口标题 - 操作方式"
   if (props.pageTitle) {
@@ -142,13 +197,26 @@ const drawerTitle = computed(() => {
 })
 
 /** 是否只读模式（查看模式） */
-const isViewMode = computed(() => props.mode === 'view')
+const isViewMode = computed(() => currentMode.value === 'view')
 
-/** 是否显示保存按钮 */
+// ==================== 按钮显示控制 ====================
+/** 
+ * 是否显示保存按钮
+ * 在新增和修改模式下显示，查看模式下隐藏
+ */
 const showSaveButton = computed(() => !isViewMode.value)
 
-/** 是否显示继续新增按钮（仅在新增模式下显示） */
-const showContinueNewButton = computed(() => props.mode === 'add')
+/** 
+ * 是否显示继续新增按钮
+ * 仅在新增模式下显示，用于保存当前数据后继续新增下一条记录
+ */
+const showContinueNewButton = computed(() => currentMode.value === 'add')
+
+/** 
+ * 是否显示拷贝新增按钮
+ * 在新增和修改模式下显示，用于保存当前数据后创建新记录并保留标记字段的值
+ */
+const showCopyNewButton = computed(() => currentMode.value === 'add' || currentMode.value === 'edit')
 
 /** 计算抽屉宽度：左侧留600px，最小700px */
 const drawerWidth = computed(() => {
@@ -167,7 +235,8 @@ const drawerWidth = computed(() => {
 // ==================== Tab 管理 ====================
 /** 根据模式过滤后的 Tab 列表（新增模式下隐藏操作日志） */
 const filteredTabs = computed(() => {
-  if (props.mode === 'add') {
+  // 使用内部模式，支持拷贝新增时的模式切换
+  if (currentMode.value === 'add') {
     return props.tabs.filter(tab => tab.name !== 'log')
   }
   return props.tabs
@@ -187,7 +256,7 @@ watch([() => props.mode, filteredTabs], ([, tabs]) => {
 
 // ==================== 表单处理 ====================
 const { formRegister, formMethods } = useForm()
-const { getFormData, setValues, getElFormExpose } = formMethods
+const { getFormData, setValues, getElFormExpose, getComponentExpose } = formMethods
 
 // 表单注册状态
 const isFormRegistered = ref(false)
@@ -690,33 +759,50 @@ const handleImageUpload = async (formData: any) => {
 
 /**
  * 重置表单为新增模式的初始值
- * 确保所有字段都被重置，不保留上次的输入结果
- * 逻辑与 initFormData 的新增模式保持一致
+ * 
+ * 功能说明：
+ * - 将所有字段重置为初始化新增时的默认值
+ * - 不保留上次的输入结果，确保表单完全清空
+ * - 逻辑与 initFormData 的新增模式保持一致
+ * 
+ * 使用场景：
+ * - 继续新增功能：保存当前数据后，重置表单继续新增下一条记录
+ * - 表单初始化：确保表单处于干净的新增状态
+ * 
+ * @see resetFormToCopyNew - 重置表单为拷贝新增模式的初始值（保留标记字段）
  */
 const resetFormToInitial = async () => {
-  // 先重置表单字段（清除所有字段的值和验证状态）
+  // ==================== 1. 重置表单字段 ====================
+  // 清除所有字段的值和验证状态
   const formInstance = await getElFormExpose()
   if (formInstance) {
     formInstance.resetFields()
     await nextTick()
   }
   
-  // 构建新增模式的初始表单数据（与 initFormData 逻辑一致）
+  // ==================== 2. 构建新增模式的初始表单数据 ====================
   const newFormData: any = {}
   
+  // ==================== 2.1 处理普通字段 ====================
   // 只设置有默认值的字段（与 initFormData 的新增模式逻辑一致）
   props.formSchema.forEach(field => {
+    // 跳过图片字段，图片字段需要特殊处理
+    if (field.type === 'image') {
+      return
+    }
+    
     if (field.value !== undefined) {
       newFormData[field.field] = field.value
     }
   })
   
-  // 处理图片字段的初始化（确保图片字段被重置为空数组）
+  // ==================== 2.2 处理图片字段 ====================
+  // 确保图片字段被重置为空数组（即使没有默认值）
   props.formSchema.forEach(field => {
     if (field.type === 'image') {
       const imageField = field.field
       const imageDisplayField = `${field.field}_display`
-      // 即使没有默认值，也要确保图片字段被重置为空数组
+      
       if (newFormData[imageField] === undefined) {
         newFormData[imageField] = []
       }
@@ -726,20 +812,21 @@ const resetFormToInitial = async () => {
     }
   })
   
-  // 设置初始值
+  // ==================== 3. 应用初始值到表单 ====================
   await setValues(newFormData)
   await nextTick()
   
-  // 清除验证状态
+  // ==================== 4. 清除验证状态 ====================
   if (formInstance) {
     formInstance.clearValidate()
   }
   
-  // 保存新的初始表单数据
+  // ==================== 5. 更新表单状态 ====================
+  // 保存新的初始表单数据，用于后续的修改检测
   initialFormData.value = JSON.parse(JSON.stringify(newFormData))
   isFormModified.value = false
   
-  // ==================== 扩展点4：初始化后的钩子 ====================
+  // ==================== 6. 扩展点：初始化后的钩子 ====================
   if (props.afterInit) {
     props.afterInit(newFormData)
   }
@@ -747,12 +834,35 @@ const resetFormToInitial = async () => {
 
 /**
  * 公共的保存数据流程
- * 包含：数据校验、图片上传、提交前钩子处理、数据提交
  * 
- * @param onSuccess 保存成功后的回调函数
+ * 功能说明：
+ * 这是一个统一的保存数据流程，包含完整的保存前处理逻辑。
+ * 所有保存操作（保存、继续新增、拷贝新增）都使用此函数，确保逻辑一致。
+ * 
+ * 处理流程：
+ * 1. 等待表单注册完成
+ * 2. 数据校验（失败则中断，返回 null）
+ * 3. 获取表单数据
+ * 4. 图片上传处理（失败则中断，在 PrompInfo 中显示错误信息，返回 null）
+ * 5. 提交前钩子处理（失败则中断，在 PrompInfo 中显示错误信息，返回 null）
+ * 6. 数据提交（失败则中断，在 PrompInfo 中显示错误信息，返回 null）
+ * 7. 保存成功后：重置修改标记，触发 success 事件，执行成功回调
+ * 
+ * 使用场景：
+ * - handleSave：保存后关闭窗口
+ * - handleContinueNew：保存后重置表单继续新增
+ * - handleCopyNew：保存后重置表单并保留标记字段
+ * 
+ * @param onSuccess - 保存成功后的回调函数，参数为保存的表单数据
  * @returns 返回处理后的表单数据，如果处理失败则返回 null
+ * 
+ * @example
+ * await processSaveData(async (formData) => {
+ *   // 保存成功后的处理逻辑
+ *   console.log('保存成功', formData)
+ * })
  */
-const processSaveData = async (onSuccess?: () => Promise<void> | void): Promise<any | null> => {
+const processSaveData = async (onSuccess?: (formData: any) => Promise<void> | void): Promise<any | null> => {
   // 等待表单注册完成
   if (!isFormRegistered.value) {
     // 等待多个 nextTick 确保表单已注册
@@ -774,6 +884,15 @@ const processSaveData = async (onSuccess?: () => Promise<void> | void): Promise<
   }
 
   let formData = await getFormData()
+  
+  // ==================== 处理模式切换（继续新增/拷贝新增）====================
+  // 如果当前模式是新增，但数据中包含 id 字段，需要清除 id 以确保调用新增API
+  // 这是因为继续新增/拷贝新增时，currentMode 已切换为 'add'，但 formData 可能仍包含原记录的 id
+  if (currentMode.value === 'add' && formData && 'id' in formData) {
+    // 创建新对象，避免直接修改原对象
+    formData = { ...formData }
+    delete formData.id
+  }
   
   // ==================== 处理图片字段上传 ====================
   // 如果存在未上传的图片，则处理上传
@@ -801,15 +920,27 @@ const processSaveData = async (onSuccess?: () => Promise<void> | void): Promise<
   // ==================== 2. 数据保存 ====================
   if (props.submitApi) {
     try {
-      await props.submitApi(formData)
+      // 调用 submitApi，传入 formData 和 currentMode
+      // 如果 submitApi 支持 mode 参数，则使用 currentMode（支持继续新增/拷贝新增时的模式切换）
+      // 如果 submitApi 不支持 mode 参数，则只传入 formData（向后兼容）
+      // 为了确保调用新增API，我们已经在前面清除了 formData 中的 id 字段
+      if (props.submitApi.length > 1) {
+        // submitApi 支持 mode 参数
+        // 确保 mode 是 'add' 或 'edit'（不会是 'view'，因为 view 模式下不会调用保存）
+        const mode: 'add' | 'edit' = currentMode.value === 'view' ? 'edit' : currentMode.value
+        await props.submitApi(formData, mode)
+      } else {
+        // submitApi 不支持 mode 参数，只传入 formData（向后兼容）
+        await props.submitApi(formData)
+      }
       // 保存成功后，重置修改标记
       isFormModified.value = false
       initialFormData.value = null
       emit('success')
       
-      // 执行成功回调
+      // 执行成功回调，传递保存的表单数据
       if (onSuccess) {
-        await onSuccess()
+        await onSuccess(formData)
       }
       
       return formData
@@ -822,38 +953,387 @@ const processSaveData = async (onSuccess?: () => Promise<void> | void): Promise<
   } else {
     // 否则触发 save 事件，由父组件处理
     emit('save', formData)
-    // 执行成功回调（如果父组件处理成功）
+    // 执行成功回调（如果父组件处理成功），传递表单数据
     if (onSuccess) {
       await nextTick()
-      await onSuccess()
+      await onSuccess(formData)
     }
     return formData
   }
 }
 
 /**
- * 处理保存
+ * 处理保存操作
+ * 
+ * 功能流程：
+ * 1. 数据校验（失败则中断）
+ * 2. 图片上传处理（失败则中断）
+ * 3. 提交前钩子处理（失败则中断）
+ * 4. 数据保存（失败则中断，在 PrompInfo 中显示错误信息）
+ * 5. 保存成功后：显示成功消息并关闭窗口
+ * 
+ * 使用场景：
+ * - 新增模式：保存新记录后关闭窗口
+ * - 修改模式：保存修改后关闭窗口
+ * 
+ * @see processSaveData - 公共的保存数据流程
  */
 const handleSave = async () => {
   await processSaveData(async () => {
-    // 保存成功后的处理：显示成功消息并关闭窗口
-    ElMessage.success(props.mode === 'add' ? '新增成功' : '修改成功')
+    // ==================== 保存成功后的处理 ====================
+    // 显示成功消息（使用内部模式，支持拷贝新增时的模式切换）
+    ElMessage.success(currentMode.value === 'add' ? '新增成功' : '修改成功')
+    
+    // 关闭窗口
     drawerVisible.value = false
   })
 }
 
+// ==================== 特殊字段处理函数 ====================
+
 /**
- * 处理继续新增
- * 先保存当前数据，保存成功后重置表单为新增状态，继续新增下一条记录
+ * 处理 order_number 字段的特殊计算
+ * 将原排序号向上取整到10的倍数，再加10
+ * 
+ * @param originalValue - 原排序号的值
+ * @returns 计算后的新排序号，如果不是有效数字则返回原值
+ * 
+ * @example
+ * processOrderNumber(20) // 30 (20 -> 20 -> 30)
+ * processOrderNumber(21) // 40 (21 -> 30 -> 40)
+ * processOrderNumber(25) // 40 (25 -> 30 -> 40)
+ * processOrderNumber('abc') // 'abc' (无效数字，返回原值)
+ */
+const processOrderNumber = (originalValue: any): any => {
+  if (originalValue === null || originalValue === undefined) {
+    return originalValue
+  }
+  
+  // 尝试转换为数字
+  const numValue = Number(originalValue)
+  
+  // 检查是否为有效数字
+  if (!isNaN(numValue) && isFinite(numValue)) {
+    // 向上取整到10的倍数，再加10
+    const roundedToTen = Math.ceil(numValue / 10) * 10
+    return roundedToTen + 10
+  }
+  
+  // 如果不是有效数字，直接返回原值
+  return originalValue
+}
+
+/**
+ * 处理 name_unique 字段的焦点定位
+ * 在完成拷贝后，将焦点定位到该字段并全选文字
+ * 
+ * @param fieldName - 字段名，默认为 'name_unique'
+ */
+const focusNameUniqueField = async (fieldName: string = 'name_unique') => {
+  // 等待 DOM 更新完成
+  await nextTick()
+  await nextTick() // 多等待一次，确保表单组件已完全渲染
+  
+  try {
+    // 获取字段的组件实例
+    const componentExpose = await getComponentExpose(fieldName)
+    
+    if (componentExpose) {
+      // Element Plus Input 组件支持 focus 和 select 方法
+      // 等待一下再设置焦点，确保组件已完全渲染
+      setTimeout(() => {
+        if (componentExpose.focus) {
+          componentExpose.focus()
+        }
+        // 如果是 Input 组件，尝试全选文字
+        if (componentExpose.select) {
+          componentExpose.select()
+        } else if (componentExpose.$el) {
+          // 如果组件没有 select 方法，尝试直接操作 DOM
+          const inputElement = componentExpose.$el.querySelector('input') || componentExpose.$el
+          if (inputElement && inputElement.select) {
+            inputElement.select()
+          }
+        }
+      }, 100)
+    }
+  } catch (error) {
+    // 如果获取组件实例失败，静默处理（不影响主要功能）
+    console.warn(`无法定位 ${fieldName} 字段焦点:`, error)
+  }
+}
+
+/**
+ * 特殊字段值处理映射表
+ * 定义哪些字段需要进行特殊处理，以及对应的处理函数
+ * 
+ * 扩展方式：
+ * 1. 在此对象中添加新的字段名和处理函数
+ * 2. 处理函数接收原值，返回处理后的值
+ * 
+ * @example
+ * // 添加新的特殊字段处理
+ * specialFieldProcessors: {
+ *   order_number: processOrderNumber,
+ *   custom_field: (value) => value + '_suffix'
+ * }
+ */
+const specialFieldProcessors: Record<string, (value: any) => any> = {
+  order_number: processOrderNumber
+}
+
+/**
+ * 特殊字段后处理映射表
+ * 定义哪些字段在表单初始化后需要进行额外的处理（如焦点定位）
+ * 
+ * 扩展方式：
+ * 1. 在此对象中添加新的字段名和处理函数
+ * 2. 处理函数应该是异步函数，用于执行后处理操作
+ * 
+ * @example
+ * // 添加新的特殊字段后处理
+ * specialFieldPostProcessors: {
+ *   name_unique: focusNameUniqueField,
+ *   custom_field: async () => { await someCustomAction() }
+ * }
+ */
+const specialFieldPostProcessors: Record<string, () => Promise<void>> = {
+  name_unique: () => focusNameUniqueField('name_unique')
+}
+
+/**
+ * 重置表单为拷贝新增模式的初始值
+ * 
+ * 功能说明：
+ * - 对标记了 newCopy=true 的字段，保留上一条记录的值
+ * - 对其他字段，使用初始化新增时的默认值
+ * - 图片字段特殊处理：保留图片但重新标记为 ?add（新增操作）
+ * - 支持特殊字段的自定义处理（如 order_number、name_unique 等）
+ * 
+ * 使用场景：
+ * - 拷贝新增功能：保存当前数据后，创建新记录并保留部分字段值
+ * 
+ * 特殊字段处理：
+ * - order_number: 自动计算新的排序号（向上取整到10的倍数 + 10）
+ * - name_unique: 完成拷贝后自动定位焦点并全选文字
+ * 
+ * @param savedData - 已保存的数据，用于拷贝标记字段的值
+ * 
+ * @example
+ * // 在字段配置中设置 newCopy=true
+ * { field: 'name', label: '名称', newCopy: true }
+ * // 拷贝新增时，name 字段会保留上一条记录的值
+ * 
+ * // 特殊字段示例
+ * { field: 'order_number', label: '排序号', newCopy: true }
+ * // 拷贝新增时，order_number 会自动计算新值（如 20 -> 30）
+ */
+const resetFormToCopyNew = async (savedData: any) => {
+  // ==================== 1. 重置表单字段 ====================
+  // 清除所有字段的值和验证状态
+  const formInstance = await getElFormExpose()
+  if (formInstance) {
+    formInstance.resetFields()
+    await nextTick()
+  }
+  
+  // ==================== 2. 构建拷贝新增模式的初始表单数据 ====================
+  const newFormData: any = {}
+  
+  // ==================== 2.1 处理普通字段 ====================
+  // 根据 newCopy 标记决定使用哪个值
+  props.formSchema.forEach(field => {
+    // 跳过图片字段，图片字段需要特殊处理
+    if (field.type === 'image') {
+      return
+    }
+    
+    if (field.newCopy === true) {
+      // 标记了 newCopy=true 的字段：保留上一条记录的值
+      if (savedData && savedData[field.field] !== undefined) {
+        const originalValue = savedData[field.field]
+        
+        // ==================== 特殊字段值处理 ====================
+        // 检查是否有特殊字段处理器，如果有则使用处理器处理值
+        if (specialFieldProcessors[field.field]) {
+          newFormData[field.field] = specialFieldProcessors[field.field](originalValue)
+        } else {
+          // 普通字段：直接使用原值
+          newFormData[field.field] = originalValue
+        }
+      }
+    } else {
+      // 其他字段：使用初始化新增时的默认值
+      if (field.value !== undefined) {
+        newFormData[field.field] = field.value
+      }
+    }
+  })
+  
+  // ==================== 2.2 处理图片字段 ====================
+  props.formSchema.forEach(field => {
+    if (field.type === 'image') {
+      const imageField = field.field
+      const imageDisplayField = `${field.field}_display`
+      
+      if (field.newCopy === true && savedData) {
+        // 图片字段标记了 newCopy=true：保留图片并重新标记为 ?add
+        // 优先使用 imageField，如果没有则使用 imageDisplayField
+        const savedImages = savedData[imageField] || savedData[imageDisplayField]
+        
+        if (savedImages && Array.isArray(savedImages) && savedImages.length > 0) {
+          // 拷贝图片数据，移除原有操作标记，重新标记为 ?add（新增操作）
+          newFormData[imageField] = savedImages.map((img: any) => {
+            if (typeof img === 'string') {
+              // 移除操作标记（?original、?delete、?add 等），只保留路径
+              const path = img.split('?')[0]
+              return `${path}?add`
+            }
+            return img
+          })
+          
+          // 显示字段不包含操作标记，只保留路径
+          newFormData[imageDisplayField] = savedImages.map((img: any) => {
+            if (typeof img === 'string') {
+              return img.split('?')[0]
+            }
+            return img
+          })
+        } else {
+          // 如果没有图片数据，重置为空数组
+          newFormData[imageField] = []
+          newFormData[imageDisplayField] = []
+        }
+      } else {
+        // 图片字段未标记 newCopy：重置为空数组
+        if (newFormData[imageField] === undefined) {
+          newFormData[imageField] = []
+        }
+        if (newFormData[imageDisplayField] === undefined) {
+          newFormData[imageDisplayField] = []
+        }
+      }
+    }
+  })
+  
+  // ==================== 3. 应用初始值到表单 ====================
+  await setValues(newFormData)
+  await nextTick()
+  
+  // ==================== 4. 清除验证状态 ====================
+  if (formInstance) {
+    formInstance.clearValidate()
+  }
+  
+  // ==================== 5. 更新表单状态 ====================
+  // 保存新的初始表单数据，用于后续的修改检测
+  initialFormData.value = JSON.parse(JSON.stringify(newFormData))
+  isFormModified.value = false
+  
+  // ==================== 6. 扩展点：初始化后的钩子 ====================
+  if (props.afterInit) {
+    props.afterInit(newFormData)
+  }
+  
+  // ==================== 7. 特殊字段后处理 ====================
+  // 遍历所有标记了 newCopy=true 的字段，检查是否有后处理函数
+  for (const field of props.formSchema) {
+    if (field.newCopy === true && specialFieldPostProcessors[field.field]) {
+      // 执行特殊字段的后处理（如焦点定位等）
+      await specialFieldPostProcessors[field.field]()
+      // 注意：如果有多个特殊字段需要后处理，这里会依次执行
+      // 如果需要只处理第一个，可以添加 break
+    }
+  }
+}
+
+// ==================== 保存操作处理函数 ====================
+
+/**
+ * 处理继续新增操作
+ * 
+ * 功能流程：
+ * 1. 数据校验（失败则中断）
+ * 2. 图片上传处理（失败则中断）
+ * 3. 提交前钩子处理（失败则中断）
+ * 4. 数据保存（失败则中断，在 PrompInfo 中显示错误信息）
+ * 5. 保存成功后：重置表单为新增状态，显示成功提示
+ * 
+ * 使用场景：
+ * - 新增模式下，保存当前数据后继续新增下一条记录
+ * - 所有字段都会被重置为初始值，不保留上次输入
+ * 
+ * @see processSaveData - 公共的保存数据流程
+ * @see resetFormToInitial - 重置表单为新增模式的初始值
  */
 const handleContinueNew = async () => {
   await processSaveData(async () => {
-    // 保存成功后的处理：重置表单为新增状态并显示提示信息
-    // ==================== 3. 新增数据：窗口进入新增状态 ====================
+    // ==================== 保存成功后的处理 ====================
+    // 切换模式为新增（确保后续保存时是新增操作，而不是修改操作）
+    currentMode.value = 'add'
+    
+    // 重置表单为新增状态的初始值（所有字段都重置，不保留上次输入）
     await resetFormToInitial()
     
-    // ==================== 4. PrompInfo：提示成功信息 ====================
+    // 显示成功提示信息
     showInfo('info', '数据保存成功，继续新增下一条...')
+  })
+}
+
+/**
+ * 处理拷贝新增操作
+ * 
+ * 功能流程：
+ * 1. 检查数据是否被修改
+ *    - 如果数据未修改：直接切换模式为新增，重置表单为拷贝新增状态，跳过保存
+ *    - 如果数据已修改：执行保存流程
+ * 2. 数据校验（失败则中断）
+ * 3. 图片上传处理（失败则中断）
+ * 4. 提交前钩子处理（失败则中断）
+ * 5. 数据保存（失败则中断，在 PrompInfo 中显示错误信息）
+ * 6. 保存成功后：切换模式为新增，重置表单为拷贝新增状态，保留标记字段的值，显示成功提示
+ * 
+ * 使用场景：
+ * - 新增或修改模式下，保存当前数据后创建新记录
+ * - 标记了 newCopy=true 的字段会保留上一条记录的值
+ * - 其他字段使用初始化新增时的默认值
+ * 
+ * 与继续新增的区别：
+ * - 继续新增：所有字段都重置为初始值
+ * - 拷贝新增：标记字段保留上一条记录的值，其他字段重置为初始值
+ * 
+ * @see processSaveData - 公共的保存数据流程
+ * @see resetFormToCopyNew - 重置表单为拷贝新增模式的初始值
+ */
+const handleCopyNew = async () => {
+  // ==================== 检查数据是否被修改 ====================
+  // 如果数据没有变化，跳过保存，直接重置表单为拷贝新增状态
+  if (!isFormModified.value) {
+    // 获取当前表单数据，用于拷贝标记字段的值
+    const currentFormData = await getFormData()
+    
+    // 切换模式为新增（确保后续保存时是新增操作，而不是修改操作）
+    currentMode.value = 'add'
+    
+    // 重置表单为拷贝新增状态（标记字段保留当前记录的值）
+    await resetFormToCopyNew(currentFormData)
+    
+    // 显示提示信息（注意：这里没有保存，所以提示信息不同）
+    showInfo('info', '已拷貝，請編輯數據...')
+    return
+  }
+  
+  // ==================== 数据已修改，执行保存流程 ====================
+  await processSaveData(async (formData) => {
+    // ==================== 保存成功后的处理 ====================
+    // 切换模式为新增（确保后续保存时是新增操作，而不是修改操作）
+    currentMode.value = 'add'
+    
+    // 重置表单为拷贝新增状态（标记字段保留上一条记录的值）
+    await resetFormToCopyNew(formData)
+    
+    // 显示成功提示信息
+    showInfo('info', '已保存並拷貝，請編輯數據...')
   })
 }
 
@@ -920,7 +1400,7 @@ defineExpose({
           <div class="response-container">
             <!-- 按钮区域：提示信息 + 按钮 -->
             <!-- ==================== 扩展点6：按钮区域自定义 ==================== -->
-            <slot name="buttons" :save="handleSave" :cancel="handleCancel" :continue-new="handleContinueNew" :mode="props.mode" :save-loading="props.saveLoading" :show-continue-new="showContinueNewButton">
+            <slot name="buttons" :save="handleSave" :cancel="handleCancel" :continue-new="handleContinueNew" :copy-new="handleCopyNew" :mode="props.mode" :save-loading="props.saveLoading" :show-continue-new="showContinueNewButton" :show-copy-new="showCopyNewButton">
               <div class="response-buttons-wrapper">
                 <div class="response-buttons-info">
                   <PrompInfo ref="prompInfoRef" />
@@ -937,6 +1417,12 @@ defineExpose({
                     stype="newcontinue"
                     :loading="props.saveLoading"
                     @click="handleContinueNew"
+                  />
+                  <ButtonPre
+                    v-if="showCopyNewButton"
+                    stype="newcopy"
+                    :loading="props.saveLoading"
+                    @click="handleCopyNew"
                   />
                   <ButtonPre
                     stype="return"

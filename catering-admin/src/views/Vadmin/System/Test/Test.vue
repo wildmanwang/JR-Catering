@@ -268,9 +268,14 @@ const delData = async (row?: any) => {
 
 /**
  * 提交接口（新增或修改）
+ * @param data - 表单数据
+ * @param mode - 操作模式（'add' | 'edit'），如果提供则优先使用，否则使用 dialogMode
  */
-const submitApi = async (data: any) => {
-  if (dialogMode.value === 'add') {
+const submitApi = async (data: any, mode?: 'add' | 'edit') => {
+  // 优先使用传入的 mode 参数（支持继续新增/拷贝新增时的模式切换）
+  // 如果没有传入 mode，则使用 dialogMode（向后兼容）
+  const operationMode = mode || dialogMode.value
+  if (operationMode === 'add') {
     return await addDishListApi(data)
   } else {
     return await putDishListApi(data)
