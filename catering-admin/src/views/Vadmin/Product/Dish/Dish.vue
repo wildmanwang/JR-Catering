@@ -1,13 +1,13 @@
 <script setup lang="tsx">
   import { ref, computed, onMounted } from 'vue'
-  import { ElDrawer } from 'element-plus'
+  import { useRouter } from 'vue-router'
   import { BaseGrid } from '@/wintemplate/baseGrid'
   import { BaseFree } from '@/wintemplate/baseFree'
   import { getDishListApi, delDishListApi, getDishStatusOptionsApi, addDishListApi, putDishListApi } from '@/api/vadmin/product/dish'
   import { getKitchenListApi } from '@/api/vadmin/product/kitchen'
   import { ContentWrap } from '@/components/ContentWrap'
   import { formSchema, rules, tabs } from './components/Response.vue'
-  import DishImport from './components/Import.vue'
+  import { ElMessage } from 'element-plus'
   
   defineOptions({
     name: 'Dish'
@@ -25,9 +25,10 @@
   const saveLoading = ref(false)
   const pageTitle = '菜品' // 主窗口标题
   
-  // 导入窗口相关状态
-  const importDrawerVisible = ref(false)
-  const importInitialData = ref<any[]>([])
+  const router = useRouter()
+  
+  // 导入数据存储的 sessionStorage key
+  const IMPORT_STORAGE_KEY = 'IMPORT_DISH_PAYLOAD'
   
   // 字段选项数据映射（传递给 BaseFree，避免重复请求）
   const fieldOptions = computed(() => ({
@@ -333,30 +334,104 @@
   
   // ==================== 导入操作 ====================
   /**
+   * 将菜品行数据转换为导入格式
+   * 
+   * 将 BaseGrid 中的菜品数据转换为 ImportGrid 所需的格式
+   * 处理数据格式转换、默认值设置、图片路径规范化等
+   * 
+   * @param {any} dish - 菜品行数据（来自 BaseGrid）
+   * @returns {object|null} 转换后的导入格式数据，如果数据无效则返回 null
+   */
+  const mapDishRowToImport = (dish: any) => {
+    if (!dish) return null
+    const safeNumber = (value: any, fallback: any = null) => {
+      if (value === null || value === undefined) return fallback
+      const num = Number(value)
+      return Number.isNaN(num) ? fallback : num
+    }
+    const images = Array.isArray(dish.dish_images) ? dish.dish_images.filter((img: any) => typeof img === 'string' && img) : []
+    const normalizeImage = (img: string) => {
+      if (typeof img !== 'string' || !img.length) return ''
+      const [path] = img.split('?')
+      return path ? `${path}?original` : ''
+    }
+    return {
+      id: dish.id ?? undefined,
+      name_unique: dish.name_unique ?? '',
+      name_display: dish.name_display ?? dish.name_unique ?? '',
+      name_english: dish.name_english ?? null,
+      kitchen_id: safeNumber(dish.kitchen_id, 1),
+      price: dish.price ?? null,
+      order_number: dish.order_number ?? null,
+      spec: dish.spec ?? null,
+      unit: dish.unit ?? null,
+      status: safeNumber(dish.status, -1),
+      dish_images_display: [...images],
+      dish_images: images.map(normalizeImage).filter(Boolean),
+      action: null
+    }
+  }
+  
+  /**
+   * 保存导入数据到 sessionStorage
+   * 
+   * 将转换后的数据保存到 sessionStorage，供导入页面（Import.vue）读取
+   * 
+   * @param {any[]} rows - 要保存的数据行数组
+   */
+  const persistImportPayload = (rows: any[]) => {
+    if (rows?.length) {
+      sessionStorage.setItem(IMPORT_STORAGE_KEY, JSON.stringify(rows))
+    } else {
+      // 如果没有数据，清除 sessionStorage（打开空白导入页）
+      sessionStorage.removeItem(IMPORT_STORAGE_KEY)
+    }
+  }
+  
+  /**
    * 打开导入窗口
-   * @param data - 从父窗口传入的记录列表（可以为空）
+   * 
+   * 工作流程：
+   * 1. 获取当前选中的记录
+   * 2. 将记录转换为导入格式
+   * 3. 保存到 sessionStorage
+   * 4. 导航到导入页面
+   * 
+   * 如果没有选中记录，会打开空白的批量维护页
    */
-  const openImport = (data: any[] = []) => {
-    importInitialData.value = data
-    importDrawerVisible.value = true
-  }
-  
-  /**
-   * 关闭导入窗口
-   */
-  const closeImport = () => {
-    importDrawerVisible.value = false
-    importInitialData.value = []
-  }
-  
-  /**
-   * 导入成功回调
-   */
-  const handleImportSuccess = () => {
-    closeImport()
-    // 刷新列表
-    if (gridRef.value) {
-      gridRef.value.getList()
+  const openImport = async () => {
+    if (!gridRef.value) return
+    
+    try {
+      // 获取选中的记录
+      const selections = await gridRef.value.getSelections()
+      
+      if (!selections?.length) {
+        // 如果没有选中记录，打开空白导入页
+        persistImportPayload([])
+        ElMessage.info('未选择菜品，将打开空白批量维护页')
+        router.push('/product/dish/import')
+        return
+      }
+      
+      // 转换数据格式
+      const payload = selections
+        .map(mapDishRowToImport)
+        .filter((item: any) => item !== null)
+      
+      if (!payload.length) {
+        ElMessage.warning('所选菜品数据异常，已打开空白批量维护页')
+        persistImportPayload([])
+        router.push('/product/dish/import')
+        return
+      }
+      
+      // 保存到 sessionStorage 并导航到导入页面
+      persistImportPayload(payload)
+      router.push('/product/dish/import')
+    } catch (err) {
+      console.error('打开导入窗口失败：', err)
+      ElMessage.error('打开导入窗口失败，请稍后重试')
     }
   }
   
@@ -369,7 +444,7 @@
     {
       stype: 'import' as const,
       label: '导入',
-      onClick: () => openImport()
+      onClick: openImport
     },
     {
       stype: 'batch' as const,
@@ -422,19 +497,5 @@
       @cancel="handleCancel"
     />
     
-    <!-- 导入窗口 -->
-    <ElDrawer
-      v-model="importDrawerVisible"
-      title="表格导入"
-      :size="'100%'"
-      :close-on-click-modal="false"
-      destroy-on-close
-    >
-      <DishImport
-        :initial-data="importInitialData"
-        @cancel="closeImport"
-        @success="handleImportSuccess"
-      />
-    </ElDrawer>
   </template>
   

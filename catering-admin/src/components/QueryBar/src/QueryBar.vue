@@ -32,10 +32,27 @@ const props = withDefaults(defineProps<Props>(), {
 const emit = defineEmits<{
   search: [data: Record<string, any>]
   reset: []
+  register: []
+  fieldChange: [field: string, value: any]
 }>()
 
 /** Search 组件引用 */
 const searchRef = ref<InstanceType<typeof Search>>()
+
+/**
+ * 处理 Search 组件注册事件
+ */
+const handleSearchRegister = () => {
+  emit('register')
+}
+
+/**
+ * 处理字段变化（用于监听用户输入，但不触发查询）
+ */
+const handleFieldChange = (field: string, value: any) => {
+  console.log('QueryBar: 字段变化', { field, value })
+  emit('fieldChange', field, value)
+}
 
 /**
  * 将查询条件配置转换为 FormSchema
@@ -65,7 +82,8 @@ const searchSchema = computed<FormSchema[]>(() => {
         style: {
           width
         },
-        placeholder: condition.placeholder || `请输入${condition.label}`
+        placeholder: condition.placeholder || `请输入${condition.label}`,
+        on: {} as any // 初始化事件对象
       } as any
     }
 
@@ -77,7 +95,12 @@ const searchSchema = computed<FormSchema[]>(() => {
           : condition.options || []
         baseSchema.componentProps = {
           ...baseSchema.componentProps,
-          options
+          options,
+          on: {
+            change: (value: any) => {
+              handleFieldChange(condition.field, value)
+            }
+          }
         }
         break
 
@@ -88,6 +111,11 @@ const searchSchema = computed<FormSchema[]>(() => {
           ...condition,
           style: {
             ...baseSchema.componentProps.style
+          },
+          on: {
+            change: (value: any) => {
+              handleFieldChange(condition.field, value)
+            }
           }
         }
         break
@@ -95,13 +123,19 @@ const searchSchema = computed<FormSchema[]>(() => {
       case 'input':
       default:
         baseSchema.component = 'Input'
-        // 模糊查询框添加特殊属性用于 CSS 选择
-        if (index === fuzzyQueryIndex) {
-          baseSchema.componentProps = {
-            ...baseSchema.componentProps,
-            'data-fuzzy-query': true // 添加 data 属性用于 CSS 选择
-          } as any
-        }
+        // 模糊查询框添加特殊属性用于 CSS 选择，并为 Input 组件添加 input 和 change 事件
+        baseSchema.componentProps = {
+          ...baseSchema.componentProps,
+          ...(index === fuzzyQueryIndex ? { 'data-fuzzy-query': true } : {}),
+          on: {
+            input: (value: any) => {
+              handleFieldChange(condition.field, value)
+            },
+            change: (value: any) => {
+              handleFieldChange(condition.field, value)
+            }
+          }
+        } as any
         break
     }
 
@@ -123,8 +157,29 @@ const handleReset = () => {
   emit('reset')
 }
 
+/**
+ * 设置表单值（用于状态恢复）
+ */
+const setValues = async (data: Record<string, any>) => {
+  if (!data || Object.keys(data).length === 0) {
+    return
+  }
+  
+  if (searchRef.value && typeof searchRef.value.setValues === 'function') {
+    try {
+      await searchRef.value.setValues(data)
+      console.log('QueryBar: 设置表单值成功', data)
+    } catch (err) {
+      console.error('QueryBar: 设置表单值失败', err)
+    }
+  } else {
+    console.warn('QueryBar: Search 组件未准备好，无法设置表单值')
+  }
+}
+
 defineExpose({
-  searchRef
+  searchRef,
+  setValues
 })
 </script>
 
@@ -138,6 +193,7 @@ defineExpose({
       :show-reset="true"
       @search="handleSearch"
       @reset="handleReset"
+      @register="handleSearchRegister"
     />
   </div>
 </template>

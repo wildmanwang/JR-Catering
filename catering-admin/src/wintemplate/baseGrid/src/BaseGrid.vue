@@ -1,5 +1,6 @@
 <script setup lang="tsx">
-import { unref, ref, reactive, watch, onMounted, nextTick } from 'vue'
+import { unref, ref, reactive, watch, onMounted, onBeforeUnmount, nextTick, toRaw } from 'vue'
+import { useRouter } from 'vue-router'
 import { useTable } from '@/hooks/web/useTable'
 import { Table, TableColumn } from '@/components/Table'
 import { ElImage, ElCard, ElMenu, ElMenuItem } from 'element-plus'
@@ -123,25 +124,125 @@ const props = withDefaults(defineProps<Props>(), {
   searchConditions: () => []
 })
 
+// ==================== 路由和状态管理 ====================
+/** 路由实例 */
+const { currentRoute } = useRouter()
+
+/** 页面状态存储的 sessionStorage key（基于路由路径生成唯一key） */
+const PAGE_STATE_KEY = `BASE_GRID_PAGE_STATE_${currentRoute.value.fullPath}`
+
+/** 页面加载状态，用于避免闪屏 */
+const pageReady = ref(false)
+
+/** 状态恢复标志，防止恢复过程中触发 watch */
+const isRestoring = ref(false)
+
+/** 状态保存定时器 */
+let saveStateTimer: ReturnType<typeof setTimeout> | null = null
+
+/** QueryBar 组件引用 */
+const queryBarRef = ref<InstanceType<typeof QueryBar>>()
+
+/** QueryBar 注册状态 */
+const queryBarRegistered = ref(false)
+
+/** 待恢复的查询条件（用于 QueryBar 注册后恢复） */
+const pendingQueryBarParams = ref<Record<string, any> | null>(null)
+
 // ==================== 查询条件 ====================
 /** 查询参数（内部使用） */
 const internalSearchParams = ref<Record<string, any>>({})
 
+/** 表单显示值（用户输入的所有条件，包括未执行的） */
+const formDisplayParams = ref<Record<string, any>>({})
+
 /**
  * 处理查询
  */
-const handleSearch = (data: any) => {
-  internalSearchParams.value = { ...data }
+const handleSearch = async (data: any) => {
+  const rawData = toRaw(data)
+  
+  // 更新查询参数（已执行的查询条件）
+  internalSearchParams.value = { ...rawData }
+  
+  // 同时更新表单显示值
+  const filteredParams: Record<string, any> = {}
+  Object.keys(rawData).forEach(key => {
+    const value = rawData[key]
+    // 只保存非空值
+    if (value !== null && value !== undefined && value !== '' && 
+        !(Array.isArray(value) && value.length === 0)) {
+      filteredParams[key] = value
+    }
+  })
+  formDisplayParams.value = filteredParams
+  
   currentPage.value = 1
+  await savePageState()
   getList()
+}
+
+/**
+ * 处理 QueryBar 注册事件
+ */
+const handleQueryBarRegister = async () => {
+  queryBarRegistered.value = true
+  
+  // 如果有待恢复的查询条件，立即恢复（减少 nextTick 调用）
+  if (pendingQueryBarParams.value && queryBarRef.value) {
+    await nextTick()
+    if (typeof queryBarRef.value.setValues === 'function') {
+      await queryBarRef.value.setValues(pendingQueryBarParams.value)
+      formDisplayParams.value = { ...pendingQueryBarParams.value }
+      pendingQueryBarParams.value = null
+    }
+  }
+}
+
+/**
+ * 处理 QueryBar 字段变化事件
+ * 只更新表单显示值（formDisplayParams），不更新已执行的查询条件（internalSearchParams）
+ */
+const handleQueryBarFieldChange = (field: string, value: any) => {
+  if (!pageReady.value || isRestoring.value) {
+    console.log('BaseGrid: 忽略字段变化（页面未准备好或正在恢复）', { field, value, pageReady: pageReady.value, isRestoring: isRestoring.value })
+    return
+  }
+  
+  console.log('BaseGrid: 处理字段变化', { field, value })
+  
+  // 只更新 formDisplayParams（表单显示值），不更新 internalSearchParams
+  if (!formDisplayParams.value) {
+    formDisplayParams.value = {}
+  }
+  
+  // 如果值不为空，保存；如果为空，删除该字段
+  if (value !== null && value !== undefined && value !== '' && 
+      !(Array.isArray(value) && value.length === 0)) {
+    formDisplayParams.value[field] = value
+  } else {
+    delete formDisplayParams.value[field]
+  }
+  
+  console.log('BaseGrid: 更新后的 formDisplayParams', formDisplayParams.value)
+  
+  // 自动保存状态（debounce）
+  if (saveStateTimer) {
+    clearTimeout(saveStateTimer)
+  }
+  saveStateTimer = setTimeout(async () => {
+    await savePageState()
+  }, 500)
 }
 
 /**
  * 处理重置
  */
-const handleReset = () => {
+const handleReset = async () => {
   internalSearchParams.value = {}
+  formDisplayParams.value = {}
   currentPage.value = 1
+  await savePageState()
   getList()
 }
 
@@ -197,7 +298,7 @@ const initQuickQueryList = async () => {
 /**
  * 处理快捷查询列表选择
  */
-const handleQuickQuerySelect = (index: string) => {
+const handleQuickQuerySelect = async (index: string) => {
   if (!props.quickQueryList) {
     return
   }
@@ -212,25 +313,19 @@ const handleQuickQuerySelect = (index: string) => {
     if (selected.id === null || selected.id === undefined || selected.id === '') {
       // "（全部）"选项，删除该字段
       delete internalSearchParams.value[field]
+      delete formDisplayParams.value[field]
     } else {
       // 设置查询字段值
       internalSearchParams.value[field] = selected.id
+      formDisplayParams.value[field] = selected.id
     }
 
     // 重置到第一页并刷新列表
     currentPage.value = 1
+    await savePageState()
     getList()
   }
 }
-
-// 监听 quickQueryList 变化，重新初始化
-watch(
-  () => props.quickQueryList,
-  () => {
-    initQuickQueryList()
-  },
-  { immediate: true }
-)
 
 // ==================== ElMenu 高度处理 ====================
 /** ElMenu 容器引用 */
@@ -403,15 +498,121 @@ const debouncedSetMenuMaxHeight = () => {
   }, 300) // 增加延迟时间
 }
 
-onMounted(() => {
+onMounted(async () => {
+  // 先不显示页面，等待状态恢复完成
+  isRestoring.value = true
+  
+  // 初始化快捷查询列表（如果存在）
   if (props.quickQueryList) {
-    // 延迟执行，确保 DOM 完全渲染
-    setTimeout(() => {
+    await initQuickQueryList()
+  }
+  
+  // 恢复页面状态
+  const state = restorePageState()
+  if (state) {
+    // 恢复分页状态（同步操作，立即生效）
+    if (typeof state.currentPage === 'number' && state.currentPage > 0) {
+      currentPage.value = state.currentPage
+    }
+    if (typeof state.pageSize === 'number' && state.pageSize > 0) {
+      pageSize.value = state.pageSize
+    }
+    
+    // 恢复查询条件
+    if (state.formDisplayParams || state.executedSearchParams) {
+      // 恢复表单显示值
+      if (state.formDisplayParams && Object.keys(state.formDisplayParams).length > 0) {
+        // 先保存到 formDisplayParams
+        formDisplayParams.value = { ...state.formDisplayParams }
+        
+        // 恢复 QueryBar 表单显示值（异步进行，不阻塞页面显示）
+        const restoreQueryBarValues = async () => {
+          // 减少重试次数和延迟时间
+          let retries = 0
+          while (retries < 10 && (!queryBarRegistered.value || !queryBarRef.value)) {
+            await new Promise(resolve => setTimeout(resolve, 20))
+            retries++
+          }
+          
+          if (queryBarRef.value && typeof queryBarRef.value.setValues === 'function') {
+            // 减少 nextTick 调用次数
+            await nextTick()
+            await queryBarRef.value.setValues(state.formDisplayParams)
+            console.log('BaseGrid: 恢复 QueryBar 表单值', state.formDisplayParams)
+          } else {
+            console.warn('BaseGrid: QueryBar 未准备好，无法恢复表单值')
+          }
+        }
+        
+        // 异步恢复 QueryBar 值，不阻塞页面显示
+        if (queryBarRegistered.value && queryBarRef.value) {
+          // QueryBar 已注册，异步恢复
+          restoreQueryBarValues()
+        } else {
+          // QueryBar 未注册，保存待恢复的值
+          pendingQueryBarParams.value = { ...state.formDisplayParams }
+          // 减少延迟时间
+          setTimeout(() => {
+            restoreQueryBarValues()
+          }, 50)
+        }
+      }
+      
+      // 使用已执行的查询条件执行查询
+      if (state.executedSearchParams && Object.keys(state.executedSearchParams).length > 0) {
+        internalSearchParams.value = { ...state.executedSearchParams }
+      } else {
+        // 如果没有已执行的查询条件，使用空查询条件
+        internalSearchParams.value = {}
+      }
+    }
+    
+    // 恢复快捷查询选择
+    if (state.activeQuickQueryIndex !== undefined && props.quickQueryList) {
+      activeQuickQueryIndex.value = state.activeQuickQueryIndex
+    }
+    
+    // 触发数据加载（使用已执行的查询条件）
+    // 先显示页面，再异步加载数据，避免阻塞渲染
+    getList().then(() => {
+      // 数据加载完成后，异步恢复表格selection状态
+      if (state.selectedIds && Array.isArray(state.selectedIds) && state.selectedIds.length > 0) {
+        nextTick(() => {
+          restoreTableSelection(state.selectedIds)
+        })
+      }
+    })
+  } else {
+    // 如果没有恢复的状态，正常初始化（异步加载，不阻塞）
+    getList()
+  }
+  
+  // 状态恢复完成，立即显示页面（不等待数据加载）
+  isRestoring.value = false
+  pageReady.value = true
+  
+  // 设置快捷查询菜单高度（异步进行，不阻塞页面显示）
+  if (props.quickQueryList) {
+    // 减少延迟时间
+    nextTick(() => {
       setMenuMaxHeight()
-    }, 200)
+    })
     
     // 监听窗口大小变化，重新计算高度
     window.addEventListener('resize', debouncedSetMenuMaxHeight)
+  }
+})
+
+// 组件卸载前保存状态
+onBeforeUnmount(() => {
+  if (saveStateTimer) {
+    clearTimeout(saveStateTimer)
+  }
+  savePageState()
+  
+  // 移除窗口大小监听器
+  if (props.quickQueryList) {
+    window.removeEventListener('resize', debouncedSetMenuMaxHeight)
   }
 })
 
@@ -493,6 +694,108 @@ const { dataList, loading, total, pageSize, currentPage } = tableState
 const { getList, getSelections } = tableMethods
 
 const { showAction, nodeKey, reserveSelection } = props
+
+// ==================== 状态保存和恢复 ====================
+
+// 监听数据列表、分页、快捷查询变化，自动保存状态（debounce）
+// 注意：必须在 dataList、currentPage、pageSize 定义之后才能使用
+watch(
+  [() => dataList.value, () => currentPage.value, () => pageSize.value, () => activeQuickQueryIndex.value],
+  async () => {
+    // 如果正在恢复状态，不触发保存，避免多次刷新
+    if (pageReady.value && !isRestoring.value) {
+      if (saveStateTimer) {
+        clearTimeout(saveStateTimer)
+      }
+      saveStateTimer = setTimeout(async () => {
+        await savePageState()
+      }, 500)
+    }
+  },
+  { deep: true }
+)
+
+/**
+ * 保存页面状态到 sessionStorage
+ */
+const savePageState = async () => {
+  try {
+    // 获取当前选中的行ID
+    const selections = typeof getSelections === 'function' ? await getSelections() : []
+    const selectedIds = selections.map((row: any) => row?.[nodeKey]).filter((id: any) => id !== undefined)
+    
+    // 使用toRaw确保获取原始值
+    const formDisplayParamsRaw = toRaw(formDisplayParams.value) || {}
+    const executedSearchParams = toRaw(internalSearchParams.value) || {}
+    
+    const state = {
+      formDisplayParams: formDisplayParamsRaw,      // 表单显示值（用户输入的所有条件，包括未执行的）
+      executedSearchParams,   // 已执行的查询条件（只在点击"查询"按钮时更新）
+      currentPage: currentPage.value,
+      pageSize: pageSize.value,
+      activeQuickQueryIndex: activeQuickQueryIndex.value,
+      selectedIds: selectedIds
+    }
+    sessionStorage.setItem(PAGE_STATE_KEY, JSON.stringify(state))
+  } catch (err) {
+    console.error('保存页面状态失败：', err)
+  }
+}
+
+/**
+ * 从 sessionStorage 恢复页面状态
+ */
+const restorePageState = () => {
+  try {
+    const cache = sessionStorage.getItem(PAGE_STATE_KEY)
+    if (!cache) return null
+    const state = JSON.parse(cache)
+    return state
+  } catch (err) {
+    console.error('恢复页面状态失败：', err)
+    return null
+  }
+}
+
+/**
+ * 恢复表格的selection状态
+ */
+const restoreTableSelection = async (selectedIds: any[]) => {
+  if (!selectedIds || !Array.isArray(selectedIds) || selectedIds.length === 0) return
+  
+  try {
+    // 异步恢复，不阻塞页面渲染
+    nextTick(() => {
+      // 获取ElTable实例
+      tableMethods.getElTableExpose().then((elTable) => {
+        if (!elTable) return
+        
+        // 根据ID恢复选中状态
+        selectedIds.forEach((id) => {
+          const row = dataList.value.find((item: any) => item?.[nodeKey] === id)
+          if (row) {
+            elTable.toggleRowSelection(row, true)
+          }
+        })
+      }).catch((err) => {
+        console.error('恢复表格选择状态失败', err)
+      })
+    })
+  } catch (err) {
+    console.error('恢复表格选择状态失败', err)
+  }
+}
+
+/**
+ * 清除页面状态缓存
+ */
+const clearPageState = () => {
+  try {
+    sessionStorage.removeItem(PAGE_STATE_KEY)
+  } catch (err) {
+    console.error('清除页面状态失败：', err)
+  }
+}
 
 // ==================== 工具函数 ====================
 /**
@@ -807,13 +1110,16 @@ defineExpose({
 </script>
 
 <template>
-  <div class="base-grid-wrapper">
+  <div class="base-grid-wrapper" v-show="pageReady">
     <!-- 查询条件区域 -->
     <QueryBar 
       v-if="props.searchConditions && props.searchConditions.length > 0"
+      ref="queryBarRef"
       :conditions="props.searchConditions"
       @search="handleSearch"
       @reset="handleReset"
+      @register="handleQueryBarRegister"
+      @field-change="handleQueryBarFieldChange"
     />
 
     <!-- 内容区域：左侧快捷查询列表 + 右侧表格 -->
