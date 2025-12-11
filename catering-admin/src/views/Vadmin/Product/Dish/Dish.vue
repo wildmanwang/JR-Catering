@@ -456,7 +456,8 @@
   // ==================== 生命周期 ====================
   onMounted(async () => {
     await getOptions()
-    await fetchKitchens() // 初始化厨部选项数据
+    // 注意：fetchKitchens 不需要在这里调用，因为 BaseGrid 的 quickQueryList.data 会自动调用
+    // 如果在这里调用会导致重复请求
   })
   </script>
   

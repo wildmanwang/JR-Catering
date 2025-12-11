@@ -18,6 +18,7 @@ const { addRoute, push, currentRoute } = useRouter()
 const authStore = useAuthStore()
 const appStore = useAppStore()
 const permissionStore = usePermissionStore()
+const { removeStorage } = useStorage()
 
 const footer = computed(() => appStore.getFooter)
 
@@ -83,9 +84,6 @@ watch(
 
 // 提交
 const save = async () => {
-  if (authStore.getUser.id === 1) {
-    return ElMessage.warning('编辑账号为演示账号，无权限操作！')
-  }
   const elForm = await getElFormExpose()
   const valid = await elForm?.validate()
   if (valid) {
@@ -94,6 +92,10 @@ const save = async () => {
     try {
       const res = await postCurrentUserResetPassword(formData)
       if (res) {
+        // 清除"记住我"相关的存储，防止浏览器自动填充旧密码
+        removeStorage('remember_user')
+        removeStorage('remember_telephone')
+        
         // 是否使用动态路由
         getMenu()
       } else {

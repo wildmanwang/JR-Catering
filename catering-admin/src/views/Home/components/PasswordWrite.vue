@@ -7,10 +7,12 @@ import { useAuthStore } from '@/store/modules/auth'
 import { ElMessage } from 'element-plus'
 import { postCurrentUserResetPassword } from '@/api/vadmin/system/user'
 import { BaseButton } from '@/components/Button'
+import { useStorage } from '@/hooks/web/useStorage'
 
 const { required } = useValidator()
 
 const authStore = useAuthStore()
+const { removeStorage } = useStorage()
 
 const formSchema = reactive<FormSchema[]>([
   {
@@ -90,9 +92,6 @@ const loading = ref(false)
 
 // 提交
 const save = async () => {
-  if (authStore.getUser.id === 1) {
-    return ElMessage.warning('编辑账号为演示账号，无权限操作！')
-  }
   const elForm = await getElFormExpose()
   const valid = await elForm?.validate()
   if (valid) {
@@ -102,6 +101,11 @@ const save = async () => {
       const res = await postCurrentUserResetPassword(formData)
       if (res) {
         elForm?.resetFields()
+        
+        // 清除"记住我"相关的存储，防止浏览器自动填充旧密码
+        removeStorage('remember_user')
+        removeStorage('remember_telephone')
+        
         authStore.logout()
         ElMessage.warning('请重新登录')
       }

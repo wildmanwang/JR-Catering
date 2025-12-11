@@ -76,7 +76,7 @@ const schema = reactive<FormSchema[]>([
   {
     field: 'password',
     label: t('login.password'),
-    value: 'kinit2022',
+    value: '',
     component: 'InputPassword',
     colProps: {
       span: 24
@@ -85,7 +85,8 @@ const schema = reactive<FormSchema[]>([
       style: {
         width: '100%'
       },
-      placeholder: t('login.passwordPlaceholder')
+      placeholder: t('login.passwordPlaceholder'),
+      autocomplete: 'off'
     }
   },
   {

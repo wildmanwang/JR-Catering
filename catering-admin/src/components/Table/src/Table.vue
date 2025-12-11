@@ -219,7 +219,7 @@ export default defineComponent({
       default: ''
     }
   },
-  emits: ['update:pageSize', 'update:currentPage', 'register', 'refresh'],
+  emits: ['update:pageSize', 'update:currentPage', 'register', 'refresh', 'selection-change'],
   setup(props, { attrs, emit, slots, expose }) {
     const elTableRef = ref<ComponentRef<typeof ElTable>>()
 
@@ -586,6 +586,9 @@ export default defineComponent({
                 ref={elTableRef}
                 data={unref(getProps).data}
                 {...unref(getBindValue)}
+                onSelectionChange={(selection: any[]) => {
+                  emit('selection-change', selection)
+                }}
                 header-cell-style={
                   appStore.getIsDark
                     ? { color: '#CFD3DC', 'background-color': '#000' }

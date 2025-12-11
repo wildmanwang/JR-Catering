@@ -28,6 +28,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, onUnmounted, watch, nextTick, h, toRaw } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElTable, ElTableColumn, ElInput, ElInputNumber, ElSelect, ElOption } from 'element-plus'
+import { useTagsViewStoreWithOut } from '@/store/modules/tagsView'
 
 /**
  * 列配置接口
@@ -87,6 +88,9 @@ const emit = defineEmits<{
 /** Router 实例（用于获取当前路由路径） */
 const router = useRouter()
 
+/** 标签页 Store（用于检测标签页是否被关闭） */
+const tagsViewStore = useTagsViewStoreWithOut()
+
 /** 页面状态存储的 sessionStorage key（基于当前路由路径） */
 const PAGE_STATE_KEY = computed(() => {
   return `IMPORT_GRID_STATE_${router.currentRoute.value.fullPath}`
@@ -100,6 +104,10 @@ const isRestoring = ref(false)
 
 /** 状态保存定时器 */
 let saveStateTimer: NodeJS.Timeout | null = null
+
+/** 组件挂载时的路由信息（用于检测标签页关闭） */
+let mountedRoutePath: string | null = null
+let mountedRouteFullPath: string | null = null
 
 /** 表格数据列表 */
 const dataList = ref<any[]>([])
@@ -137,13 +145,18 @@ const editableFields = computed(() => {
 // ==================== 数据加载 ====================
 
 /**
- * 保存页面状态到 sessionStorage
+ * 保存页面状态
+ * 同时写入 tagsViewStore.pageStates（内存）和 sessionStorage（刷新恢复）
  */
 const savePageState = async () => {
   try {
     const state = {
       dataList: toRaw(dataList.value) || []
     }
+    
+    // 同时保存到内存（tagsViewStore）和 sessionStorage
+    const fullPath = router.currentRoute.value.fullPath
+    tagsViewStore.setPageState(fullPath, state)
     sessionStorage.setItem(PAGE_STATE_KEY.value, JSON.stringify(state))
     console.log('ImportGrid: 保存页面状态', state)
   } catch (err) {
@@ -152,15 +165,33 @@ const savePageState = async () => {
 }
 
 /**
- * 从 sessionStorage 恢复页面状态
+ * 恢复页面状态
+ * 优先从 tagsViewStore.pageStates（内存）读取，如果没有则从 sessionStorage 恢复并同步到 tagsViewStore
  */
 const restorePageState = () => {
   try {
+    const fullPath = router.currentRoute.value.fullPath
+    
+    // 优先从内存（tagsViewStore）读取
+    let state = tagsViewStore.getPageState(fullPath)
+    
+    if (state) {
+      // 内存中有状态，直接返回
+      console.log('ImportGrid: 从内存恢复页面状态', state)
+      return state
+    }
+    
+    // 内存中没有，尝试从 sessionStorage 恢复（页面刷新场景）
     const cache = sessionStorage.getItem(PAGE_STATE_KEY.value)
-    if (!cache) return null
-    const state = JSON.parse(cache)
-    console.log('ImportGrid: 恢复页面状态', state)
-    return state
+    if (cache) {
+      state = JSON.parse(cache)
+      // 同步到 tagsViewStore（内存）
+      tagsViewStore.setPageState(fullPath, state)
+      console.log('ImportGrid: 从 sessionStorage 恢复页面状态并同步到内存', state)
+      return state
+    }
+    
+    return null
   } catch (err) {
     console.error('ImportGrid: 恢复页面状态失败', err)
     return null
@@ -169,11 +200,19 @@ const restorePageState = () => {
 
 /**
  * 清除页面状态缓存
+ * 同时清理 tagsViewStore.pageStates（内存）和 sessionStorage
+ * @param stateKey - 可选的状态 key，如果不提供则使用默认的 PAGE_STATE_KEY
+ * @param fullPath - 可选的路由完整路径，如果不提供则使用当前路由的 fullPath
  */
-const clearPageState = () => {
+const clearPageState = (stateKey?: string, fullPath?: string) => {
   try {
-    sessionStorage.removeItem(PAGE_STATE_KEY.value)
-    console.log('ImportGrid: 清除页面状态')
+    const keyToRemove = stateKey || PAGE_STATE_KEY.value
+    const pathToClear = fullPath || router.currentRoute.value.fullPath
+    
+    // 同时清理内存和 sessionStorage
+    tagsViewStore.clearPageState(pathToClear)
+    sessionStorage.removeItem(keyToRemove)
+    console.log('ImportGrid: 清除页面状态', { stateKey: keyToRemove, fullPath: pathToClear })
   } catch (err) {
     console.error('ImportGrid: 清除页面状态失败', err)
   }
@@ -1405,6 +1444,10 @@ onMounted(async () => {
   // 先不显示页面，等待状态恢复完成
   isRestoring.value = true
   
+  // 保存组件挂载时的路由信息（用于检测标签页关闭）
+  mountedRoutePath = router.currentRoute.value.path
+  mountedRouteFullPath = router.currentRoute.value.fullPath
+  
   // 优先恢复页面状态（如果存在）
   const state = restorePageState()
   if (state && state.dataList && Array.isArray(state.dataList) && state.dataList.length > 0) {
@@ -1604,7 +1647,7 @@ onMounted(async () => {
  * 组件卸载前保存状态
  */
 onBeforeUnmount(() => {
-  // 保存页面状态
+  // 先保存状态（无论切换还是关闭都先保存，确保数据不丢失）
   savePageState()
   
   // 清除定时器
@@ -1612,6 +1655,64 @@ onBeforeUnmount(() => {
     clearTimeout(saveStateTimer)
     saveStateTimer = null
   }
+  
+  // 检查标签页是否被关闭
+  // 注意：必须使用挂载时的路由信息，因为关闭标签页时路由会跳转到其他页面
+  if (!mountedRoutePath || !mountedRouteFullPath) {
+    console.warn('ImportGrid: 无法检查标签页状态，挂载路由信息丢失')
+    return
+  }
+  
+  const pathToCheck = mountedRoutePath
+  const fullPathToCheck = mountedRouteFullPath
+  
+  // 延迟检查，确保标签页状态已经更新
+  const checkAndClear = () => {
+    const visitedViews = tagsViewStore.getVisitedViews
+    // 检查挂载时的路由是否还在 visitedViews 中（使用 path 匹配，因为 store 使用 path）
+    const isStillOpen = visitedViews.some(view => view.path === pathToCheck)
+    
+    if (!isStillOpen) {
+      // 标签页已被关闭，清空状态数据
+      // 使用保存的 fullPath 来生成正确的 key
+      const stateKey = `IMPORT_GRID_STATE_${fullPathToCheck}`
+      clearPageState(stateKey, fullPathToCheck)
+      console.log('ImportGrid: 检测到标签页关闭，已清空页面状态', { 
+        mountedPath: pathToCheck, 
+        mountedFullPath: fullPathToCheck,
+        currentPath: router.currentRoute.value.path,
+        currentFullPath: router.currentRoute.value.fullPath,
+        stateKey,
+        visitedViewsCount: visitedViews.length,
+        visitedPaths: visitedViews.map(v => v.path)
+      })
+      return true
+    } else {
+      // 标签页仍然打开，只是切换了路由，保持状态数据
+      console.log('ImportGrid: 检测到路由切换，保持页面状态', { 
+        mountedPath: pathToCheck, 
+        mountedFullPath: fullPathToCheck,
+        currentPath: router.currentRoute.value.path,
+        currentFullPath: router.currentRoute.value.fullPath,
+        visitedViewsCount: visitedViews.length,
+        visitedPaths: visitedViews.map(v => v.path)
+      })
+      return false
+    }
+  }
+  
+  // 延迟检查，确保标签页状态已经更新
+  nextTick(() => {
+    // 第一次检查（50ms后）
+    setTimeout(() => {
+      if (checkAndClear()) return
+      
+      // 第二次检查（200ms后，如果第一次检查标签页还在）
+      setTimeout(() => {
+        checkAndClear()
+      }, 150)
+    }, 50)
+  })
 })
 
 // 暴露方法供父组件调用
