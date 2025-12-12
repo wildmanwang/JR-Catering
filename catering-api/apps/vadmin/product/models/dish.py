@@ -58,7 +58,7 @@ class Dish(BaseModel):
     __table_args__ = ({'comment': '菜品表'})
 
     name_unique: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, comment="名称")
-    kitchen_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="类别")
+    kitchen_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="厨部")
     name_display: Mapped[str | None] = mapped_column(String(255), comment="显示名称")
     name_english: Mapped[str | None] = mapped_column(String(255), comment="英文名称")
     spec: Mapped[str | None] = mapped_column(String(255), comment="规格")

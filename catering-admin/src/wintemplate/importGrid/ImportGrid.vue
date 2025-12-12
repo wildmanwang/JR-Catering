@@ -38,8 +38,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, onUnmounted, watch, nextTick, toRaw } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElTable, ElTableColumn, ElInput, ElInputNumber, ElSelect, ElOption } from 'element-plus'
+import { ElTable, ElTableColumn, ElInput, ElInputNumber, ElSelect, ElOption, ElImage, ElUpload, ElIcon, ElMessage, UploadProps } from 'element-plus'
+import { UploadFilled, Delete } from '@element-plus/icons-vue'
 import { useTagsViewStoreWithOut } from '@/store/modules/tagsView'
+import { useAuthStore } from '@/store/modules/auth'
 
 /**
  * 列配置接口
@@ -116,6 +118,13 @@ const router = useRouter()
 
 /** 标签页 Store（用于检测标签页是否被关闭） */
 const tagsViewStore = useTagsViewStoreWithOut()
+
+/** Auth Store（用于获取上传 token） */
+const authStore = useAuthStore()
+const token = computed(() => authStore.getToken)
+
+/** 默认图片路径 */
+const DEFAULT_IMAGE = '/src/assets/imgs/no_image.png'
 
 /** 页面状态存储的 sessionStorage key（基于当前路由路径） */
 const PAGE_STATE_KEY = computed(() => {
@@ -495,6 +504,11 @@ const handleCellClick = (row: any, column: any, cell?: HTMLElement, event?: Mous
   const col = props.columns.find(c => c.field === field)
   if (col && col.editable === false) return
   
+  // image 类型列始终处于编辑模式，不需要进入编辑状态
+  if (col && col.type === 'image') {
+    return
+  }
+  
   // 如果点击的是正在编辑的单元格，不处理（保持编辑状态）
   if (isEditing(rowIndex, field)) {
     return
@@ -550,6 +564,11 @@ const handleCellDblclick = (row: any, column: any, cell?: HTMLElement, event?: M
   const col = props.columns.find(c => c.field === field)
   if (col && col.editable === false) return
   
+  // image 类型列始终处于编辑模式，不需要进入编辑状态
+  if (col && col.type === 'image') {
+    return
+  }
+  
   // 双击时获得焦点并进入编辑模式
   // 先设置选中状态
   document.querySelectorAll('.el-table__cell.selected-cell').forEach(el => {
@@ -584,6 +603,11 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
   
   const col = props.columns.find(c => c.field === field)
   if (col && col.editable === false) return
+  
+  // image 类型列始终处于编辑模式，不需要进入编辑状态
+  if (col && col.type === 'image') {
+    return
+  }
   
   // 如果已经在编辑状态，不处理（让输入框自己处理）
   if (isEditing(rowIndex, field)) {
@@ -1008,7 +1032,263 @@ const formatCellValue = (value: any, column: ImportGridColumn) => {
     return option ? option.label : value
   }
   
+  // image 类型不显示文本，由专门的组件处理
+  if (column.type === 'image') {
+    return ''
+  }
+  
   return String(value)
+}
+
+/**
+ * 处理图片上传前的验证
+ */
+const beforeImageUpload: UploadProps['beforeUpload'] = (rawFile) => {
+  const isImage = ['image/jpeg', 'image/gif', 'image/png'].includes(rawFile.type)
+  const isLtSize = rawFile.size / 1024 / 1024 < 2
+  if (!isImage) {
+    ElMessage.error('上传图片必须是 JPG/GIF/PNG/ 格式!')
+  }
+  if (!isLtSize) {
+    ElMessage.error('上传图片大小不能超过2MB!')
+  }
+  return isImage && isLtSize
+}
+
+/**
+ * 处理图片文件变化
+ */
+const handleImageFileChange = (file: any, rowIndex: number, field: string) => {
+  const row = dataList.value[rowIndex]
+  if (!row) return
+  
+  const imageField = field
+  const imageDisplayField = `${field}_display`
+  
+  // 确保字段存在
+  if (!row[imageField]) {
+    row[imageField] = []
+  }
+  if (!row[imageDisplayField]) {
+    row[imageDisplayField] = []
+  }
+  
+  if (file.raw) {
+    const exists = row[imageField].some((item: any) => {
+      if (Array.isArray(item)) {
+        return item[2] === file.name
+      }
+      return false
+    })
+    
+    if (!exists) {
+      const previewUrl = URL.createObjectURL(file.raw)
+      row[imageDisplayField].push(previewUrl)
+      row[imageField].push([previewUrl, 'add', file.name, file])
+      // 图片上传后，修复 SVG 图标尺寸
+      nextTick(() => fixSvgIconSize())
+    }
+  }
+}
+
+/**
+ * 处理删除图片
+ */
+const handleRemoveImage = (index: number, rowIndex: number, field: string) => {
+  const row = dataList.value[rowIndex]
+  if (!row) return
+  
+  const imageField = field
+  const imageDisplayField = `${field}_display`
+  
+  if (Array.isArray(row[imageField][index])) {
+    // 新上传的图片，直接删除
+    row[imageDisplayField].splice(index, 1)
+    row[imageField].splice(index, 1)
+    // 删除图片后，修复 SVG 图标尺寸
+    nextTick(() => fixSvgIconSize())
+  } else {
+    // 已存在的图片，标记为删除
+    const imageUrl = row[imageField][index]
+    if (typeof imageUrl === 'string') {
+      const [path] = imageUrl.split('?')
+      row[imageDisplayField][index] = `${path}?delete`
+      row[imageField][index] = `${path}?delete`
+    }
+  }
+}
+
+/**
+ * 处理图片拖拽排序
+ */
+const dragIndex = ref<Record<string, number>>({})
+const dragOverIndex = ref<Record<string, number>>({})
+
+const handleDragStart = (index: number, rowIndex: number, field: string, event: DragEvent) => {
+  const key = `${rowIndex}-${field}`
+  dragIndex.value[key] = index
+  event.dataTransfer!.effectAllowed = 'move'
+  event.dataTransfer!.setData('text/plain', index.toString())
+  setTimeout(() => {
+    (event.target as HTMLElement).classList.add('dragging')
+  }, 0)
+}
+
+const handleDragOver = (event: DragEvent) => {
+  event.preventDefault()
+  event.dataTransfer!.dropEffect = 'move'
+}
+
+const handleDragEnter = (index: number, rowIndex: number, field: string, event: DragEvent) => {
+  event.preventDefault()
+  const key = `${rowIndex}-${field}`
+  dragOverIndex.value[key] = index
+}
+
+const handleDragLeave = (_rowIndex: number, _field: string, event: DragEvent) => {
+  if (!(event.currentTarget as HTMLElement).contains(event.relatedTarget as HTMLElement)) {
+    const key = `${_rowIndex}-${_field}`
+    dragOverIndex.value[key] = -1
+  }
+}
+
+const handleDrop = (targetIndex: number, rowIndex: number, field: string, event: DragEvent) => {
+  event.preventDefault()
+  const sourceIndex = parseInt(event.dataTransfer!.getData('text/plain'))
+  const key = `${rowIndex}-${field}`
+  
+  if (sourceIndex !== targetIndex && sourceIndex >= 0 && targetIndex >= 0) {
+    const row = dataList.value[rowIndex]
+    if (!row) return
+    
+    const imageField = field
+    const imageDisplayField = `${field}_display`
+    
+    const images_display = [...row[imageDisplayField]]
+    const [movedItem1] = images_display.splice(sourceIndex, 1)
+    images_display.splice(targetIndex, 0, movedItem1)
+    row[imageDisplayField] = images_display
+
+    const images_data = [...row[imageField]]
+    const [movedItem2] = images_data.splice(sourceIndex, 1)
+    images_data.splice(targetIndex, 0, movedItem2)
+    row[imageField] = images_data
+  }
+  
+  dragIndex.value[key] = -1
+  dragOverIndex.value[key] = -1
+}
+
+const handleDragEnd = (_rowIndex: number, _field: string) => {
+  const key = `${_rowIndex}-${_field}`
+  dragIndex.value[key] = -1
+  dragOverIndex.value[key] = -1
+  const draggingElements = document.querySelectorAll('.dragging')
+  draggingElements.forEach(el => {
+    el.classList.remove('dragging')
+  })
+}
+
+/**
+ * 生成图片预览列表：过滤掉删除标记和 OSS 参数
+ */
+const generatePreviewList = (images: any[]): string[] => {
+  if (!images || !Array.isArray(images)) {
+    return []
+  }
+  return images
+    .filter((img: any) => {
+      if (typeof img === 'string') {
+        return img && !img.endsWith('?delete')
+      }
+      if (Array.isArray(img)) {
+        return img.length > 0
+      }
+      return false
+    })
+    .map((img: any) => {
+      if (typeof img === 'string') {
+        // 移除 OSS 参数和删除标记，使用原始图片进行预览
+        const [path] = img.split('?')
+        return path || img
+      }
+      if (Array.isArray(img) && img.length > 0) {
+        return img[0]
+      }
+      return img
+    })
+    .filter(Boolean)
+}
+
+/**
+ * 图片加载失败处理
+ */
+const handleImageError = (e: Event) => {
+  const img = e.target as HTMLImageElement
+  if (img && img.src !== DEFAULT_IMAGE) {
+    img.src = DEFAULT_IMAGE
+  }
+}
+
+/**
+ * 处理删除行
+ */
+const handleDeleteRow = (rowIndex: number) => {
+  if (rowIndex >= 0 && rowIndex < dataList.value.length) {
+    dataList.value.splice(rowIndex, 1)
+  }
+}
+
+/**
+ * 修复单个 SVG 图标的尺寸和样式
+ * @param svgElement SVG 元素
+ */
+const fixSingleSvgIcon = (svgElement: SVGElement) => {
+  // 设置 SVG 属性
+  svgElement.setAttribute('width', '24')
+  svgElement.setAttribute('height', '24')
+  
+  // 设置尺寸样式（保持原始 viewBox，不修改以确保内容正确显示）
+  const sizeStyles = {
+    width: '24px',
+    height: '24px',
+    'max-width': '24px',
+    'max-height': '24px',
+    'min-width': '24px',
+    'min-height': '24px',
+    'box-sizing': 'border-box',
+    overflow: 'visible',
+    position: 'static',
+    margin: '0'
+  }
+  
+  Object.entries(sizeStyles).forEach(([prop, value]) => {
+    svgElement.style.setProperty(prop, value, 'important')
+  })
+  
+  // 移除可能存在的 transform，避免位置偏移
+  svgElement.style.removeProperty('transform')
+  svgElement.style.removeProperty('transform-origin')
+}
+
+/**
+ * 修复所有上传图标 SVG 元素的尺寸
+ * 确保 SVG 图标尺寸与容器一致（24x24），并正确居中显示
+ */
+const fixSvgIconSize = () => {
+  const selector = '.image-group-uploader-edit .el-icon--upload svg'
+  
+  // 立即执行一次
+  nextTick(() => {
+    const svgElements = document.querySelectorAll(selector)
+    svgElements.forEach((svg) => fixSingleSvgIcon(svg as SVGElement))
+  })
+  
+  // 延迟执行，确保 DOM 完全渲染（处理动态添加的情况）
+  setTimeout(() => {
+    const svgElements = document.querySelectorAll(selector)
+    svgElements.forEach((svg) => fixSingleSvgIcon(svg as SVGElement))
+  }, 100)
 }
 
 /**
@@ -1205,6 +1485,16 @@ onMounted(async () => {
   // 状态恢复完成，显示页面
   isRestoring.value = false
   pageReady.value = true
+  
+  // 修复 SVG 图标尺寸
+  fixSvgIconSize()
+  
+  // 监听数据变化，修复动态添加的 SVG 图标尺寸
+  watch(
+    () => dataList.value,
+    () => nextTick(() => fixSvgIconSize()),
+    { deep: true }
+  )
   
   // 监听全局复制粘贴事件
   document.addEventListener('copy', handleCopy)
@@ -1466,13 +1756,129 @@ defineExpose({
         :key="column.field"
         :prop="column.field"
         :label="column.label"
-        :width="column.width"
-        :min-width="column.minWidth"
+        :width="column.type === 'image' ? undefined : column.width"
+        :min-width="column.type === 'image' ? (column.minWidth || '240px') : column.minWidth"
       >
         <template #default="scope">
           <!-- 编辑模式：数字输入框 -->
           <ElInputNumber
             v-if="isEditing(scope.$index, column.field) && column.editable !== false && column.type === 'number'"
+            :key="`input-number-${scope.$index}-${column.field}`"
+            :data-cell-key="`${scope.$index}-${column.field}`"
+            v-model="scope.row[column.field]"
+            size="small"
+            :controls="false"
+            class="excel-edit-input excel-input-number-left"
+            :style="{ textAlign: 'left' }"
+            @keydown.stop="handleInputKeydown($event, scope.$index, column.field)"
+            @focus="handleInputFocus(scope.$index, column.field)"
+            @blur="handleInputBlur($event, scope.$index, column.field)"
+            @input="handleInputInput(scope.$index, column.field)"
+          />
+          
+          <!-- 编辑模式：下拉选择 -->
+          <ElSelect
+            v-else-if="isEditing(scope.$index, column.field) && column.editable !== false && column.type === 'select' && column.options"
+            :key="`select-${scope.$index}-${column.field}`"
+            :data-cell-key="`${scope.$index}-${column.field}`"
+            v-model="scope.row[column.field]"
+            size="small"
+            class="excel-edit-select"
+            popper-class="excel-select-dropdown"
+            :style="{ width: '100%', minWidth: '100%', maxWidth: '100%', display: 'block' }"
+            :disabled="column.selectProps?.disabled ?? false"
+            :readonly="column.selectProps?.readonly"
+            :clearable="column.selectProps?.clearable"
+            :filterable="column.selectProps?.filterable ?? false"
+            :allow-create="column.selectProps?.allowCreate ?? false"
+            v-bind="column.selectProps || {}"
+            @keydown.stop="handleInputKeydown($event, scope.$index, column.field)"
+            @focus="handleInputFocus(scope.$index, column.field)"
+            @blur="handleInputBlur($event, scope.$index, column.field)"
+            @visible-change="(visible: boolean) => handleSelectVisibleChange(visible, scope.$index, column.field)"
+          >
+            <ElOption
+              v-for="opt in column.options"
+              :key="opt.value"
+              :label="opt.label"
+              :value="opt.value"
+            />
+          </ElSelect>
+          
+          <!-- 图片列：始终显示编辑模式（类似 BaseFree.vue 的新增/修改模式） -->
+          <div
+            v-if="column.type === 'image' && column.editable !== false"
+            :key="`image-${scope.$index}-${column.field}`"
+            class="excel-edit-image"
+            @click.stop
+          >
+            <div class="image-container-edit">
+              <template v-if="scope.row[`${column.field}_display`]">
+                <div
+                  v-for="(image, imgIndex) in scope.row[`${column.field}_display`]"
+                  :key="`${imgIndex}-${image}`"
+                  v-show="image && !image.endsWith('?delete')"
+                  class="image-group-edit"
+                  :class="{
+                    dragging: dragIndex[`${scope.$index}-${column.field}`] === imgIndex,
+                    'drag-over': dragOverIndex[`${scope.$index}-${column.field}`] === imgIndex
+                  }"
+                  draggable="true"
+                  @dragstart="handleDragStart(imgIndex, scope.$index, column.field, $event)"
+                  @dragover="handleDragOver"
+                  @dragenter="handleDragEnter(imgIndex, scope.$index, column.field, $event)"
+                  @dragleave="handleDragLeave(scope.$index, column.field, $event)"
+                  @drop="handleDrop(imgIndex, scope.$index, column.field, $event)"
+                  @dragend="handleDragEnd(scope.$index, column.field)"
+                >
+                  <ElImage
+                    :src="image"
+                    class="image-item-edit"
+                    @error="handleImageError"
+                    :zoom-rate="1.2"
+                    :preview-src-list="generatePreviewList(scope.row[`${column.field}_display`] || [])"
+                    :preview-teleported="true"
+                    :hide-on-click-modal="true"
+                    :initial-index="imgIndex"
+                    fit="cover"
+                    style="width: 100%; height: 100%;"
+                  />
+                  <div
+                    class="remove-btn-edit"
+                    @click.stop="handleRemoveImage(imgIndex, scope.$index, column.field)"
+                  >x</div>
+                </div>
+              </template>
+              <div
+                v-if="!scope.row[`${column.field}_display`] || scope.row[`${column.field}_display`].length < 10"
+                class="image-group-uploader-edit"
+              >
+                <ElUpload
+                  action="/api/vadmin/system/upload/image/to/local"
+                  :data="{ path: 'system' }"
+                  :show-file-list="false"
+                  :multiple="true"
+                  :auto-upload="false"
+                  :before-upload="beforeImageUpload"
+                  @change="(file: any) => handleImageFileChange(file, scope.$index, column.field)"
+                  accept="image/jpeg,image/gif,image/png"
+                  name="file"
+                  :drag="true"
+                  :headers="{ Authorization: token.value }"
+                  :limit="10"
+                >
+                  <div class="upload-content-wrapper">
+                    <ElIcon class="el-icon--upload"><UploadFilled /></ElIcon>
+                    <div class="upload-text-edit">拖拽或点击</div>
+                  </div>
+                </ElUpload>
+              </div>
+            </div>
+          </div>
+          
+          <!-- 编辑模式：数字输入框 -->
+          <ElInputNumber
+            v-else-if="isEditing(scope.$index, column.field) && column.editable !== false && column.type === 'number'"
             :key="`input-number-${scope.$index}-${column.field}`"
             :data-cell-key="`${scope.$index}-${column.field}`"
             v-model="scope.row[column.field]"
@@ -1530,7 +1936,7 @@ defineExpose({
             @update:model-value="handleInputUpdate(scope.$index, column.field, $event)"
           />
           
-          <!-- 显示模式 -->
+          <!-- 显示模式：其他类型 -->
           <span 
             v-else
             class="excel-cell"
@@ -1542,6 +1948,25 @@ defineExpose({
             @keydown="column.editable !== false && handleCellKeydown($event, scope.row, { property: column.field })"
             tabindex="0"
           >{{ formatCellValue(scope.row[column.field], column) }}</span>
+        </template>
+      </ElTableColumn>
+      
+      <!-- Action 列：删除按钮 -->
+      <ElTableColumn
+        label=""
+        width="40"
+        align="center"
+        fixed="right"
+      >
+        <template #default="scope">
+          <div
+            class="action-delete"
+            @click.stop="handleDeleteRow(scope.$index)"
+          >
+            <ElIcon :size="16">
+              <Delete />
+            </ElIcon>
+          </div>
         </template>
       </ElTableColumn>
     </ElTable>
@@ -2558,6 +2983,266 @@ defineExpose({
       text-align: center !important;
     }
   }
+  
+  // ==================== 图片列样式 ====================
+  // 图片列始终显示编辑模式（类似 BaseFree.vue 的新增/修改模式）
+  // image列随内容增长自动伸长，以容纳内容
+  .excel-edit-image {
+    position: relative !important;
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: none !important; // 允许超出，随内容增长
+    height: auto !important; // 改为 auto，让高度由内容决定
+    min-height: auto !important; // 移除固定的 min-height
+    margin: 0 !important;
+    padding: 4px !important;
+    display: block !important;
+    box-sizing: border-box !important;
+    overflow: visible !important; // 改为 visible，不显示滚动条，让内容自然撑开
+    background: transparent !important;
+  }
+  
+  // 确保 image 列的单元格可以自动伸长
+  // 使用更兼容的方式，通过类名选择器
+  .el-table__cell {
+    // 如果单元格包含图片编辑组件，允许自动伸长
+    &:has(.excel-edit-image) {
+      height: auto !important;
+      min-height: 32px !important;
+      white-space: normal !important;
+    }
+  }
+  
+  // 兼容性处理：直接为包含图片编辑的单元格设置样式
+  :deep(.el-table__cell) {
+    .excel-edit-image {
+      // 确保图片容器可以超出单元格宽度
+      max-width: none !important;
+    }
+  }
+  
+  // ==================== Action 列样式 ====================
+  .action-delete {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    cursor: pointer;
+    color: inherit; // 使用当前字体颜色
+    transition: color 0.2s ease;
+    
+    &:hover {
+      color: #f56c6c; // hover 时变红色
+    }
+  }
+  
+  .image-container-edit {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 0;
+  }
+  
+  .image-group-edit {
+    position: relative;
+    width: 60px;
+    height: 60px;
+    margin: 0;
+    cursor: move;
+  }
+  
+  .image-item-edit {
+    width: 100%;
+    height: 100%;
+    border-radius: 4px;
+    border: 1px solid #dcdfe6;
+    transition: all 0.3s ease;
+  }
+  
+  .image-item-edit:hover {
+    transform: scale(1.05);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  }
+  
+  .image-group-edit :deep(.el-image) {
+    width: 100%;
+    height: 100%;
+    border-radius: 4px;
+  }
+  
+  .image-group-edit :deep(.el-image__inner) {
+    border-radius: 4px;
+    object-fit: cover;
+  }
+  
+  .remove-btn-edit {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    width: 20px;
+    height: 20px;
+    background: #f56c6c;
+    color: white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: bold;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    z-index: 100;
+  }
+  
+  .image-group-edit:hover .remove-btn-edit {
+    opacity: 1;
+  }
+  
+  .image-group-edit.dragging {
+    opacity: 0.5;
+    border-color: #409eff;
+    transform: scale(0.95);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    cursor: grabbing;
+    z-index: 1000;
+  }
+  
+  .image-group-edit.drag-over {
+    transform: scale(1.15);
+    border: 2px solid #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+    z-index: 10;
+    transition: all 0.2s ease;
+  }
+  
+  .image-group-uploader-edit {
+    width: 60px;
+    height: 60px;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    overflow: hidden; // 防止子元素溢出
+    
+    // 修复 ElUpload 组件自动生成的中间层 div（没有 class 的包装元素）
+    > div {
+      width: 100% !important;
+      height: 100% !important;
+      min-width: 100% !important;
+      min-height: 100% !important;
+      max-width: 100% !important;
+      max-height: 100% !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      box-sizing: border-box !important;
+      display: block !important;
+    }
+  }
+  
+  .image-group-uploader-edit .el-upload {
+    border: 2px dashed #c0c4cc;
+    width: 100% !important;
+    height: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border-radius: 4px;
+    box-sizing: border-box !important; // 确保 border 包含在尺寸内
+    min-width: 100% !important;
+    min-height: 100% !important;
+    max-width: 100% !important;
+    max-height: 100% !important;
+  }
+  
+  .image-group-uploader-edit .el-upload:hover {
+    border-color: #409eff;
+    background: #f0f7ff;
+    color: #409eff;
+  }
+  
+  .image-group-uploader-edit .el-upload-dragger {
+    width: 100% !important;
+    height: 100% !important;
+    min-width: 100% !important;
+    min-height: 100% !important;
+    max-width: 100% !important;
+    max-height: 100% !important;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+  }
+  
+  // 上传内容包装器：确保上传图标和文字居中显示
+  .upload-content-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    overflow: visible;
+    position: relative;
+    gap: 0;
+  }
+  
+  // 上传图标容器样式
+  .image-group-uploader-edit .el-icon--upload {
+    width: 24px;
+    height: 24px;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    flex-shrink: 0;
+    overflow: visible !important;
+    position: relative;
+    
+    // SVG 图标样式：固定尺寸 24x24，通过 flex 居中
+    :deep(svg) {
+      width: 24px !important;
+      height: 24px !important;
+      min-width: 24px !important;
+      min-height: 24px !important;
+      max-width: 24px !important;
+      max-height: 24px !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      display: block !important;
+      box-sizing: border-box !important;
+      overflow: visible !important;
+      position: static !important;
+    }
+    
+    // 覆盖 SVG 元素上可能存在的固定高度属性
+    :deep(svg[height]),
+    :deep(svg[height="67"]),
+    :deep(svg[height="67px"]) {
+      height: 24px !important;
+      max-height: 24px !important;
+      width: 24px !important;
+      max-width: 24px !important;
+    }
+  }
+  
+  .upload-text-edit {
+    font-size: 10px;
+    margin-top: 4px;
+    margin-bottom: 0;
+    text-align: center;
+    line-height: 1.2;
+    padding: 0;
+    flex-shrink: 0;
+  }
+  
 }
 </style>
 

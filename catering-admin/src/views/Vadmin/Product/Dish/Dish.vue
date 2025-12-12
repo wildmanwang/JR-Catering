@@ -131,19 +131,19 @@
       field: 'spec',
       label: '规格',
       type: 'text' as const,
-      width: '160px'
-    },
-    {
-      field: 'unit',
-      label: '单位',
-      type: 'text' as const,
-      width: '160px'
+      width: '200px'
     },
     {
       field: 'price',
       label: '基础售价',
       type: 'text' as const,
       width: '120px'
+    },
+    {
+      field: 'order_number',
+      label: '排序号',
+      type: 'text' as const,
+      width: '80px'
     },
     {
       field: 'time_on',
@@ -443,7 +443,7 @@
     },
     {
       stype: 'import' as const,
-      label: '导入',
+      label: '菜品',
       onClick: openImport
     },
     {

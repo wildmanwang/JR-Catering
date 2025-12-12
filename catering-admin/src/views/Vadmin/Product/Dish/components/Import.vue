@@ -49,17 +49,15 @@ const IMPORT_STORAGE_KEY = 'IMPORT_DISH_PAYLOAD'
 const createDefaultRow = () => ({
   id: undefined,
   name_unique: '',
-  name_display: null,
-  name_english: null,
-  kitchen_id: 1,
-  price: null,
-  order_number: null,
-  spec: null,
-  unit: null,
+  name_display: undefined,
+  name_english: undefined,
+  kitchen_id: undefined,
+  spec: undefined,
+  price: undefined,
+  order_number: undefined,
   status: -1,
   dish_images: [],
-  dish_images_display: [],
-  action: null
+  dish_images_display: []
 })
 
 /**
@@ -79,14 +77,14 @@ const columns = computed<ImportGridColumn[]>(() => [
   {
     field: 'name_unique',
     label: '名称',
-    minWidth: '240px',
+    minWidth: '200px',
     type: 'text',
     show: true
   },
   {
     field: 'name_display',
     label: '显示名称',
-    minWidth: '240px',
+    minWidth: '200px',
     type: 'text',
     show: true
   },
@@ -99,7 +97,7 @@ const columns = computed<ImportGridColumn[]>(() => [
   },
   {
     field: 'kitchen_id',
-    label: '厨部ID',
+    label: '厨部',
     width: '100px',
     type: 'select',
     show: true,
@@ -117,13 +115,6 @@ const columns = computed<ImportGridColumn[]>(() => [
     show: true
   },
   {
-    field: 'unit',
-    label: '单位',
-    width: '100px',
-    type: 'text',
-    show: true
-  },
-  {
     field: 'price',
     label: '基础售价',
     width: '120px',
@@ -133,14 +124,21 @@ const columns = computed<ImportGridColumn[]>(() => [
   {
     field: 'order_number',
     label: '排序号',
-    width: '100px',
+    width: '80px',
     type: 'number',
+    show: true
+  },
+  {
+    field: 'dish_images',
+    label: '图片',
+    minWidth: '240px',
+    type: 'image',
     show: true
   },
   {
     field: 'status',
     label: '状态',
-    width: '100px',
+    width: '60px',
     type: 'select',
     show: true,
     options: dishStatusOptions.value,

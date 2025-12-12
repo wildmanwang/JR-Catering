@@ -52,6 +52,14 @@
       // 选项数据从主窗口传入，无需在此定义 optionApi
     },
     {
+      field: 'spec',
+      label: '规格',
+      colProps: {
+        span: 12
+      },
+      component: 'Input'
+    },
+    {
       field: 'price',
       label: '基础售价',
       colProps: {
