@@ -4,7 +4,7 @@
   功能特性：
   1. Excel 风格的表格交互（单元格编辑、键盘导航、复制粘贴）
   2. 支持多种数据类型（文本、数字、下拉选择、图片、日期）
-  3. 数据持久化（通过 sessionStorage 在页面间传递数据）
+  3. 数据持久化（通过 sessionStorage 在页面间传递数据，支持标签页状态恢复）
   4. 单元格编辑（单击聚焦、双击编辑、键盘输入自动进入编辑）
   5. 键盘导航（Tab/Enter 跳转、方向键移动、Esc 取消）
   6. 复制粘贴（Ctrl+C/Ctrl+V）
@@ -14,7 +14,12 @@
   - 新建多条记录
   - 批量维护数据
   
+  样式特性：
+  - 编辑模式下输入组件背景透明，不遮挡单元格边框
+  - 支持无缝的 Excel 风格编辑体验
+  
   使用示例：
+  ```vue
   <ImportGrid
     :columns="columns"
     :storage-key="STORAGE_KEY"
@@ -23,9 +28,15 @@
     @data-loaded="handleDataLoaded"
     @data-changed="handleDataChanged"
   />
+  ```
+  
+  注意事项：
+  - 组件会自动管理编辑状态和页面状态
+  - 标签页关闭时会自动清理状态缓存
+  - 编辑模式下通过透明背景确保单元格边框可见
 -->
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, onUnmounted, watch, nextTick, h, toRaw } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, onUnmounted, watch, nextTick, toRaw } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElTable, ElTableColumn, ElInput, ElInputNumber, ElSelect, ElOption } from 'element-plus'
 import { useTagsViewStoreWithOut } from '@/store/modules/tagsView'
@@ -52,6 +63,21 @@ export interface ImportGridColumn {
   options?: Array<{ label: string; value: any }>
   /** 是否可编辑（默认 true） */
   editable?: boolean
+  /** Element Plus Select 组件的属性（仅当 type='select' 时有效） */
+  selectProps?: {
+    /** 是否禁用（默认 false，即可编辑） */
+    disabled?: boolean
+    /** 是否只读 */
+    readonly?: boolean
+    /** 是否可清空 */
+    clearable?: boolean
+    /** 是否可搜索/输入（默认 false，即不支持输入） */
+    filterable?: boolean
+    /** 是否允许创建新条目（默认 false，即不支持输入） */
+    allowCreate?: boolean
+    /** 其他 Element Plus Select 属性 */
+    [key: string]: any
+  }
 }
 
 /**
@@ -158,7 +184,6 @@ const savePageState = async () => {
     const fullPath = router.currentRoute.value.fullPath
     tagsViewStore.setPageState(fullPath, state)
     sessionStorage.setItem(PAGE_STATE_KEY.value, JSON.stringify(state))
-    console.log('ImportGrid: 保存页面状态', state)
   } catch (err) {
     console.error('ImportGrid: 保存页面状态失败', err)
   }
@@ -177,7 +202,6 @@ const restorePageState = () => {
     
     if (state) {
       // 内存中有状态，直接返回
-      console.log('ImportGrid: 从内存恢复页面状态', state)
       return state
     }
     
@@ -187,7 +211,6 @@ const restorePageState = () => {
       state = JSON.parse(cache)
       // 同步到 tagsViewStore（内存）
       tagsViewStore.setPageState(fullPath, state)
-      console.log('ImportGrid: 从 sessionStorage 恢复页面状态并同步到内存', state)
       return state
     }
     
@@ -212,7 +235,6 @@ const clearPageState = (stateKey?: string, fullPath?: string) => {
     // 同时清理内存和 sessionStorage
     tagsViewStore.clearPageState(pathToClear)
     sessionStorage.removeItem(keyToRemove)
-    console.log('ImportGrid: 清除页面状态', { stateKey: keyToRemove, fullPath: pathToClear })
   } catch (err) {
     console.error('ImportGrid: 清除页面状态失败', err)
   }
@@ -293,9 +315,11 @@ watch(
                 // 恢复焦点
                 if (document.activeElement !== inputElement) {
                   inputElement.focus()
-                  // 将光标移到末尾
-                  const len = inputElement.value.length
-                  inputElement.setSelectionRange(len, len)
+                  // 将光标移到末尾（number 类型不支持 setSelectionRange）
+                  if (inputElement.type !== 'number') {
+                    const len = inputElement.value.length
+                    inputElement.setSelectionRange(len, len)
+                  }
                 }
                 currentInputRef.value = inputElement
                 // 延迟清除标记
@@ -326,8 +350,11 @@ watch(
             elInput.value = pendingInputValue.value.value
             dataList.value[newVal.rowIndex][newVal.field] = pendingInputValue.value.value
             elInput.focus()
-            const len = elInput.value.length
-            elInput.setSelectionRange(len, len)
+            // number 类型不支持 setSelectionRange
+            if (elInput.type !== 'number') {
+              const len = elInput.value.length
+              elInput.setSelectionRange(len, len)
+            }
             currentInputRef.value = elInput
             setTimeout(() => {
               isInputting.value = false
@@ -354,23 +381,17 @@ const isEditing = (rowIndex: number, field: string) => {
 const startEdit = (rowIndex: number, field: string) => {
   const col = props.columns.find(c => c.field === field)
   if (col && col.editable === false) {
-    console.log('startEdit: 列不可编辑', { rowIndex, field })
     return
   }
-  
-  console.log('startEdit: 开始编辑', { rowIndex, field })
   
   // 标记正在输入，防止blur事件误触发
   isInputting.value = true
   
   editingCell.value = { rowIndex, field }
   
-  console.log('startEdit: 设置编辑状态', { editingCell: editingCell.value, isEditing: isEditing(rowIndex, field) })
-  
   // 延迟聚焦，确保输入框已经渲染
   nextTick(() => {
     nextTick(() => {
-      console.log('startEdit: nextTick 后', { editingCell: editingCell.value, isEditing: isEditing(rowIndex, field) })
       focusInput(rowIndex, field, false)
       // 延迟清除输入标记
       setTimeout(() => {
@@ -410,10 +431,8 @@ const focusInput = (rowIndex: number, field: string, shouldSelect = true) => {
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           const element = document.querySelector(`[data-cell-key="${rowIndex}-${field}"]`) as HTMLElement
-          console.log('focusInput: 查找输入框', { rowIndex, field, element })
           
           if (!element) {
-            console.warn('focusInput: 未找到元素', { rowIndex, field })
             return
           }
           
@@ -425,24 +444,28 @@ const focusInput = (rowIndex: number, field: string, shouldSelect = true) => {
             elInput = element as HTMLInputElement
           } else {
             // 否则查找内部的 input 或 textarea
-            elInput = element.querySelector('input, textarea') as HTMLInputElement
+            // 对于 ElInputNumber，需要查找 .el-input-number__input input
+            elInput = element.querySelector('input, textarea, .el-input-number__input input') as HTMLInputElement
+            // 如果还是找不到，尝试查找更深层的input
+            if (!elInput) {
+              elInput = element.querySelector('.el-input-number input') as HTMLInputElement
+            }
           }
-          
-          console.log('focusInput: 找到输入元素', { elInput, tagName: element.tagName })
           
           if (elInput) {
             elInput.focus()
-            console.log('focusInput: 已聚焦', { activeElement: document.activeElement })
-            // 只有在没有初始值的情况下才选中所有文本
-            if (shouldSelect) {
-              elInput.select()
-            } else {
-              // 如果有初始值，将光标移到末尾
-              const len = elInput.value.length
-              elInput.setSelectionRange(len, len)
+            // 检查 input 类型，number 类型不支持 setSelectionRange 和 select
+            const inputType = elInput.type
+            if (inputType !== 'number') {
+              // 只有在没有初始值的情况下才选中所有文本
+              if (shouldSelect) {
+                elInput.select()
+              } else {
+                // 如果有初始值，将光标移到末尾
+                const len = elInput.value.length
+                elInput.setSelectionRange(len, len)
+              }
             }
-          } else {
-            console.warn('focusInput: 未找到输入元素', { element, tagName: element.tagName })
           }
           
           // 给父单元格添加选中类和编辑类
@@ -527,8 +550,6 @@ const handleCellDblclick = (row: any, column: any, cell?: HTMLElement, event?: M
   const col = props.columns.find(c => c.field === field)
   if (col && col.editable === false) return
   
-  console.log('handleCellDblclick: 双击进入编辑', { rowIndex, field })
-  
   // 双击时获得焦点并进入编辑模式
   // 先设置选中状态
   document.querySelectorAll('.el-table__cell.selected-cell').forEach(el => {
@@ -557,10 +578,7 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
     }
   }
   
-  console.log('handleCellKeydown: 键盘输入', { rowIndex, field, key: event.key, column })
-  
   if (rowIndex === -1 || !field) {
-    console.log('handleCellKeydown: 无效参数', { rowIndex, field })
     return
   }
   
@@ -577,8 +595,6 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
     event.preventDefault()
     event.stopPropagation()
     
-    console.log('handleCellKeydown: 进入编辑模式', { rowIndex, field, key: event.key })
-    
     // 清除之前的blur定时器
     if (blurTimerRef.value) {
       clearTimeout(blurTimerRef.value)
@@ -593,8 +609,6 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
     
     // 设置编辑状态（这会触发Vue重新渲染）
     editingCell.value = { rowIndex, field }
-    
-    console.log('handleCellKeydown: 设置编辑状态', { rowIndex, field, editingCell: editingCell.value })
     
     // 确保输入框渲染后获得焦点
     nextTick(() => {
@@ -880,14 +894,11 @@ const handleCopy = (event: ClipboardEvent) => {
       // 使用 clipboardData 设置剪贴板（必须在 copy 事件中同步设置）
       if (event.clipboardData) {
         event.clipboardData.setData('text/plain', copyValue)
-        console.log('handleCopy: 编辑模式', { rowIndex, field, value: copyValue })
       }
       // 同时使用 Clipboard API 确保设置成功（异步，作为备用）
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(copyValue).then(() => {
-          console.log('handleCopy: Clipboard API 设置成功（编辑模式）')
-        }).catch(err => {
-          console.warn('handleCopy: Clipboard API 失败', err)
+        navigator.clipboard.writeText(copyValue).catch(() => {
+          // Clipboard API 失败时静默处理（已通过 clipboardData 设置）
         })
       }
     }
@@ -896,11 +907,9 @@ const handleCopy = (event: ClipboardEvent) => {
   
   // 非编辑模式：从选中的单元格复制
   const cellInfo = getSelectedCellInfo()
-  console.log('handleCopy: 非编辑模式', { cellInfo })
   if (cellInfo) {
     const { rowIndex, field } = cellInfo
     const value = dataList.value[rowIndex]?.[field]
-    console.log('handleCopy: 单元格值', { rowIndex, field, value })
     
     let copyValue = ''
     if (value !== undefined && value !== null) {
@@ -911,19 +920,14 @@ const handleCopy = (event: ClipboardEvent) => {
     // 使用 clipboardData 设置剪贴板（必须在 copy 事件中同步设置）
     if (event.clipboardData) {
       event.clipboardData.setData('text/plain', copyValue)
-      console.log('handleCopy: clipboardData 设置', { value: copyValue })
     }
     
     // 同时使用 Clipboard API 确保设置成功（异步，作为备用）
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(copyValue).then(() => {
-        console.log('handleCopy: Clipboard API 设置成功', { value: copyValue })
-      }).catch(err => {
-        console.warn('handleCopy: Clipboard API 失败', err)
+      navigator.clipboard.writeText(copyValue).catch(() => {
+        // Clipboard API 失败时静默处理（已通过 clipboardData 设置）
       })
     }
-  } else {
-    console.log('handleCopy: 未找到选中的单元格')
   }
 }
 
@@ -936,7 +940,6 @@ const handlePaste = (event: ClipboardEvent) => {
     event.preventDefault()
     // 直接使用系统剪贴板
     const pasteData = event.clipboardData?.getData('text/plain') || ''
-    console.log('handlePaste: 编辑模式', { pasteData })
     if (pasteData) {
       const { rowIndex, field } = editingCell.value
       const col = props.columns.find(c => c.field === field)
@@ -945,11 +948,9 @@ const handlePaste = (event: ClipboardEvent) => {
         const num = Number(pasteData)
         if (!isNaN(num)) {
           dataList.value[rowIndex][field] = num
-          console.log('handlePaste: 粘贴数字', { rowIndex, field, value: num })
         }
       } else {
         dataList.value[rowIndex][field] = pasteData
-        console.log('handlePaste: 粘贴文本', { rowIndex, field, value: pasteData })
       }
     }
     return
@@ -957,18 +958,15 @@ const handlePaste = (event: ClipboardEvent) => {
   
   // 非编辑模式：粘贴到选中的单元格
   const cellInfo = getSelectedCellInfo()
-  console.log('handlePaste: 非编辑模式', { cellInfo })
   if (cellInfo) {
     event.preventDefault()
     // 直接使用系统剪贴板
     const pasteData = event.clipboardData?.getData('text/plain') || ''
-    console.log('handlePaste: 粘贴数据', { pasteData })
     if (pasteData !== undefined && pasteData !== null && pasteData !== '') {
       const { rowIndex, field, column } = cellInfo
       
       // 检查列是否可编辑
       if (column.editable === false) {
-        console.log('handlePaste: 列不可编辑', { field })
         return
       }
       
@@ -976,35 +974,26 @@ const handlePaste = (event: ClipboardEvent) => {
         const num = Number(pasteData)
         if (!isNaN(num)) {
           dataList.value[rowIndex][field] = num
-          console.log('handlePaste: 粘贴数字成功', { rowIndex, field, value: num })
-        } else {
-          console.log('handlePaste: 粘贴数字失败，不是有效数字', { pasteData })
         }
       } else if (column.type === 'select' && column.options) {
         // 对于 select 类型，尝试通过 label 或 value 匹配
         const option = column.options.find(opt => opt.label === pasteData || String(opt.value) === pasteData)
         if (option) {
           dataList.value[rowIndex][field] = option.value
-          console.log('handlePaste: 粘贴选择项成功', { rowIndex, field, value: option.value })
         } else {
           // 如果没有匹配的选项，直接使用粘贴的值
           dataList.value[rowIndex][field] = pasteData
-          console.log('handlePaste: 粘贴选择项（无匹配），使用原始值', { rowIndex, field, value: pasteData })
         }
       } else {
         dataList.value[rowIndex][field] = pasteData
-        console.log('handlePaste: 粘贴文本成功', { rowIndex, field, value: pasteData })
       }
     } else {
       // 如果粘贴数据为空，清空单元格
       const { rowIndex, field, column } = cellInfo
       if (column.editable !== false) {
         dataList.value[rowIndex][field] = column.type === 'number' ? null : ''
-        console.log('handlePaste: 粘贴空值', { rowIndex, field })
       }
     }
-  } else {
-    console.log('handlePaste: 未找到选中的单元格')
   }
 }
 
@@ -1042,6 +1031,49 @@ const handleInputFocus = (rowIndex: number, field: string) => {
   setTimeout(() => {
     isInputting.value = false
   }, 100)
+  
+  // 对于数字输入框，设置左对齐样式
+  const column = props.columns.find(col => col.field === field)
+  if (column && column.type === 'number') {
+    nextTick(() => {
+      const cellInput = document.querySelector(`[data-cell-key="${rowIndex}-${field}"]`) as HTMLElement
+      if (cellInput) {
+        // 查找 ElInputNumber 内部的 input 元素
+        const inputElement = cellInput.querySelector('.el-input-number__input-wrapper input') as HTMLInputElement ||
+                            cellInput.querySelector('.el-input-number__input input') as HTMLInputElement ||
+                            cellInput.querySelector('.el-input-number input') as HTMLInputElement ||
+                            cellInput.querySelector('input') as HTMLInputElement
+        if (inputElement) {
+          inputElement.style.textAlign = 'left'
+        }
+      }
+    })
+  }
+}
+
+/**
+ * 处理下拉菜单显示/隐藏事件
+ * 当下拉菜单显示时，设置其宽度与单元格一致
+ */
+const handleSelectVisibleChange = (visible: boolean, rowIndex: number, field: string) => {
+  if (visible) {
+    // 下拉菜单显示时，设置宽度与单元格一致
+    nextTick(() => {
+      const cellInput = document.querySelector(`[data-cell-key="${rowIndex}-${field}"]`) as HTMLElement
+      if (cellInput) {
+        const cell = cellInput.closest('.el-table__cell') as HTMLElement
+        if (cell) {
+          const cellWidth = cell.offsetWidth
+          // 查找下拉菜单（popper）
+          const dropdown = document.querySelector('.excel-select-dropdown') as HTMLElement
+          if (dropdown) {
+            dropdown.style.minWidth = `${cellWidth}px`
+            dropdown.style.width = `${cellWidth}px`
+          }
+        }
+      }
+    })
+  }
 }
 
 /**
@@ -1079,7 +1111,14 @@ const handleInputBlur = (e: FocusEvent, rowIndex: number, field: string) => {
     // 查找当前单元格的输入框
     const cellInput = document.querySelector(`[data-cell-key="${rowIndex}-${field}"]`) as HTMLElement
     if (cellInput) {
-      const inputElement = cellInput.querySelector('input') as HTMLInputElement
+      // 对于 ElInputNumber，需要查找 .el-input-number__input input
+      let inputElement = cellInput.querySelector('input') as HTMLInputElement
+      if (!inputElement) {
+        inputElement = cellInput.querySelector('.el-input-number__input input') as HTMLInputElement
+      }
+      if (!inputElement) {
+        inputElement = cellInput.querySelector('.el-input-number input') as HTMLInputElement
+      }
       // 如果焦点还在当前输入框上，不退出编辑
       if (inputElement && (inputElement === activeElement || inputElement.contains(activeElement as Node))) {
         blurTimerRef.value = null
@@ -1136,310 +1175,6 @@ const handleInputUpdate = (val: string, rowIndex: number, field: string) => {
   }, 300)
 }
 
-/**
- * 渲染单元格内容（已废弃，改用模板语法）
- */
-const renderCellContent = (scope: any, column: ImportGridColumn) => {
-  const { row, $index } = scope
-  const field = column.field
-  const rowIndex = $index
-  const isEditable = column.editable !== false
-  
-  const editing = isEditing(rowIndex, field)
-  if (editingCell.value && editingCell.value.field === field) {
-    console.log('renderCellContent:', { rowIndex, field, editingCell: editingCell.value, editing, isEditable })
-  }
-  
-  if (editing && isEditable) {
-    // 编辑模式
-    if (column.type === 'number') {
-      return h(ElInputNumber, {
-        key: `input-number-${rowIndex}-${field}`, // 添加稳定的 key，确保组件实例复用
-        'data-cell-key': `${rowIndex}-${field}`,
-        modelValue: row[field],
-        'onUpdate:modelValue': (val: any) => {
-          row[field] = val
-        },
-        onKeydown: (e: KeyboardEvent) => {
-          e.stopPropagation()
-          handleInputKeydown(e, rowIndex, field)
-        },
-        onFocus: () => {
-          if (!isEditing(rowIndex, field)) {
-            editingCell.value = { rowIndex, field }
-          }
-        },
-        onBlur: (e: FocusEvent) => {
-          setTimeout(() => {
-            if (isInputting.value) {
-              return
-            }
-            
-            const activeElement = document.activeElement
-            const input = e.target as HTMLElement
-            
-            if (input && input.contains(activeElement)) {
-              return
-            }
-            
-            const cell = input.closest('.el-table__cell')
-            if (cell && cell.contains(activeElement)) {
-              return
-            }
-            
-            if (isEditing(rowIndex, field)) {
-              endEdit()
-            }
-          }, 150)
-        },
-        onInput: () => {
-          isInputting.value = true
-          setTimeout(() => {
-            isInputting.value = false
-          }, 100)
-        },
-        controls: false,
-        class: 'excel-edit-input',
-        size: 'small'
-      })
-    } else if (column.type === 'select' && column.options) {
-      return h(ElSelect, {
-        key: `select-${rowIndex}-${field}`, // 添加稳定的 key，确保组件实例复用
-        'data-cell-key': `${rowIndex}-${field}`,
-        modelValue: row[field],
-        'onUpdate:modelValue': (val: any) => {
-          row[field] = val
-        },
-        onKeydown: (e: KeyboardEvent) => {
-          e.stopPropagation()
-          handleInputKeydown(e, rowIndex, field)
-        },
-        onFocus: () => {
-          if (!isEditing(rowIndex, field)) {
-            editingCell.value = { rowIndex, field }
-          }
-        },
-        onBlur: (e: FocusEvent) => {
-          if (isInputting.value) {
-            return
-          }
-          
-          setTimeout(() => {
-            if (isInputting.value) {
-              return
-            }
-            
-            const activeElement = document.activeElement
-            const input = e.target as HTMLElement
-            
-            if (input && input.contains(activeElement)) {
-              return
-            }
-            
-            const cell = input.closest('.el-table__cell')
-            if (cell && cell.contains(activeElement)) {
-              return
-            }
-            
-            if (isEditing(rowIndex, field)) {
-              endEdit()
-            }
-          }, 100)
-        },
-        class: 'excel-edit-select',
-        size: 'small',
-        filterable: true
-      }, {
-        default: () => column.options!.map((opt) => 
-          h(ElOption, { key: opt.value, label: opt.label, value: opt.value })
-        )
-      })
-    } else {
-      return h(ElInput, {
-        key: `input-${rowIndex}-${field}`, // 添加稳定的 key，确保组件实例复用
-        'data-cell-key': `${rowIndex}-${field}`,
-        modelValue: row[field],
-        'onUpdate:modelValue': (val: string) => {
-          // 标记正在输入
-          isInputting.value = true
-          console.log('onUpdate:modelValue: 标记正在输入', val)
-          
-          // 更新值时，确保不会因为数据变化导致失去焦点
-          if (isEditing(rowIndex, field)) {
-            row[field] = val
-            // 确保编辑状态保持
-            if (!isEditing(rowIndex, field)) {
-              editingCell.value = { rowIndex, field }
-            }
-            
-            // 使用 requestAnimationFrame 确保在浏览器渲染后恢复焦点
-            requestAnimationFrame(() => {
-              requestAnimationFrame(() => {
-                const cellInput = document.querySelector(`[data-cell-key="${rowIndex}-${field}"]`) as HTMLElement
-                if (cellInput) {
-                  const inputElement = cellInput.querySelector('input') as HTMLInputElement
-                  if (inputElement) {
-                    currentInputRef.value = inputElement
-                    // 确保输入框保持焦点
-                    if (document.activeElement !== inputElement) {
-                      inputElement.focus()
-                      // 将光标移到末尾
-                      const len = inputElement.value.length
-                      inputElement.setSelectionRange(len, len)
-                    }
-                  }
-                }
-              })
-            })
-          }
-          
-          // 延迟清除标记（减少延迟时间，因为使用了 flush: 'post'）
-          setTimeout(() => {
-            isInputting.value = false
-            console.log('onUpdate:modelValue: 清除输入标记')
-          }, 300)
-        },
-        onFocus: (e: FocusEvent) => {
-          // 清除blur定时器
-          if (blurTimerRef.value) {
-            clearTimeout(blurTimerRef.value)
-            blurTimerRef.value = null
-          }
-          
-          // 确保输入框获得焦点时保持编辑状态
-          if (!isEditing(rowIndex, field)) {
-            editingCell.value = { rowIndex, field }
-          }
-          
-          // 保存输入框引用
-          const input = e.target as HTMLInputElement
-          if (input) {
-            currentInputRef.value = input
-          }
-          
-          // 标记正在输入（获得焦点时）
-          isInputting.value = true
-          setTimeout(() => {
-            isInputting.value = false
-          }, 100)
-        },
-        onBlur: (e: FocusEvent) => {
-          // 如果正在输入，不处理blur
-          if (isInputting.value) {
-            console.log('blur被忽略：正在输入')
-            return
-          }
-          
-          // 清除之前的blur定时器
-          if (blurTimerRef.value) {
-            clearTimeout(blurTimerRef.value)
-            blurTimerRef.value = null
-          }
-          
-          // 延迟处理blur，检查焦点是否真的离开了
-          blurTimerRef.value = setTimeout(() => {
-            // 如果正在输入，不退出编辑
-            if (isInputting.value) {
-              blurTimerRef.value = null
-              return
-            }
-            
-            // 检查是否仍然是当前编辑的单元格
-            if (!isEditing(rowIndex, field)) {
-              blurTimerRef.value = null
-              return
-            }
-            
-            // 检查焦点是否真的离开了输入框
-            const activeElement = document.activeElement
-            
-            // 查找当前单元格的输入框
-            const cellInput = document.querySelector(`[data-cell-key="${rowIndex}-${field}"]`) as HTMLElement
-            if (cellInput) {
-              const inputElement = cellInput.querySelector('input') as HTMLInputElement
-              // 如果焦点还在当前输入框上，不退出编辑
-              if (inputElement && (inputElement === activeElement || inputElement.contains(activeElement as Node))) {
-                blurTimerRef.value = null
-                return
-              }
-            }
-            
-            // 检查焦点是否在单元格内的其他元素中（如下拉框）
-            const input = e.target as HTMLElement
-            const cell = input?.closest('.el-table__cell')
-            if (cell && cell.contains(activeElement)) {
-              blurTimerRef.value = null
-              return
-            }
-            
-            // 检查是否是当前正在编辑的输入框
-            if (currentInputRef.value && (currentInputRef.value === activeElement || currentInputRef.value.contains(activeElement as Node))) {
-              blurTimerRef.value = null
-              return
-            }
-            
-            // 只有焦点确实离开了单元格，才退出编辑
-            if (isEditing(rowIndex, field)) {
-              console.log('退出编辑模式')
-              endEdit()
-            }
-            
-            blurTimerRef.value = null
-          }, 500)
-        },
-        onInput: () => {
-          // 标记正在输入
-          isInputting.value = true
-          console.log('onInput: 标记正在输入')
-          // 延迟清除标记，给输入操作时间（增加延迟时间，确保 Vue 重新渲染完成）
-          setTimeout(() => {
-            isInputting.value = false
-            console.log('onInput: 清除输入标记')
-          }, 500)
-        },
-        onKeydown: (e: KeyboardEvent) => {
-          // 标记正在输入（键盘输入时）
-          isInputting.value = true
-          console.log('onKeydown: 标记正在输入', e.key)
-          // 阻止事件冒泡，避免触发单元格的keydown事件
-          e.stopPropagation()
-          handleInputKeydown(e, rowIndex, field)
-          // 延迟清除标记，确保输入操作完成（增加延迟时间，确保 Vue 重新渲染完成）
-          setTimeout(() => {
-            isInputting.value = false
-            console.log('onKeydown: 清除输入标记')
-          }, 500)
-        },
-        class: 'excel-edit-input',
-        size: 'small'
-      })
-    }
-  } else {
-    // 显示模式
-    return h('span', {
-      class: ['excel-cell', { 'cell-focused': isEditing(rowIndex, field) }],
-      onDblclick: () => isEditable && handleCellDblclick(row, { property: field }),
-      onKeydown: (e: KeyboardEvent) => handleCellKeydown(e, row, { property: field }),
-      onFocus: (e: FocusEvent) => {
-        const cell = (e.target as HTMLElement).closest('.el-table__cell') as HTMLElement
-        if (cell) {
-          document.querySelectorAll('.el-table__cell.selected-cell').forEach(el => {
-            el.classList.remove('selected-cell')
-          })
-          cell.classList.add('selected-cell')
-        }
-      },
-      onBlur: () => {
-        const cell = document.querySelector('.el-table__cell.selected-cell') as HTMLElement
-        if (cell && !editingCell.value) {
-          cell.classList.remove('selected-cell')
-        }
-      },
-      tabindex: isEditable ? 0 : -1
-    }, formatCellValue(row[field], column))
-  }
-}
-
 onMounted(async () => {
   // 先不显示页面，等待状态恢复完成
   isRestoring.value = true
@@ -1457,7 +1192,6 @@ onMounted(async () => {
       ...row
     }))
     emit('dataLoaded', dataList.value)
-    console.log('ImportGrid: 从页面状态恢复数据', dataList.value.length, '条记录')
   } else {
     // 如果没有页面状态，尝试从父窗口传入的数据加载
     const loaded = loadDataFromStorage()
@@ -1677,26 +1411,9 @@ onBeforeUnmount(() => {
       // 使用保存的 fullPath 来生成正确的 key
       const stateKey = `IMPORT_GRID_STATE_${fullPathToCheck}`
       clearPageState(stateKey, fullPathToCheck)
-      console.log('ImportGrid: 检测到标签页关闭，已清空页面状态', { 
-        mountedPath: pathToCheck, 
-        mountedFullPath: fullPathToCheck,
-        currentPath: router.currentRoute.value.path,
-        currentFullPath: router.currentRoute.value.fullPath,
-        stateKey,
-        visitedViewsCount: visitedViews.length,
-        visitedPaths: visitedViews.map(v => v.path)
-      })
       return true
     } else {
       // 标签页仍然打开，只是切换了路由，保持状态数据
-      console.log('ImportGrid: 检测到路由切换，保持页面状态', { 
-        mountedPath: pathToCheck, 
-        mountedFullPath: fullPathToCheck,
-        currentPath: router.currentRoute.value.path,
-        currentFullPath: router.currentRoute.value.fullPath,
-        visitedViewsCount: visitedViews.length,
-        visitedPaths: visitedViews.map(v => v.path)
-      })
       return false
     }
   }
@@ -1761,7 +1478,8 @@ defineExpose({
             v-model="scope.row[column.field]"
             size="small"
             :controls="false"
-            class="excel-edit-input"
+            class="excel-edit-input excel-input-number-left"
+            :style="{ textAlign: 'left' }"
             @keydown.stop="handleInputKeydown($event, scope.$index, column.field)"
             @focus="handleInputFocus(scope.$index, column.field)"
             @blur="handleInputBlur($event, scope.$index, column.field)"
@@ -1776,10 +1494,18 @@ defineExpose({
             v-model="scope.row[column.field]"
             size="small"
             class="excel-edit-select"
-            filterable
+            popper-class="excel-select-dropdown"
+            :style="{ width: '100%', minWidth: '100%', maxWidth: '100%', display: 'block' }"
+            :disabled="column.selectProps?.disabled ?? false"
+            :readonly="column.selectProps?.readonly"
+            :clearable="column.selectProps?.clearable"
+            :filterable="column.selectProps?.filterable ?? false"
+            :allow-create="column.selectProps?.allowCreate ?? false"
+            v-bind="column.selectProps || {}"
             @keydown.stop="handleInputKeydown($event, scope.$index, column.field)"
             @focus="handleInputFocus(scope.$index, column.field)"
             @blur="handleInputBlur($event, scope.$index, column.field)"
+            @visible-change="(visible: boolean) => handleSelectVisibleChange(visible, scope.$index, column.field)"
           >
             <ElOption
               v-for="opt in column.options"
@@ -1808,7 +1534,11 @@ defineExpose({
           <span 
             v-else
             class="excel-cell"
-            :class="{ 'cell-focused': isEditing(scope.$index, column.field) }"
+            :class="{ 
+              'cell-focused': isEditing(scope.$index, column.field),
+              'cell-number': column.type === 'number',
+              'cell-text': column.type !== 'number'
+            }"
             @keydown="column.editable !== false && handleCellKeydown($event, scope.row, { property: column.field })"
             tabindex="0"
           >{{ formatCellValue(scope.row[column.field], column) }}</span>
@@ -1836,6 +1566,8 @@ defineExpose({
   .el-table__cell {
     padding: 4px 8px !important;
     position: relative;
+    // 确保单元格有最小高度
+    min-height: 32px;
     
     &:hover {
       background-color: #f5f7fa;
@@ -1859,15 +1591,55 @@ defineExpose({
     border-right: 1px solid #ebeef5;
   }
   
+  // Element Plus Table 自动生成的 .cell 包装器
+  // 重置其默认样式，确保完全填充单元格内容区域
+  :deep(.el-table__cell .cell) {
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+    display: block !important;
+    border: none !important;
+    position: relative !important;
+    // 不设置 height: 100%，让内容自然撑开，但确保最小高度
+    min-height: 100% !important;
+    // 确保有最小高度，即使内容为空（absolute 定位的元素不占位）
+    min-height: 32px !important;
+  }
+  
   .excel-cell {
     display: block;
-    width: 100%;
-    min-height: 20px;
-    padding: 2px 4px;
+    // 宽度与上层div一样宽（100%）
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: 100% !important;
+    // 高度由内容决定，但确保最小高度
+    min-height: 100% !important;
+    padding-top: 2px !important;
+    padding-right: 5px !important;
+    padding-bottom: 2px !important;
+    padding-left: 5px !important;
     cursor: cell;
     outline: none;
     position: relative;
-    box-sizing: border-box;
+    box-sizing: border-box !important;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin: 0 !important;
+    
+    // 数字类型右对齐
+    &.cell-number {
+      text-align: right;
+    }
+    
+    // 文本类型左对齐
+    &.cell-text {
+      text-align: left;
+    }
   }
   
   // 单元格选中时的边框样式
@@ -1888,60 +1660,893 @@ defineExpose({
     }
   }
   
-  // 编辑状态下的单元格样式
-  .excel-edit-input,
+  // ==================== ElSelect 下拉框样式 ====================
+  // 
+  // 样式说明：
+  // 1. 使用 absolute 定位完全填充单元格
+  // 2. 通过透明背景确保不遮挡单元格边框
+  // 3. 移除所有边框、阴影和轮廓，提供无缝编辑体验
   .excel-edit-select {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    width: 100%;
-    height: 100%;
-    margin: 0;
+    position: absolute !important;
+    top: 0 !important;
+    left: -1px !important;
+    right: -1px !important;
+    bottom: 0 !important;
+    width: calc(100% + 2px) !important;
+    min-width: calc(100% + 2px) !important;
+    max-width: calc(100% + 2px) !important;
+    height: 100% !important;
+    min-height: 32px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: block !important;
+    box-sizing: border-box !important;
+    overflow: visible !important;
+    z-index: 10 !important;
+    visibility: visible !important;
+    opacity: 1 !important;
     
-    :deep(.el-input__wrapper),
+    // 确保 Element Plus 组件的根元素（直接子元素）也有最小高度和宽度
+    > * {
+      min-height: 32px !important;
+      width: 100% !important;
+      min-width: 100% !important;
+      max-width: 100% !important;
+      box-sizing: border-box !important;
+    }
+    visibility: visible !important;
+    opacity: 1 !important;
+    
+    // Element Plus Select 根元素 - 强制宽度
+    :deep(.el-select) {
+      width: 100% !important;
+      min-width: 100% !important;
+      max-width: 100% !important;
+      height: 100% !important;
+      display: block !important;
+      box-sizing: border-box;
+      position: relative;
+    }
+    
+    // Element Plus Select 的容器
+    :deep(.el-select__tags) {
+      width: 100% !important;
+      max-width: 100% !important;
+    }
+    
+    // 确保 Select 组件本身没有宽度限制
+    :deep(.el-select__caret-wrapper) {
+      flex-shrink: 0;
+    }
+    
+    // Select wrapper（Element Plus 的新版本结构）
+    :deep(.el-select__wrapper) {
+      width: 100% !important;
+      min-width: 100% !important;
+      max-width: 100% !important;
+      height: 100% !important;
+      min-height: 100% !important;
+      max-height: 100% !important;
+      border: none !important;
+      border-width: 0 !important;
+      border-top: none !important;
+      border-right: none !important;
+      border-bottom: none !important;
+      border-left: none !important;
+      border-color: transparent !important;
+      background: transparent !important;
+      background-color: transparent !important;
+      box-shadow: none !important;
+      border-radius: 0 !important;
+      padding: 0 4px !important;
+      line-height: 1.5 !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: flex-start !important;
+      box-sizing: border-box !important;
+      margin: 0 !important;
+      text-align: left !important;
+      outline: none !important;
+      
+      &:hover,
+      &:focus,
+      &:focus-within,
+      &.is-focus,
+      &.is-hover {
+        border: none !important;
+        border-width: 0 !important;
+        border-top: none !important;
+        border-right: none !important;
+        border-bottom: none !important;
+        border-left: none !important;
+        border-color: transparent !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        box-shadow: none !important;
+        outline: none !important;
+      }
+    }
+    
+    // Input wrapper（Element Plus 的内部结构）
+    :deep(.el-input__wrapper) {
+      width: 100% !important;
+      min-width: 100% !important;
+      max-width: 100% !important;
+      height: 100% !important;
+      min-height: 100% !important;
+      max-height: 100% !important;
+      border: none !important;
+      border-width: 0 !important;
+      border-top: none !important;
+      border-right: none !important;
+      border-bottom: none !important;
+      border-left: none !important;
+      border-color: transparent !important;
+      background: transparent !important;
+      background-color: transparent !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      box-shadow: none !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: flex-start !important;
+      box-sizing: border-box !important;
+      outline: none !important;
+      
+      &:hover,
+      &:focus,
+      &:focus-within,
+      &.is-focus,
+      &.is-hover {
+        border: none !important;
+        border-width: 0 !important;
+        border-color: transparent !important;
+        border-top: none !important;
+        border-right: none !important;
+        border-bottom: none !important;
+        border-left: none !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        box-shadow: none !important;
+        outline: none !important;
+      }
+    }
+    
+    // Input inner（实际输入框）
     :deep(.el-input__inner) {
-      height: 100%;
-      border: 2px solid rgb(16, 153, 104);
-      box-shadow: none;
-      border-radius: 0;
-      padding: 0 4px;
-      line-height: 1.5;
+      width: 100% !important;
+      min-width: 100% !important;
+      max-width: 100% !important;
+      height: 100% !important;
+      min-height: 100% !important;
+      max-height: 100% !important;
+      border: none !important;
+      border-width: 0 !important;
+      border-top: none !important;
+      border-right: none !important;
+      border-bottom: none !important;
+      border-left: none !important;
+      background: transparent !important;
+      background-color: transparent !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      line-height: inherit !important;
+      display: flex !important;
+      align-items: center !important;
+      box-sizing: border-box !important;
+      text-align: left !important;
+      outline: none !important;
+      
+      &:hover,
+      &:focus {
+        border: none !important;
+        border-width: 0 !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        outline: none !important;
+      }
+    }
+    
+    // input 元素本身也要透明
+    :deep(input),
+    :deep(input:hover),
+    :deep(input:focus) {
+      background: transparent !important;
+      background-color: transparent !important;
+    }
+    
+    // 占位符文本
+    :deep(.el-select__placeholder) {
+      line-height: inherit !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: flex-start !important;
+      height: 100% !important;
+      width: 100% !important;
+      box-sizing: border-box !important;
+      text-align: left !important;
+    }
+    
+    // 选中的项
+    :deep(.el-select__selected-item) {
+      line-height: inherit !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: flex-start !important;
+      height: 100% !important;
+      width: 100% !important;
+      box-sizing: border-box !important;
+      text-align: left !important;
+    }
+    
+    // 下拉图标
+    :deep(.el-select__caret) {
+      display: flex !important;
+      align-items: center !important;
+      flex-shrink: 0 !important;
+    }
+  }
+  
+  // ==================== ElInput 和 ElInputNumber 文本/数字输入框样式 ====================
+  // 
+  // 样式说明：
+  // 1. 使用 absolute 定位完全填充单元格
+  // 2. 通过透明背景确保不遮挡单元格边框
+  // 3. 移除所有边框、阴影和轮廓，提供无缝编辑体验
+  .excel-edit-input {
+    position: absolute !important;
+    top: 0 !important;
+    left: -1px !important;
+    right: -1px !important;
+    bottom: 0 !important;
+    width: calc(100% + 2px) !important;
+    min-width: calc(100% + 2px) !important;
+    max-width: calc(100% + 2px) !important;
+    height: 100% !important;
+    min-height: 32px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: block !important;
+    box-sizing: border-box !important;
+    overflow: visible !important;
+    z-index: 10 !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    
+    // 确保 Element Plus 组件的根元素（直接子元素）也有最小高度和宽度
+    > * {
+      min-height: 32px !important;
+      width: 100% !important;
+      min-width: 100% !important;
+      max-width: 100% !important;
+      box-sizing: border-box !important;
+    }
+    
+    // ElInput（文本输入框）样式
+    :deep(.el-input) {
+      width: 100% !important;
+      min-width: 100% !important;
+      max-width: 100% !important;
+      height: 100% !important;
+      min-height: 32px !important;
+      display: block !important;
+      box-sizing: border-box !important;
+    }
+    
+    :deep(.el-input__wrapper) {
+      width: 100% !important;
+      min-width: 100% !important;
+      max-width: 100% !important;
+      height: 100% !important;
+      border: none !important;
+      border-width: 0 !important;
+      border-top: none !important;
+      border-right: none !important;
+      border-bottom: none !important;
+      border-left: none !important;
+      border-color: transparent !important;
+      background: transparent !important;
+      background-color: transparent !important;
+      box-shadow: none !important;
+      border-radius: 0 !important;
+      padding: 0 4px !important;
+      margin: 0 !important;
+      box-sizing: border-box !important;
+      outline: none !important;
+      
+      &:hover,
+      &:focus,
+      &:focus-within,
+      &.is-focus,
+      &.is-hover {
+        border: none !important;
+        border-width: 0 !important;
+        border-top: none !important;
+        border-right: none !important;
+        border-bottom: none !important;
+        border-left: none !important;
+        border-color: transparent !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        box-shadow: none !important;
+        outline: none !important;
+      }
+    }
+    
+    :deep(.el-input__inner) {
+      width: 100% !important;
+      min-width: 100% !important;
+      max-width: 100% !important;
+      height: 100% !important;
+      border: none !important;
+      border-width: 0 !important;
+      border-top: none !important;
+      border-right: none !important;
+      border-bottom: none !important;
+      border-left: none !important;
+      background: transparent !important;
+      background-color: transparent !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      text-align: left !important;
+      box-sizing: border-box !important;
+      outline: none !important;
+      
+      &:hover,
+      &:focus {
+        border: none !important;
+        border-width: 0 !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        outline: none !important;
+      }
+    }
+    
+    // input 元素本身也要透明
+    :deep(input),
+    :deep(input:hover),
+    :deep(input:focus) {
+      background: transparent !important;
+      background-color: transparent !important;
+    }
+    
+    // ElInputNumber（数字输入框）样式
+    :deep(.el-input-number) {
+      width: 100% !important;
+      min-width: 100% !important;
+      max-width: 100% !important;
+      height: 100% !important;
+      min-height: 32px !important;
+      display: flex !important;
+      align-items: stretch !important;
+      visibility: visible !important;
+      opacity: 1 !important;
+      text-align: left !important;
+      box-sizing: border-box !important;
+    }
+    
+    :deep(.el-input-number__input) {
+      width: 100% !important;
+      min-width: 100% !important;
+      max-width: 100% !important;
+      height: 100% !important;
+      flex: 1 !important;
+      visibility: visible !important;
+      opacity: 1 !important;
+      text-align: left !important;
+      box-sizing: border-box !important;
+    }
+    
+    :deep(.el-input-number__input-wrapper) {
+      width: 100% !important;
+      min-width: 100% !important;
+      max-width: 100% !important;
+      height: 100% !important;
+      visibility: visible !important;
+      opacity: 1 !important;
+      border: none !important;
+      border-width: 0 !important;
+      border-top: none !important;
+      border-right: none !important;
+      border-bottom: none !important;
+      border-left: none !important;
+      border-color: transparent !important;
+      background: transparent !important;
+      background-color: transparent !important;
+      box-shadow: none !important;
+      border-radius: 0 !important;
+      padding: 0 4px !important;
+      margin: 0 !important;
+      text-align: left !important;
+      box-sizing: border-box !important;
+      outline: none !important;
+      
+      &:hover,
+      &:focus,
+      &:focus-within,
+      &.is-focus,
+      &.is-hover {
+        border: none !important;
+        border-width: 0 !important;
+        border-top: none !important;
+        border-right: none !important;
+        border-bottom: none !important;
+        border-left: none !important;
+        border-color: transparent !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        box-shadow: none !important;
+        outline: none !important;
+      }
+    }
+    
+    // 数字输入框也使用 el-input__wrapper，需要单独处理
+    :deep(.el-input-number .el-input__wrapper) {
+      width: 100% !important;
+      min-width: 100% !important;
+      max-width: 100% !important;
+      border: none !important;
+      border-width: 0 !important;
+      border-top: none !important;
+      border-right: none !important;
+      border-bottom: none !important;
+      border-left: none !important;
+      border-color: transparent !important;
+      background: transparent !important;
+      background-color: transparent !important;
+      box-shadow: none !important;
+      margin: 0 !important;
+      outline: none !important;
+      
+      &:hover,
+      &:focus,
+      &:focus-within,
+      &.is-focus,
+      &.is-hover {
+        border: none !important;
+        border-width: 0 !important;
+        border-top: none !important;
+        border-right: none !important;
+        border-bottom: none !important;
+        border-left: none !important;
+        border-color: transparent !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        box-shadow: none !important;
+        outline: none !important;
+      }
+    }
+    
+    // ElInputNumber 内部的 input 元素样式
+    :deep(.el-input-number__input input) {
+      width: 100% !important;
+      min-width: 100% !important;
+      max-width: 100% !important;
+      height: 100% !important;
+      visibility: visible !important;
+      opacity: 1 !important;
+      color: inherit !important;
+      background-color: transparent !important;
+      border: none !important;
+      border-width: 0 !important;
+      border-top: none !important;
+      border-right: none !important;
+      border-bottom: none !important;
+      border-left: none !important;
+      box-shadow: none !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      text-align: left !important;
+      box-sizing: border-box !important;
+      outline: none !important;
+      
+      &:hover,
+      &:focus {
+        border: none !important;
+        border-width: 0 !important;
+        outline: none !important;
+      }
+    }
+    
+    // 覆盖 Element Plus 默认的右对齐样式
+    :deep(.el-input-number__input input[type="text"]),
+    :deep(.el-input-number__input input[type="number"]) {
+      text-align: left !important;
     }
     
     :deep(.el-input-number__decrease),
     :deep(.el-input-number__increase) {
-      display: none;
+      display: none !important;
     }
   }
   
-  .excel-edit-select {
-    :deep(.el-select__wrapper) {
-      height: 100%;
-      border: 2px solid rgb(16, 153, 104);
-      box-shadow: none;
-      border-radius: 0;
-      padding: 0 4px;
-      line-height: 1.5;
-    }
-    
-    :deep(.el-input__wrapper) {
-      height: 100%;
-      border: none;
-      padding: 0;
-    }
-    
-    :deep(.el-input__inner) {
-      height: 100%;
-      border: none;
-      padding: 0;
-    }
-  }
-  
-  // 编辑状态下的单元格，移除默认padding
+  // ==================== 编辑状态下的单元格样式 ====================
+  // 
+  // 编辑模式下单元格的通用样式设置
   .el-table__cell.editing-cell {
     padding: 0 !important;
+    overflow: visible !important;
+    position: relative;
+    
+    // 确保编辑模式下 .cell 也充满单元格
+    :deep(.cell) {
+      width: 100% !important;
+      min-width: 100% !important;
+      max-width: 100% !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      box-sizing: border-box !important;
+      display: block !important;
+      border: none !important;
+      position: relative !important;
+      // 编辑模式下需要明确高度，让 absolute 定位的子元素能正确计算
+      // 使用固定最小高度，因为 absolute 定位的子元素不占位
+      height: 100% !important;
+      min-height: 32px !important;
+    }
+    
+    // ElSelect 下拉框样式（独立设置，不受 ElInputNumber 影响）
+    .excel-edit-select {
+      // wrapper 背景透明，完全填充单元格而不会遮挡边框
+      position: absolute !important;
+      left: -1px !important;
+      right: -1px !important;
+      top: 0 !important;
+      bottom: 0 !important;
+      width: calc(100% + 2px) !important;
+      min-width: calc(100% + 2px) !important;
+      max-width: calc(100% + 2px) !important;
+      height: 100% !important;
+      display: block !important;
+      z-index: 10 !important;
+      
+      // 强制 Element Plus Select 组件宽度
+      :deep(.el-select) {
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        display: block !important;
+        height: 100% !important;
+        min-height: 32px !important;
+      }
+      
+      :deep(.el-select__wrapper) {
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        display: flex !important;
+        height: 100% !important;
+        min-height: 100% !important;
+        max-height: 100% !important;
+        border: none !important;
+        border-width: 0 !important;
+        border-top: none !important;
+        border-right: none !important;
+        border-bottom: none !important;
+        border-left: none !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        box-shadow: none !important;
+        border-radius: 0 !important;
+        padding: 0 4px !important;
+        line-height: 1.5 !important;
+        align-items: center !important;
+        justify-content: flex-start !important;
+        box-sizing: border-box !important;
+        margin: 0 !important;
+        text-align: left !important;
+        outline: none !important;
+        
+        &:hover,
+        &:focus,
+        &:focus-within,
+        &.is-focus,
+        &.is-hover {
+          border: none !important;
+          border-width: 0 !important;
+          border-top: none !important;
+          border-right: none !important;
+          border-bottom: none !important;
+          border-left: none !important;
+          background: transparent !important;
+          background-color: transparent !important;
+          box-shadow: none !important;
+          outline: none !important;
+        }
+      }
+      
+      :deep(.el-input__wrapper) {
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        height: 100% !important;
+        min-height: 100% !important;
+        max-height: 100% !important;
+        border: none !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        box-shadow: none !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: flex-start !important;
+        box-sizing: border-box !important;
+        outline: none !important;
+        
+        &:hover,
+        &:focus,
+        &:focus-within {
+          border: none !important;
+          background: transparent !important;
+          background-color: transparent !important;
+          box-shadow: none !important;
+          outline: none !important;
+        }
+      }
+      
+      :deep(.el-input__inner) {
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        height: 100% !important;
+        min-height: 100% !important;
+        max-height: 100% !important;
+        border: none !important;
+        border-width: 0 !important;
+        border-top: none !important;
+        border-right: none !important;
+        border-bottom: none !important;
+        border-left: none !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        line-height: inherit !important;
+        display: flex !important;
+        align-items: center !important;
+        box-sizing: border-box !important;
+        text-align: left !important;
+        outline: none !important;
+        
+        &:hover,
+        &:focus {
+          border: none !important;
+          border-width: 0 !important;
+          outline: none !important;
+        }
+      }
+      
+      :deep(.el-select__placeholder),
+      :deep(.el-select__selected-item) {
+        line-height: inherit !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: flex-start !important;
+        height: 100% !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
+        text-align: left !important;
+      }
+      
+      :deep(.el-select__caret) {
+        display: flex !important;
+        align-items: center !important;
+        flex-shrink: 0 !important;
+      }
+    }
+    
+    // ElInput 和 ElInputNumber 文本/数字输入框样式（独立设置，不影响 ElSelect）
+    // wrapper 背景透明，完全填充单元格而不会遮挡边框
+    .excel-edit-input {
+      position: absolute !important;
+      top: 0 !important;
+      left: -1px !important;
+      right: -1px !important;
+      bottom: 0 !important;
+      width: calc(100% + 2px) !important;
+      min-width: calc(100% + 2px) !important;
+      max-width: calc(100% + 2px) !important;
+      height: 100% !important;
+      display: block !important;
+      z-index: 10 !important;
+      
+      // 确保 Element Plus 组件的根元素（直接子元素）也有正确的宽度
+      > * {
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+      }
+      
+      // ElInput（文本输入框）样式
+      :deep(.el-input) {
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        height: 100% !important;
+        display: block !important;
+        box-sizing: border-box !important;
+      }
+      
+      :deep(.el-input__wrapper) {
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        height: 100% !important;
+        border: none !important;
+        border-width: 0 !important;
+        border-top: none !important;
+        border-right: none !important;
+        border-bottom: none !important;
+        border-left: none !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        box-shadow: none !important;
+        border-radius: 0 !important;
+        padding: 0 4px !important;
+        margin: 0 !important;
+        box-sizing: border-box !important;
+        outline: none !important;
+        
+        &:hover,
+        &:focus,
+        &:focus-within,
+        &.is-focus,
+        &.is-hover {
+          border: none !important;
+          border-width: 0 !important;
+          border-top: none !important;
+          border-right: none !important;
+          border-bottom: none !important;
+          border-left: none !important;
+          background: transparent !important;
+          background-color: transparent !important;
+          box-shadow: none !important;
+          outline: none !important;
+        }
+      }
+      
+      :deep(.el-input__inner) {
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        height: 100% !important;
+        border: none !important;
+        border-width: 0 !important;
+        border-top: none !important;
+        border-right: none !important;
+        border-bottom: none !important;
+        border-left: none !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        text-align: left !important;
+        box-sizing: border-box !important;
+        outline: none !important;
+        
+        &:hover,
+        &:focus {
+          border: none !important;
+          border-width: 0 !important;
+          background: transparent !important;
+          background-color: transparent !important;
+          outline: none !important;
+        }
+      }
+      
+      // 所有 input 元素都要透明
+      :deep(input),
+      :deep(input:hover),
+      :deep(input:focus),
+      :deep(textarea),
+      :deep(textarea:hover),
+      :deep(textarea:focus) {
+        background: transparent !important;
+        background-color: transparent !important;
+      }
+      
+      // ElInputNumber（数字输入框）样式
+      :deep(.el-input-number) {
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        height: 100% !important;
+        min-height: 32px !important;
+        display: flex !important;
+        align-items: stretch !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        text-align: left !important;
+        box-sizing: border-box !important;
+      }
+      
+      :deep(.el-input-number__input) {
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        height: 100% !important;
+        flex: 1 !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        text-align: left !important;
+        box-sizing: border-box !important;
+      }
+      
+      :deep(.el-input-number__input-wrapper) {
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        height: 100% !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        border: none !important;
+        border-width: 0 !important;
+        border-top: none !important;
+        border-right: none !important;
+        border-bottom: none !important;
+        border-left: none !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        box-shadow: none !important;
+        border-radius: 0 !important;
+        padding: 0 4px !important;
+        margin: 0 !important;
+        text-align: left !important;
+        box-sizing: border-box !important;
+        outline: none !important;
+        
+        &:hover,
+        &:focus,
+        &:focus-within,
+        &.is-focus,
+        &.is-hover {
+          border: none !important;
+          border-width: 0 !important;
+          border-top: none !important;
+          border-right: none !important;
+          border-bottom: none !important;
+          border-left: none !important;
+          background: transparent !important;
+          background-color: transparent !important;
+          box-shadow: none !important;
+          outline: none !important;
+        }
+      }
+      
+      // ElInputNumber 内部的 input 元素样式
+      :deep(.el-input-number__input input) {
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        height: 100% !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        color: inherit !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        text-align: left !important;
+        box-sizing: border-box !important;
+        outline: none !important;
+        
+        &:hover,
+        &:focus {
+          border: none !important;
+          background: transparent !important;
+          background-color: transparent !important;
+          outline: none !important;
+        }
+      }
+      
+      // 覆盖 Element Plus 默认的右对齐样式
+      :deep(.el-input-number__input input[type="text"]),
+      :deep(.el-input-number__input input[type="number"]) {
+        text-align: left !important;
+      }
+    }
   }
   
   // 表头样式
@@ -1950,6 +2555,105 @@ defineExpose({
       background-color: #fafafa;
       font-weight: 600;
       border-bottom: 2px solid #e8e8e8;
+      text-align: center !important;
+    }
+  }
+}
+</style>
+
+<style lang="less">
+// 全局样式：下拉菜单宽度与单元格一致
+// 注意：下拉菜单是 teleported 到 body 的，所以需要使用全局样式
+.excel-select-dropdown {
+  min-width: fit-content !important;
+  
+  .el-select-dropdown__item {
+    padding: 8px 12px;
+    white-space: nowrap;
+  }
+}
+
+
+// ==================== 全局样式：单元格内部容器 ====================
+// 
+// 确保 .cell 和 .excel-cell 在所有情况下都有正确的尺寸
+.excel-table {
+  // 所有单元格（包括编辑和非编辑模式）的 .cell 样式
+  .el-table__cell .cell {
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+    display: block !important;
+    border: none !important;
+    position: relative !important;
+    min-height: 100% !important;
+  }
+  
+  // 编辑模式下 .cell 需要明确高度
+  .el-table__cell.editing-cell .cell {
+    height: 100% !important;
+    min-height: 32px !important;
+  }
+  
+  // 非编辑模式下的 .excel-cell 样式
+  .el-table__cell:not(.editing-cell) .cell .excel-cell {
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: 100% !important;
+    min-height: 100% !important;
+    padding-top: 2px !important;
+    padding-right: 5px !important;
+    padding-bottom: 2px !important;
+    padding-left: 5px !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+    display: block !important;
+    position: relative !important;
+  }
+  
+  // 更具体的选择器，确保样式优先级
+  tbody .el-table__cell .cell {
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    min-height: 100% !important;
+  }
+}
+
+// ==================== 全局样式：编辑输入框宽度设置 ====================
+// 
+// 使用全局样式确保样式优先级足够高，覆盖 Element Plus 默认样式
+// 注意：这些样式与 scoped 样式中的设置保持一致，确保在所有情况下都能正确渲染
+.excel-table {
+  .el-table__cell.editing-cell {
+    // 确保所有输入组件的宽度设置
+    .excel-edit-input,
+    .excel-edit-select {
+      > * {
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+      }
+      
+      :deep(.el-input),
+      :deep(.el-select),
+      :deep(.el-input-number),
+      :deep(.el-input__wrapper),
+      :deep(.el-select__wrapper),
+      :deep(.el-input-number__input),
+      :deep(.el-input-number__input-wrapper),
+      :deep(.el-input__inner) {
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+      }
     }
   }
 }
