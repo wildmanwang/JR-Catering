@@ -65,6 +65,8 @@ export interface ImportGridColumn {
   options?: Array<{ label: string; value: any }>
   /** 是否可编辑（默认 true） */
   editable?: boolean
+  /** 是否必填（默认 false） */
+  required?: boolean
   /** Element Plus Select 组件的属性（仅当 type='select' 时有效） */
   selectProps?: {
     /** 是否禁用（默认 false，即可编辑） */
@@ -150,6 +152,9 @@ const dataList = ref<any[]>([])
 /** 当前正在编辑的单元格信息 { rowIndex: 行索引, field: 字段名 } */
 const editingCell = ref<{ rowIndex: number; field: string } | null>(null)
 
+/** 当前选中的单元格所在的行索引（用于跟踪 DOM 中的选中状态） */
+const selectedRowIndex = ref<number | null>(null)
+
 /** 标记是否正在输入（防止 blur 事件误触发导致退出编辑模式） */
 const isInputting = ref(false)
 
@@ -176,6 +181,88 @@ const editableColumns = computed(() => {
 const editableFields = computed(() => {
   return editableColumns.value.map(col => col.field)
 })
+
+/** 当前行索引（基于编辑或选中的单元格） */
+const currentRowIndex = computed(() => {
+  // 优先使用编辑状态的单元格
+  if (editingCell.value?.rowIndex !== undefined && editingCell.value?.rowIndex !== null) {
+    return editingCell.value.rowIndex
+  }
+  
+  // 如果没有编辑状态，使用选中的单元格所在的行索引
+  return selectedRowIndex.value
+})
+
+/** 当前行颜色常量 */
+const CURRENT_ROW_COLOR = 'rgb(16, 153, 104)'
+
+/**
+ * 更新选中行的索引
+ * 从选中的单元格元素中提取行索引
+ */
+const updateSelectedRowIndex = () => {
+  const selectedCell = document.querySelector('.el-table__cell.selected-cell') as HTMLElement
+  if (selectedCell) {
+    const rowElement = selectedCell.closest('tr') as HTMLElement
+    if (rowElement) {
+      const tbody = rowElement.closest('tbody')
+      if (tbody) {
+        const rowIndex = Array.from(tbody.children).indexOf(rowElement)
+        if (rowIndex !== -1) {
+          selectedRowIndex.value = rowIndex
+          return
+        }
+      }
+    }
+  }
+  // 如果没有选中的单元格，清除选中行索引
+  selectedRowIndex.value = null
+}
+
+/**
+ * 设置当前行（程序内部指定）
+ * @param rowIndex 行索引（从0开始），如果为 null 则清除当前行
+ */
+const setCurrentRow = (rowIndex: number | null) => {
+  if (rowIndex === null || rowIndex < 0 || rowIndex >= dataList.value.length) {
+    selectedRowIndex.value = null
+    // 清除所有选中状态
+    document.querySelectorAll('.el-table__cell.selected-cell').forEach(el => {
+      el.classList.remove('selected-cell')
+    })
+    return
+  }
+  
+  selectedRowIndex.value = rowIndex
+  
+  // 如果当前行没有选中的单元格，选中该行的第一个可编辑单元格
+  const visibleColumns = props.columns.filter(col => col.show !== false)
+  const editableColumns = visibleColumns.filter(col => col.editable !== false)
+  
+  if (editableColumns.length > 0) {
+    const firstEditableField = editableColumns[0].field
+    const firstEditableColumnIndex = visibleColumns.findIndex(c => c.field === firstEditableField)
+    
+    if (firstEditableColumnIndex !== -1) {
+      nextTick(() => {
+        const tbody = document.querySelector('.el-table__body tbody')
+        if (tbody) {
+          const rowElement = tbody.children[rowIndex] as HTMLElement
+          if (rowElement) {
+            const cell = rowElement.children[firstEditableColumnIndex + 1] as HTMLElement
+            if (cell) {
+              // 清除其他选中状态
+              document.querySelectorAll('.el-table__cell.selected-cell').forEach(el => {
+                el.classList.remove('selected-cell')
+              })
+              cell.classList.add('selected-cell')
+            }
+          }
+        }
+      })
+    }
+  }
+}
 
 // ==================== 数据加载 ====================
 
@@ -428,6 +515,7 @@ const endEdit = () => {
   editingCell.value = null
   currentInputRef.value = null
   isInputting.value = false
+  selectedRowIndex.value = null // 清除选中行索引
 }
 
 /**
@@ -485,6 +573,7 @@ const focusInput = (rowIndex: number, field: string, shouldSelect = true) => {
               el.classList.remove('selected-cell', 'editing-cell')
             })
             cell.classList.add('selected-cell', 'editing-cell')
+            updateSelectedRowIndex()
           }
         })
       })
@@ -533,6 +622,7 @@ const handleCellClick = (row: any, column: any, cell?: HTMLElement, event?: Mous
       const targetCell = (event.target as HTMLElement).closest('.el-table__cell') as HTMLElement
       if (targetCell) {
         targetCell.classList.add('selected-cell')
+        updateSelectedRowIndex()
         return
       }
     }
@@ -547,6 +637,7 @@ const handleCellClick = (row: any, column: any, cell?: HTMLElement, event?: Mous
       ) as HTMLElement
       if (cellElement) {
         cellElement.classList.add('selected-cell')
+        updateSelectedRowIndex()
       }
     }
   })
@@ -577,6 +668,7 @@ const handleCellDblclick = (row: any, column: any, cell?: HTMLElement, event?: M
   
   if (cell) {
     cell.classList.add('selected-cell')
+    updateSelectedRowIndex()
   }
   
   // 然后进入编辑模式
@@ -695,6 +787,7 @@ const handleInputKeydown = (event: KeyboardEvent, rowIndex: number, field: strin
                   el.classList.remove('selected-cell')
                 })
                 prevCell.classList.add('selected-cell')
+                updateSelectedRowIndex()
               }
             }
           }
@@ -715,6 +808,7 @@ const handleInputKeydown = (event: KeyboardEvent, rowIndex: number, field: strin
                   el.classList.remove('selected-cell')
                 })
                 prevCell.classList.add('selected-cell')
+                updateSelectedRowIndex()
               }
             }
           }
@@ -738,6 +832,7 @@ const handleInputKeydown = (event: KeyboardEvent, rowIndex: number, field: strin
                   el.classList.remove('selected-cell')
                 })
                 nextCell.classList.add('selected-cell')
+                updateSelectedRowIndex()
               }
             }
           }
@@ -758,6 +853,7 @@ const handleInputKeydown = (event: KeyboardEvent, rowIndex: number, field: strin
                   el.classList.remove('selected-cell')
                 })
                 firstCell.classList.add('selected-cell')
+                updateSelectedRowIndex()
               }
             }
           }
@@ -781,6 +877,7 @@ const handleInputKeydown = (event: KeyboardEvent, rowIndex: number, field: strin
                     el.classList.remove('selected-cell')
                   })
                   firstCell.classList.add('selected-cell')
+                  updateSelectedRowIndex()
                 }
               }
             }
@@ -809,6 +906,7 @@ const handleInputKeydown = (event: KeyboardEvent, rowIndex: number, field: strin
                 el.classList.remove('selected-cell')
               })
               cell.classList.add('selected-cell')
+              updateSelectedRowIndex()
             }
           }
         }
@@ -835,6 +933,7 @@ const handleInputKeydown = (event: KeyboardEvent, rowIndex: number, field: strin
                 el.classList.remove('selected-cell')
               })
               cell.classList.add('selected-cell')
+              updateSelectedRowIndex()
             }
           }
         }
@@ -1559,6 +1658,7 @@ onMounted(async () => {
                 el.classList.remove('selected-cell')
               })
               prevCell.classList.add('selected-cell')
+              updateSelectedRowIndex()
             }
           }
         } else if (rowIndex > 0) {
@@ -1575,6 +1675,7 @@ onMounted(async () => {
                   el.classList.remove('selected-cell')
                 })
                 lastCell.classList.add('selected-cell')
+                updateSelectedRowIndex()
               }
             }
           }
@@ -1593,6 +1694,7 @@ onMounted(async () => {
                 el.classList.remove('selected-cell')
               })
               nextCell.classList.add('selected-cell')
+              updateSelectedRowIndex()
             }
           }
         } else if (rowIndex < dataList.value.length - 1) {
@@ -1609,6 +1711,7 @@ onMounted(async () => {
                   el.classList.remove('selected-cell')
                 })
                 firstCell.classList.add('selected-cell')
+                updateSelectedRowIndex()
               }
             }
           }
@@ -1629,6 +1732,7 @@ onMounted(async () => {
                     el.classList.remove('selected-cell')
                   })
                   firstCell.classList.add('selected-cell')
+                  updateSelectedRowIndex()
                 }
               }
             }
@@ -1728,7 +1832,8 @@ defineExpose({
   setData: (data: any[]) => {
     dataList.value = data
   },
-  loadDataFromStorage
+  loadDataFromStorage,
+  setCurrentRow // 允许程序内部指定当前行
 })
 </script>
 
@@ -1749,62 +1854,50 @@ defineExpose({
         width="40"
         align="center"
         label=""
-      />
+      >
+        <template #default="scope">
+          <div class="row-index-cell">
+            <span v-if="currentRowIndex === scope.$index" class="row-index-pointer">
+              <!-- 右箭头图标 -->
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                style="cursor: pointer; display: block;"
+              >
+                <!-- 右箭头 -->
+                <path
+                  d="M9 6L15 12L9 18"
+                  :stroke="CURRENT_ROW_COLOR"
+                  stroke-width="2.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  fill="none"
+                />
+              </svg>
+            </span>
+            <span v-else class="row-index-number">{{ scope.$index + 1 }}</span>
+          </div>
+        </template>
+      </ElTableColumn>
       
       <ElTableColumn
         v-for="column in props.columns.filter(col => col.show !== false)"
         :key="column.field"
         :prop="column.field"
         :label="column.label"
-        :width="column.type === 'image' ? undefined : column.width"
-        :min-width="column.type === 'image' ? (column.minWidth || '240px') : column.minWidth"
+        :width="column.width"
+        :min-width="column.minWidth"
       >
+        <template #header>
+          <span>
+            {{ column.label }}
+            <span v-if="column.required" style="color: #f56c6c; margin-left: 2px;">*</span>
+          </span>
+        </template>
         <template #default="scope">
-          <!-- 编辑模式：数字输入框 -->
-          <ElInputNumber
-            v-if="isEditing(scope.$index, column.field) && column.editable !== false && column.type === 'number'"
-            :key="`input-number-${scope.$index}-${column.field}`"
-            :data-cell-key="`${scope.$index}-${column.field}`"
-            v-model="scope.row[column.field]"
-            size="small"
-            :controls="false"
-            class="excel-edit-input excel-input-number-left"
-            :style="{ textAlign: 'left' }"
-            @keydown.stop="handleInputKeydown($event, scope.$index, column.field)"
-            @focus="handleInputFocus(scope.$index, column.field)"
-            @blur="handleInputBlur($event, scope.$index, column.field)"
-            @input="handleInputInput(scope.$index, column.field)"
-          />
-          
-          <!-- 编辑模式：下拉选择 -->
-          <ElSelect
-            v-else-if="isEditing(scope.$index, column.field) && column.editable !== false && column.type === 'select' && column.options"
-            :key="`select-${scope.$index}-${column.field}`"
-            :data-cell-key="`${scope.$index}-${column.field}`"
-            v-model="scope.row[column.field]"
-            size="small"
-            class="excel-edit-select"
-            popper-class="excel-select-dropdown"
-            :style="{ width: '100%', minWidth: '100%', maxWidth: '100%', display: 'block' }"
-            :disabled="column.selectProps?.disabled ?? false"
-            :readonly="column.selectProps?.readonly"
-            :clearable="column.selectProps?.clearable"
-            :filterable="column.selectProps?.filterable ?? false"
-            :allow-create="column.selectProps?.allowCreate ?? false"
-            v-bind="column.selectProps || {}"
-            @keydown.stop="handleInputKeydown($event, scope.$index, column.field)"
-            @focus="handleInputFocus(scope.$index, column.field)"
-            @blur="handleInputBlur($event, scope.$index, column.field)"
-            @visible-change="(visible: boolean) => handleSelectVisibleChange(visible, scope.$index, column.field)"
-          >
-            <ElOption
-              v-for="opt in column.options"
-              :key="opt.value"
-              :label="opt.label"
-              :value="opt.value"
-            />
-          </ElSelect>
-          
           <!-- 图片列：始终显示编辑模式（类似 BaseFree.vue 的新增/修改模式） -->
           <div
             v-if="column.type === 'image' && column.editable !== false"
@@ -1961,6 +2054,7 @@ defineExpose({
         <template #default="scope">
           <div
             class="action-delete"
+            :class="{ 'action-delete-current': currentRowIndex === scope.$index }"
             @click.stop="handleDeleteRow(scope.$index)"
           >
             <ElIcon :size="16">
@@ -2008,6 +2102,29 @@ defineExpose({
     padding-left: 0 !important;
     padding-right: 0 !important;
     font-size: 12px !important; // 减小2级字号
+  }
+  
+  // 行号单元格样式
+  .row-index-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    min-height: 32px;
+  }
+  
+  .row-index-number {
+    font-size: 12px;
+    color: #606266;
+  }
+  
+  .row-index-pointer {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
   }
   
   // 序号列表头隐藏
@@ -3032,8 +3149,24 @@ defineExpose({
     color: inherit; // 使用当前字体颜色
     transition: color 0.2s ease;
     
+    // 非当前行的 hover 效果
     &:hover {
       color: #f56c6c; // hover 时变红色
+    }
+    
+    // 当前行的删除图标颜色
+    &.action-delete-current {
+      color: rgb(16, 153, 104);
+      
+      // 当前行的 hover 效果，与非当前行保持一致（变红色）
+      &:hover {
+        color: #f56c6c; // hover 时变红色，同非当前行
+      }
+    }
+    
+    // 确保 ElIcon 继承颜色
+    :deep(.el-icon) {
+      color: inherit;
     }
   }
   

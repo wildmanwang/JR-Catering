@@ -25,8 +25,9 @@ import { ContentWrap } from '@/components/ContentWrap'
 import { ButtonPre } from '@/components/ButtonPre'
 import { PrompInfo } from '@/components/PrompInfo'
 import ImportGrid, { type ImportGridColumn } from '@/wintemplate/importGrid/ImportGrid.vue'
-import { getDishStatusOptionsApi } from '@/api/vadmin/product/dish'
+import { getDishStatusOptionsApi, addDishListApi, putDishListApi, getDishApi } from '@/api/vadmin/product/dish'
 import { getKitchenListApi } from '@/api/vadmin/product/kitchen'
+import { useAuthStore } from '@/store/modules/auth'
 
 defineOptions({
   name: 'DishImport'
@@ -79,14 +80,16 @@ const columns = computed<ImportGridColumn[]>(() => [
     label: '名称',
     minWidth: '200px',
     type: 'text',
-    show: true
+    show: true,
+    required: true
   },
   {
     field: 'name_display',
     label: '显示名称',
     minWidth: '200px',
     type: 'text',
-    show: true
+    show: true,
+    required: true
   },
   {
     field: 'name_english',
@@ -101,6 +104,7 @@ const columns = computed<ImportGridColumn[]>(() => [
     width: '100px',
     type: 'select',
     show: true,
+    required: true,
     options: kitchenOptions.value,
     selectProps: {
       disabled: false,
@@ -131,7 +135,7 @@ const columns = computed<ImportGridColumn[]>(() => [
   {
     field: 'dish_images',
     label: '图片',
-    minWidth: '240px',
+    width: '480px',
     type: 'image',
     show: true
   },
@@ -195,6 +199,13 @@ const dishStatusOptions = ref<Array<{ label: string; value: number }>>([])
 /** 厨部选项 */
 const kitchenOptions = ref<Array<{ label: string; value: number }>>([])
 
+/** 原始数据（用于判断是否修改） */
+const originalData = ref<any[]>([])
+
+/** Auth Store（用于获取上传 token） */
+const authStore = useAuthStore()
+const token = computed(() => authStore.getToken)
+
 // ==================== 事件处理 ====================
 
 /**
@@ -202,9 +213,11 @@ const kitchenOptions = ref<Array<{ label: string; value: number }>>([])
  * 
  * ImportGrid 组件从 sessionStorage 加载数据后触发
  * 
- * @param _data - 加载的数据列表（当前未使用）
+ * @param _data - 加载的数据列表
  */
 const handleDataLoaded = (_data: any[]) => {
+  // 保存原始数据，用于判断是否修改
+  originalData.value = JSON.parse(JSON.stringify(_data || []))
   prompInfoRef.value?.ready()
 }
 
@@ -217,6 +230,107 @@ const handleDataLoaded = (_data: any[]) => {
  */
 const handleDataChanged = (_data: any[]) => {
   // 数据变化时的处理逻辑（如需要）
+}
+
+/**
+ * 上传图片文件
+ */
+const uploadFile = async (file: FormData) => {
+  try {
+    const res = await fetch('/api/vadmin/system/upload/image/to/local', {
+      method: 'POST',
+      body: file,
+      headers: {
+        'Authorization': token.value || ''
+      }
+    })
+
+    if (!res.ok) {
+      throw new Error(`HTTP错误！状态：${res.status}`)
+    }
+
+    const data = await res.json()
+    return {
+      success: true,
+      message: '上传成功',
+      data: data
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : '未知的错误.'
+    return {
+      success: false,
+      message: msg
+    }
+  }
+}
+
+/**
+ * 处理图片字段，将图片数组转换为提交格式
+ * 参考 BaseFree 的 handleImageUpload 函数
+ * 
+ * ImportGrid 中图片格式：
+ * - 新上传的图片： [previewUrl, 'add', file.name, file] 其中 file.raw 是文件对象
+ * - 已存在的图片：字符串格式，如 "path/to/image?original" 或 "path/to/image?delete"
+ */
+const processImageField = async (row: any) => {
+  const imageField = 'dish_images'
+  const imageDisplayField = 'dish_images_display'
+  
+  // 检查字段是否存在且为数组
+  if (!row[imageField] || !Array.isArray(row[imageField])) {
+    return
+  }
+  
+  // 处理每个图片项
+  for (let index = 0; index < row[imageField].length; index++) {
+    const fileData = row[imageField][index]
+    
+    // 如果是数组格式（包含文件对象），说明是未上传的图片，需要上传
+    if (Array.isArray(fileData)) {
+      const fileForm = new FormData()
+      fileForm.append('file', fileData[3].raw)
+      fileForm.append('path', 'system')
+      const res = await uploadFile(fileForm)
+      if (!res.success) {
+        throw new Error(`图片上传错误：${res.message}`)
+      }
+      // 转换为字符串格式：路径 + 操作类型（add/update/delete）
+      row[imageField][index] = `${res.data.data.remote_path}?${fileData[1]}`
+      row[imageDisplayField][index] = `${res.data.data.remote_path}?${fileData[1]}`
+    }
+    // 如果已经是字符串格式，保持不变
+    // 如果包含 ?delete 标记，保持原样（用于删除操作）
+  }
+}
+
+/**
+ * 判断数据是否被修改
+ */
+const isDataModified = (currentRow: any, originalRow: any): boolean => {
+  if (!originalRow) return true // 新增记录
+  
+  // 比较关键字段
+  const fieldsToCompare = [
+    'name_unique', 'name_display', 'name_english', 'kitchen_id',
+    'spec', 'price', 'order_number', 'dish_images'
+  ]
+  
+  for (const field of fieldsToCompare) {
+    if (field === 'dish_images') {
+      // 图片字段需要特殊比较
+      const currentImages = JSON.stringify((currentRow[field] || []).sort())
+      const originalImages = JSON.stringify((originalRow[field] || []).sort())
+      if (currentImages !== originalImages) {
+        return true
+      }
+    } else {
+      if (currentRow[field] !== originalRow[field]) {
+        return true
+      }
+    }
+  }
+  
+  return false
 }
 
 // ==================== 数据获取 ====================
@@ -274,31 +388,230 @@ const handleAddRow = () => {
  * 保存数据
  * 
  * 将表格中的所有数据保存到后端
- * TODO: 实现实际的保存逻辑（调用 API）
- * 
- * @example
- * ```typescript
- * const res = await saveDishBatchApi(data)
- * if (res.code === 200) {
- *   prompInfoRef.value?.info(`成功保存 ${data.length} 条记录`)
- * }
- * ```
+ * 逐行处理，支持新增和修改
  */
 const handleSave = async () => {
   const data = importGridRef.value?.getData() || []
   if (!data.length) {
-    prompInfoRef.value?.warn('暂无可保存的数据')
+    prompInfoRef.value?.warn('没有数据需要保存。')
+    return
+  }
+  
+  // 数据校验：检查必填字段
+  const requiredFields = [
+    { field: 'name_unique', label: '名称' },
+    { field: 'name_display', label: '显示名称' },
+    { field: 'kitchen_id', label: '厨部' }
+  ]
+  
+  const errors: string[] = []
+  data.forEach((row: any, index: number) => {
+    requiredFields.forEach(({ field, label }) => {
+      const value = row[field]
+      if (value === undefined || value === null || value === '') {
+        errors.push(`第 ${index + 1} 行：${label} 为必填项`)
+      }
+    })
+  })
+  
+  if (errors.length > 0) {
+    prompInfoRef.value?.err(errors.join('；'))
+    return
+  }
+  
+  // 筛选需要保存的数据
+  const dataToSave: Array<{ row: any; index: number; isNew: boolean; originalRow: any }> = []
+  
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i]
+    const originalRow = originalData.value[i]
+    const isNew = !row.id || row.id === undefined || row.id === null || row.id === ''
+    
+    if (isNew) {
+      // 新增记录，直接添加
+      dataToSave.push({ row, index: i, isNew: true, originalRow: null })
+    } else {
+      // 修改记录，需要判断是否被修改
+      if (isDataModified(row, originalRow)) {
+        dataToSave.push({ row, index: i, isNew: false, originalRow })
+      }
+    }
+  }
+  
+  if (dataToSave.length === 0) {
+    prompInfoRef.value?.warn('没有数据需要保存。')
     return
   }
   
   saveLoading.value = true
+  
+  let addCount = 0
+  let updateCount = 0
+  
   try {
-    // TODO: 实现保存逻辑
-    // const res = await saveDishBatchApi(data)
-    // if (res.code === 200) {
-    //   prompInfoRef.value?.info(`成功保存 ${data.length} 条记录`)
-    // }
-    prompInfoRef.value?.info(`成功保存 ${data.length} 条记录`)
+    // 逐行处理
+    for (const { row, index, isNew } of dataToSave) {
+      // 设置当前行
+      importGridRef.value?.setCurrentRow(index)
+      
+      // 显示进度
+      if (isNew) {
+        prompInfoRef.value?.info(`正在提交第 ${index + 1} 行...`)
+      } else {
+        prompInfoRef.value?.info(`正在提交第 ${index + 1} 行...`)
+      }
+      
+      try {
+        // 先处理图片字段（上传新图片并转换为字符串格式）
+        // 注意：直接修改 row，因为我们需要保留文件对象用于上传
+        await processImageField(row)
+        
+        // 处理完图片后，深拷贝行数据（此时所有图片都已经是字符串格式）
+        const submitData = JSON.parse(JSON.stringify(row))
+        
+        // 确保 dish_images 是字符串数组，移除任何非字符串项
+        if (Array.isArray(submitData.dish_images)) {
+          submitData.dish_images = submitData.dish_images.filter((item: any) => typeof item === 'string')
+        }
+        
+        // 移除 dish_images_display 字段，后端不需要这个字段
+        delete submitData.dish_images_display
+        
+        // 新增记录：status 替换为 0（提交时，表格中不变）
+        // 注意：只修改 submitData，不修改 row，保持表格中的值不变
+        if (isNew) {
+          submitData.status = 0
+        }
+        
+        // 提交数据
+        let res
+        if (isNew) {
+          res = await addDishListApi(submitData)
+        } else {
+          res = await putDishListApi(submitData)
+        }
+        
+        if (res.code !== 200) {
+          throw new Error(res.msg || '保存失败')
+        }
+        
+        // 保存成功后，从数据库重新获取该条记录（获取 id）
+        if (isNew) {
+          // 新增记录，从返回结果获取 id
+          const newId = res.data?.id || (res.data && typeof res.data === 'object' && 'id' in res.data ? res.data.id : null)
+          if (newId) {
+            // 重新获取完整记录
+            const detailRes = await getDishApi(newId)
+            if (detailRes.code === 200 && detailRes.data) {
+              // 更新表格中的数据，但保持其他行不变
+              const currentData = importGridRef.value?.getData() || []
+              const detail = detailRes.data
+              
+              // 处理图片数据格式（参考 Dish.vue 的数据处理逻辑）
+              if (detail.dish_images) {
+                detail.dish_images.sort((a: string, b: string) => a.localeCompare(b))
+                detail.dish_images = detail.dish_images.map((p: string) => p.split('-').slice(1).join('-'))
+              }
+              
+              // 转换为导入格式
+              const normalizedImages = Array.isArray(detail.dish_images) 
+                ? detail.dish_images.filter((img: any) => typeof img === 'string' && img) 
+                : []
+              const normalizeImage = (img: string) => {
+                if (typeof img !== 'string' || !img.length) return ''
+                const [path] = img.split('?')
+                return path ? `${path}?original` : ''
+              }
+              
+              currentData[index] = {
+                ...currentData[index],
+                id: detail.id,
+                name_unique: detail.name_unique ?? currentData[index].name_unique,
+                name_display: detail.name_display ?? currentData[index].name_display,
+                name_english: detail.name_english ?? currentData[index].name_english,
+                kitchen_id: detail.kitchen_id ?? currentData[index].kitchen_id,
+                price: detail.price ?? currentData[index].price,
+                order_number: detail.order_number ?? currentData[index].order_number,
+                spec: detail.spec ?? currentData[index].spec,
+                status: detail.status ?? currentData[index].status,
+                dish_images: normalizedImages.map(normalizeImage).filter(Boolean),
+                dish_images_display: [...normalizedImages]
+              }
+              
+              importGridRef.value?.setData(currentData)
+              
+              // 更新原始数据
+              originalData.value[index] = JSON.parse(JSON.stringify(currentData[index]))
+            }
+          }
+          addCount++
+        } else {
+          // 修改记录，重新获取完整记录
+          const detailRes = await getDishApi(row.id)
+          if (detailRes.code === 200 && detailRes.data) {
+            const currentData = importGridRef.value?.getData() || []
+            const detail = detailRes.data
+            
+            // 处理图片数据格式
+            if (detail.dish_images) {
+              detail.dish_images.sort((a: string, b: string) => a.localeCompare(b))
+              detail.dish_images = detail.dish_images.map((p: string) => p.split('-').slice(1).join('-'))
+            }
+            
+            // 转换为导入格式
+            const normalizedImages = Array.isArray(detail.dish_images) 
+              ? detail.dish_images.filter((img: any) => typeof img === 'string' && img) 
+              : []
+            const normalizeImage = (img: string) => {
+              if (typeof img !== 'string' || !img.length) return ''
+              const [path] = img.split('?')
+              return path ? `${path}?original` : ''
+            }
+            
+            currentData[index] = {
+              ...currentData[index],
+              name_unique: detail.name_unique ?? currentData[index].name_unique,
+              name_display: detail.name_display ?? currentData[index].name_display,
+              name_english: detail.name_english ?? currentData[index].name_english,
+              kitchen_id: detail.kitchen_id ?? currentData[index].kitchen_id,
+              price: detail.price ?? currentData[index].price,
+              order_number: detail.order_number ?? currentData[index].order_number,
+              spec: detail.spec ?? currentData[index].spec,
+              status: detail.status ?? currentData[index].status,
+              dish_images: normalizedImages.map(normalizeImage).filter(Boolean),
+              dish_images_display: [...normalizedImages]
+            }
+            
+            importGridRef.value?.setData(currentData)
+            
+            // 更新原始数据
+            originalData.value[index] = JSON.parse(JSON.stringify(currentData[index]))
+          }
+          updateCount++
+        }
+      } catch (err: any) {
+        const errorMsg = err.message || err.msg || '保存失败'
+        prompInfoRef.value?.err(`第 ${index + 1} 行：${errorMsg}，修改后点击"保存"继续处理...`)
+        // 中断整个处理流程
+        saveLoading.value = false
+        return
+      }
+    }
+    
+    // 显示最终统计
+    const messages: string[] = []
+    if (addCount > 0) {
+      messages.push(`新增了 ${addCount} 条`)
+    }
+    if (updateCount > 0) {
+      messages.push(`修改了 ${updateCount} 条`)
+    }
+    if (messages.length > 0) {
+      prompInfoRef.value?.info(`成功${messages.join('、')}数据。`)
+    }
+    
+    // 清除当前行
+    importGridRef.value?.setCurrentRow(null)
   } catch (err) {
     console.error('保存失败：', err)
     prompInfoRef.value?.err('保存失败，请稍后重试')
