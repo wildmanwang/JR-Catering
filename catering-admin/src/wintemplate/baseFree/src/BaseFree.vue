@@ -2,7 +2,7 @@
 import { computed, ref, watch, unref, nextTick } from 'vue'
 import { ElDrawer, ElScrollbar, ElTabs, ElTabPane, ElMessage, ElMessageBox, ElUpload, UploadProps, ElIcon, ElImage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
-import { ButtonPre } from '@/components/ButtonPre'
+import { ButtonPlus } from '@/components/ButtonPlus'
 import { PrompInfo } from '@/components/PrompInfo'
 import { Form, FormSchema } from '@/components/Form'
 import { useForm } from '@/hooks/web/useForm'
@@ -1406,25 +1406,25 @@ defineExpose({
                   <PrompInfo ref="prompInfoRef" />
                 </div>
                 <div class="response-buttons">
-                  <ButtonPre
+                  <ButtonPlus
                     v-if="showSaveButton"
                     stype="save"
                     :loading="props.saveLoading"
                     @click="handleSave"
                   />
-                  <ButtonPre
+                  <ButtonPlus
                     v-if="showContinueNewButton"
                     stype="newcontinue"
                     :loading="props.saveLoading"
                     @click="handleContinueNew"
                   />
-                  <ButtonPre
+                  <ButtonPlus
                     v-if="showCopyNewButton"
                     stype="newcopy"
                     :loading="props.saveLoading"
                     @click="handleCopyNew"
                   />
-                  <ButtonPre
+                  <ButtonPlus
                     stype="return"
                     @click="handleCancel"
                   />

@@ -5,7 +5,7 @@ import { useTable } from '@/hooks/web/useTable'
 import { Table, TableColumn } from '@/components/Table'
 import { ElImage, ElCard, ElMenu, ElMenuItem } from 'element-plus'
 import { BaseButton } from '@/components/Button'
-import { ButtonPre } from '@/components/ButtonPre'
+import { ButtonPlus } from '@/components/ButtonPlus'
 import { PrompInfo } from '@/components/PrompInfo'
 import { QueryBar, type QueryCondition } from '@/components/QueryBar'
 import { useTagsViewStoreWithOut } from '@/store/modules/tagsView'
@@ -19,8 +19,8 @@ defineOptions({
 const DEFAULT_IMAGE = '/src/assets/imgs/no_image.png'
 
 // ==================== 类型定义 ====================
-/** ButtonPre 组件的按钮类型 */
-type ButtonPreSType =
+/** ButtonPlus 组件的按钮类型 */
+type ButtonPlusSType =
   | 'new'
   | 'modify'
   | 'delete'
@@ -50,7 +50,7 @@ interface ActionOption {
 
 /** 工具栏按钮配置 */
 interface ToolbarButton {
-  stype: ButtonPreSType // 按钮类型
+  stype: ButtonPlusSType // 按钮类型
   label?: string // 自定义按钮文字
   onClick?: () => void // 点击事件回调
   permission?: string[] // 权限控制
@@ -1610,9 +1610,9 @@ defineExpose({
             <div class="base-grid-toolbar-left">
               <template v-if="props.toolbarButtons && props.toolbarButtons.length > 0">
                 <template v-for="btn in props.toolbarButtons" :key="btn.stype">
-                  <ButtonPre :stype="btn.stype" @click="btn.onClick">
+                  <ButtonPlus :stype="btn.stype" @click="btn.onClick">
                     <template v-if="btn.label">{{ btn.label }}</template>
-                  </ButtonPre>
+                  </ButtonPlus>
                 </template>
               </template>
               <slot name="toolbar-left"></slot>
@@ -1650,9 +1650,9 @@ defineExpose({
         <div class="base-grid-toolbar-left">
           <template v-if="props.toolbarButtons && props.toolbarButtons.length > 0">
             <template v-for="btn in props.toolbarButtons" :key="btn.stype">
-              <ButtonPre :stype="btn.stype" @click="btn.onClick">
+              <ButtonPlus :stype="btn.stype" @click="btn.onClick">
                 <template v-if="btn.label">{{ btn.label }}</template>
-              </ButtonPre>
+              </ButtonPlus>
             </template>
           </template>
           <slot name="toolbar-left"></slot>
@@ -1814,7 +1814,7 @@ defineExpose({
   flex-shrink: 0;
 }
 
-/* 移除 ButtonPre 按钮的默认 margin，确保间距由 gap 控制 */
+/* 移除 ButtonPlus 按钮的默认 margin，确保间距由 gap 控制 */
 .base-grid-toolbar-left :deep(.my-button) {
   margin: 0;
 }

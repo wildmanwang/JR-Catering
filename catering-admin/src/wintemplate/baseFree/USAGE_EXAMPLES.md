@@ -206,14 +206,14 @@ const tabs: FreeTab[] = [
             复制
           </ElButton>
           <!-- 保存按钮 -->
-          <ButtonPre
+          <ButtonPlus
             v-if="mode !== 'view'"
             stype="save"
             :loading="saveLoading"
             @click="save"
           />
           <!-- 返回按钮 -->
-          <ButtonPre
+          <ButtonPlus
             stype="return"
             @click="cancel"
           />
@@ -288,8 +288,8 @@ const handleCopy = () => {
       <div class="custom-buttons">
         <PrompInfo ref="prompInfoRef" />
         <ElButton v-if="mode === 'edit'" @click="handleCopy">复制</ElButton>
-        <ButtonPre v-if="mode !== 'view'" stype="save" @click="save" />
-        <ButtonPre stype="return" @click="cancel" />
+        <ButtonPlus v-if="mode !== 'view'" stype="save" @click="save" />
+        <ButtonPlus stype="return" @click="cancel" />
       </div>
     </template>
   </BaseFree>

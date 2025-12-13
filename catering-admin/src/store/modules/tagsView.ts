@@ -33,12 +33,18 @@ export const useTagsViewStore = defineStore('tagsView', {
     }
   },
   actions: {
-    // 新增缓存和tag
+    /**
+     * 新增访问视图（同时添加标签和缓存）
+     * @param view - 路由视图对象
+     */
     addView(view: RouteLocationNormalizedLoaded): void {
       this.addVisitedView(view)
       this.addCachedView()
     },
-    // 新增tag
+    /**
+     * 新增访问标签
+     * @param view - 路由视图对象
+     */
     addVisitedView(view: RouteLocationNormalizedLoaded) {
       if (this.visitedViews.some((v) => v.path === view.path)) return
       if (view.meta?.noTagsView) return
@@ -50,7 +56,10 @@ export const useTagsViewStore = defineStore('tagsView', {
       // 自动从 sessionStorage 恢复页面状态（页面刷新场景）
       this.restorePageStateFromStorage(view.fullPath)
     },
-    // 新增缓存
+    /**
+     * 更新缓存视图列表
+     * 根据当前访问的视图自动计算需要缓存的组件
+     */
     addCachedView() {
       const cacheMap: Set<string> = new Set()
       for (const v of this.visitedViews) {
@@ -66,12 +75,18 @@ export const useTagsViewStore = defineStore('tagsView', {
         return
       this.cachedViews = cacheMap
     },
-    // 删除某个
+    /**
+     * 删除访问视图（同时删除标签和更新缓存）
+     * @param view - 路由视图对象
+     */
     delView(view: RouteLocationNormalizedLoaded) {
       this.delVisitedView(view)
       this.addCachedView()
     },
-    // 删除tag
+    /**
+     * 删除访问标签
+     * @param view - 路由视图对象
+     */
     delVisitedView(view: RouteLocationNormalizedLoaded) {
       for (const [i, v] of this.visitedViews.entries()) {
         if (v.path === view.path) {
@@ -85,13 +100,15 @@ export const useTagsViewStore = defineStore('tagsView', {
             sessionStorage.removeItem(stateKey)
             sessionStorage.removeItem(importStateKey)
           } catch (err) {
-            console.error('清理 sessionStorage 状态失败:', err)
+            // 静默处理清理失败的情况
           }
           break
         }
       }
     },
-    // 删除缓存
+    /**
+     * 删除当前路由的缓存
+     */
     delCachedView() {
       const route = router.currentRoute.value
       const index = findIndex<string>(this.getCachedViews, (v) => v === route.name)
@@ -99,12 +116,16 @@ export const useTagsViewStore = defineStore('tagsView', {
         this.cachedViews.delete(this.getCachedViews[index])
       }
     },
-    // 删除所有缓存和tag
+    /**
+     * 删除所有访问视图（保留固定标签）
+     */
     delAllViews() {
       this.delAllVisitedViews()
       this.addCachedView()
     },
-    // 删除所有tag
+    /**
+     * 删除所有访问标签（保留固定标签）
+     */
     delAllVisitedViews() {
       const authStore = useAuthStoreWithOut()
       // 清理非固定标签的状态
@@ -117,12 +138,18 @@ export const useTagsViewStore = defineStore('tagsView', {
         ? this.visitedViews.filter((tag) => tag?.meta?.affix)
         : []
     },
-    // 删除其它
+    /**
+     * 删除其他访问视图（保留当前视图和固定标签）
+     * @param view - 要保留的路由视图对象
+     */
     delOthersViews(view: RouteLocationNormalizedLoaded) {
       this.delOthersVisitedViews(view)
       this.addCachedView()
     },
-    // 删除其它tag
+    /**
+     * 删除其他访问标签（保留当前标签和固定标签）
+     * @param view - 要保留的路由视图对象
+     */
     delOthersVisitedViews(view: RouteLocationNormalizedLoaded) {
       // 清理被删除的标签的状态
       this.visitedViews.forEach((v) => {
@@ -134,7 +161,10 @@ export const useTagsViewStore = defineStore('tagsView', {
         return v?.meta?.affix || v.path === view.path
       })
     },
-    // 删除左侧
+    /**
+     * 删除左侧访问视图（保留当前视图及右侧视图和固定标签）
+     * @param view - 当前路由视图对象
+     */
     delLeftViews(view: RouteLocationNormalizedLoaded) {
       const index = findIndex<RouteLocationNormalizedLoaded>(
         this.visitedViews,
@@ -153,7 +183,10 @@ export const useTagsViewStore = defineStore('tagsView', {
         this.addCachedView()
       }
     },
-    // 删除右侧
+    /**
+     * 删除右侧访问视图（保留当前视图及左侧视图和固定标签）
+     * @param view - 当前路由视图对象
+     */
     delRightViews(view: RouteLocationNormalizedLoaded) {
       const index = findIndex<RouteLocationNormalizedLoaded>(
         this.visitedViews,
@@ -172,6 +205,10 @@ export const useTagsViewStore = defineStore('tagsView', {
         this.addCachedView()
       }
     },
+    /**
+     * 更新访问视图信息
+     * @param view - 路由视图对象
+     */
     updateVisitedView(view: RouteLocationNormalizedLoaded) {
       for (let v of this.visitedViews) {
         if (v.path === view.path) {
@@ -180,10 +217,18 @@ export const useTagsViewStore = defineStore('tagsView', {
         }
       }
     },
-    // 设置当前选中的tag
+    /**
+     * 设置当前选中的标签
+     * @param tag - 路由视图对象
+     */
     setSelectedTag(tag: RouteLocationNormalizedLoaded) {
       this.selectedTag = tag
     },
+    /**
+     * 设置标签标题
+     * @param title - 标题文本
+     * @param path - 路由路径，如果不提供则使用当前选中的标签路径
+     */
     setTitle(title: string, path?: string) {
       for (const v of this.visitedViews) {
         if (v.path === (path ?? this.selectedTag?.path)) {
@@ -249,24 +294,23 @@ export const useTagsViewStore = defineStore('tagsView', {
                              state.currentPage !== undefined ||
                              state.pageSize !== undefined
               if (!isValid) {
-                console.warn(`tagsViewStore: BaseGrid 状态格式不正确，跳过恢复`, { fullPath, prefix, state })
+                // 状态格式不正确，跳过恢复
                 continue
               }
             } else if (isImportGridPrefix) {
               // ImportGrid 状态应该包含 dataList
               const isValid = state.dataList !== undefined
               if (!isValid) {
-                console.warn(`tagsViewStore: ImportGrid 状态格式不正确，跳过恢复`, { fullPath, prefix, state })
+                // 状态格式不正确，跳过恢复
                 continue
               }
             }
             
             this.pageStates.set(fullPath, state)
-            console.log(`tagsViewStore: 从 sessionStorage 恢复页面状态`, { fullPath, prefix, storageKey })
             return
           }
         } catch (err) {
-          console.error(`从 sessionStorage 恢复页面状态失败 (${prefix}):`, err)
+          // 静默处理恢复失败的情况，继续尝试下一个前缀
         }
       }
     }

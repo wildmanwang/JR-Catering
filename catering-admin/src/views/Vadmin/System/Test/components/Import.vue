@@ -5,7 +5,7 @@
     import { getKitchenListApi } from '@/api/vadmin/product/kitchen'
     import { UploadFilled } from '@element-plus/icons-vue'
     import { useAuthStore } from '@/store/modules/auth'
-    import { ButtonPre } from '@/components/ButtonPre'
+    import { ButtonPlus } from '@/components/ButtonPlus'
     
     const authStore = useAuthStore()
     
@@ -856,14 +856,14 @@
     <template>
       <div class="add-row-section">
         <div class="toolbar-left">
-        <ButtonPre stype="new" @click="handleAddRow()" />
+        <ButtonPlus stype="new" @click="handleAddRow()" />
         </div>
         <div class="toolbar-info" :class="infoClass">
           {{ infoText }}
         </div>
         <div class="toolbar-actions">
-          <ButtonPre stype="save" :loading="saveLoading" @click="handleSave()" />
-          <ButtonPre stype="return" @click="handleReturn()" />
+          <ButtonPlus stype="save" :loading="saveLoading" @click="handleSave()" />
+          <ButtonPlus stype="return" @click="handleReturn()" />
         </div>
       </div>
       <div class="editable-table-container">

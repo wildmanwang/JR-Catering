@@ -22,7 +22,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { ContentWrap } from '@/components/ContentWrap'
-import { ButtonPre } from '@/components/ButtonPre'
+import { ButtonPlus } from '@/components/ButtonPlus'
 import { PrompInfo } from '@/components/PrompInfo'
 import ImportGrid, { type ImportGridColumn } from '@/wintemplate/importGrid/ImportGrid.vue'
 import { getDishStatusOptionsApi, addDishListApi, putDishListApi, getDishApi } from '@/api/vadmin/product/dish'
@@ -637,13 +637,13 @@ onMounted(async () => {
     <!-- 工具栏 -->
     <div class="import-toolbar">
       <div class="toolbar-left">
-        <ButtonPre stype="new" @click="handleAddRow" />
+        <ButtonPlus stype="new" @click="handleAddRow" />
       </div>
       <div class="toolbar-info">
         <PrompInfo ref="prompInfoRef" />
       </div>
       <div class="toolbar-right">
-        <ButtonPre stype="save" :loading="saveLoading" @click="handleSave" />
+        <ButtonPlus stype="save" :loading="saveLoading" @click="handleSave" />
       </div>
     </div>
     

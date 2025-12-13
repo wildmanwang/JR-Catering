@@ -15,7 +15,7 @@ import { Search } from '@/components/Search'
 import { FormSchema } from '@/components/Form'
 import { useTable } from '@/hooks/web/useTable'
 import { Table, TableColumn } from '@/components/Table'
-import { ButtonPre } from '@/components/ButtonPre'
+    import { ButtonPlus } from '@/components/ButtonPlus'
 import { ElRow, ElCol, ElImage, ElMenu, ElMenuItem, ElCard, ElMessage } from 'element-plus'
 import { Dialog } from '@/components/Dialog'
 import Write from './components/Write.vue'
@@ -888,10 +888,10 @@ onBeforeUnmount(() => {
           <template #toolbar>
             <ElRow :gutter="10">
               <ElCol :span="1.5" v-hasPermi="['auth.product.dish.create']">
-                <ButtonPre stype="new" @click="addAction" />
-                <ButtonPre stype="batch" @click="configBase()" >维护</ButtonPre>
-                <ButtonPre stype="setting" @click="configDish()" >菜品</ButtonPre>
-                <ButtonPre stype="batch" @click="delData(null)" >删除</ButtonPre>
+                <ButtonPlus stype="new" @click="addAction" />
+                <ButtonPlus stype="batch" @click="configBase()" >维护</ButtonPlus>
+                <ButtonPlus stype="setting" @click="configDish()" >菜品</ButtonPlus>
+                <ButtonPlus stype="batch" @click="delData(null)" >删除</ButtonPlus>
               </ElCol>
             </ElRow>
           </template>
@@ -915,8 +915,8 @@ onBeforeUnmount(() => {
     />
 
     <template #footer v-if="actionType === 'add' || actionType === 'edit'">
-      <ButtonPre stype="save" :loading="saveLoading" @click="save" />
-      <ButtonPre stype="return" @click="dialogVisible = false" />
+      <ButtonPlus stype="save" :loading="saveLoading" @click="save" />
+      <ButtonPlus stype="return" @click="dialogVisible = false" />
     </template>
   </Dialog>
 </template>

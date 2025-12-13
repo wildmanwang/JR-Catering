@@ -7,7 +7,7 @@ import { Highlight } from '@/components/Highlight'
 import avatar from '@/assets/imgs/avatar.jpg'
 import { useAuthStore } from '@/store/modules/auth'
 import { useRouter } from 'vue-router'
-import { ButtonPre } from '@/components/ButtonPre'
+import { ButtonPlus } from '@/components/ButtonPlus'
 
 defineOptions({
   name: 'DashboardWorkplace'
