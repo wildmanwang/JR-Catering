@@ -200,7 +200,6 @@
   }) => {
     try {
       const res = await getDishListApi(params)
-      // 处理数据（参考 Dish.vue 的数据处理逻辑）
       if (res.data) {
         res.data.map((row: any) => row.dish_images.sort((a: string, b: string) => a.localeCompare(b)))
         res.data.forEach(

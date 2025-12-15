@@ -1,12 +1,11 @@
 <script setup lang="tsx">
-import { computed, ref, watch, unref, nextTick } from 'vue'
-import { ElDrawer, ElScrollbar, ElTabs, ElTabPane, ElMessage, ElMessageBox, ElUpload, UploadProps, ElIcon, ElImage } from 'element-plus'
-import { UploadFilled } from '@element-plus/icons-vue'
+import { computed, ref, watch, nextTick } from 'vue'
+import { ElDrawer, ElScrollbar, ElTabs, ElTabPane, ElMessage, ElMessageBox } from 'element-plus'
 import { ButtonPlus } from '@/components/ButtonPlus'
 import { PrompInfo } from '@/components/PrompInfo'
 import { Form, FormSchema } from '@/components/Form'
 import { useForm } from '@/hooks/web/useForm'
-import { useAuthStore } from '@/store/modules/auth'
+import { ImagePlus } from '@/components/ImagePlus'
 
 defineOptions({
   name: 'BaseFree'
@@ -23,6 +22,13 @@ export interface FreeFormField extends FormSchema {
    * @example 'image' | 'text' | 'status' | 'number' | 'select' | 'dropdown'
    */
   type?: 'image' | 'text' | 'status' | 'number' | 'select' | 'dropdown'
+  
+  /** 
+   * ImagePlus 组件尺寸（仅当 type='image' 时有效）
+   * @default 'normal'
+   * @example 'normal' | 'small'
+   */
+  size?: 'normal' | 'small'
   
   /** 
    * 拷贝新增时是否保留上一条记录的值
@@ -113,8 +119,7 @@ const emit = defineEmits<{
 }>()
 
 // ==================== Store ====================
-const authStore = useAuthStore()
-const token = computed(() => authStore.getToken)
+// ImagePlus 组件内部会处理 token，这里不需要单独获取 token
 
 // ==================== 计算属性 ====================
 /** 抽屉显示状态 */
@@ -269,6 +274,9 @@ const initialFormData = ref<any>(null)
 // 表单实例引用（用于监听表单数据变化）
 const formInstanceRef = ref<any>(null)
 
+// ImagePlus 组件引用映射（字段名 -> ImagePlus 组件实例）
+const imagePlusRefs = ref<Record<string, InstanceType<typeof ImagePlus>>>({})
+
 // 表单注册回调
 const handleFormRegister = (formRef: any, elFormRef: any) => {
   formRegister(formRef, elFormRef)
@@ -349,196 +357,29 @@ const convertFormSchema = (schema: FreeFormField[]): FormSchema[] => {
           slots: {
             default: (data: any) => {
               const imageField = field.field
-              const imageDisplayField = `${field.field}_display`
 
+              // 初始化图片数据
               if (!data[imageField]) {
-                data[imageField] = unref([])
-                data[imageDisplayField] = unref([])
+                data[imageField] = []
               }
-
-              const beforeImageUpload: UploadProps['beforeUpload'] = (rawFile) => {
-                const isImage = ['image/jpeg', 'image/gif', 'image/png'].includes(rawFile.type)
-                const isLtSize = rawFile.size / 1024 / 1024 < 2
-                if (!isImage) {
-                  ElMessage.error('上传图片必须是 JPG/GIF/PNG/ 格式!')
-                }
-                if (!isLtSize) {
-                  ElMessage.error('上传图片大小不能超过2MB!')
-                }
-                return isImage && isLtSize
-              }
-
-              const handleFileChange: UploadProps['onChange'] = (file) => {
-                if (file.raw) {
-                  const exists = data[imageField].some((item: any) => item[2] === file.name)
-                  if (!exists) {
-                    const previewUrl = URL.createObjectURL(file.raw)
-                    data[imageDisplayField].push(previewUrl)
-                    data[imageField].push([previewUrl, 'add', file.name, file])
-                  }
-                }
-              }
-
-              const handleremoveimage = (index: number) => {
-                if (Array.isArray(data[imageField][index])) {
-                  data[imageDisplayField].splice(index, 1)
-                  data[imageField].splice(index, 1)
-                } else {
-                  data[imageDisplayField][index] = `${data[imageDisplayField][index].split('?')[0]}?delete`
-                  data[imageField][index] = `${data[imageField][index].split('?')[0]}?delete`
-                }
-              }
-
-              const dragIndex = ref(-1)
-              const dragOverIndex = ref(-1)
-
-              const handleDragStart = (index: number, event: DragEvent) => {
-                dragIndex.value = index
-                event.dataTransfer!.effectAllowed = 'move'
-                event.dataTransfer!.setData('text/plain', index.toString())
-                setTimeout(() => {
-                  (event.target as HTMLElement).classList.add('dragging')
-                }, 0)
-              }
-
-              const handleDragOver = (event: DragEvent) => {
-                event.preventDefault()
-                event.dataTransfer!.dropEffect = 'move'
-              }
-
-              const handleDragEnter = (index: number, event: DragEvent) => {
-                event.preventDefault()
-                dragOverIndex.value = index
-              }
-
-              const handleDragLeave = (event: DragEvent) => {
-                if (!(event.currentTarget as HTMLElement).contains(event.relatedTarget as HTMLElement)) {
-                  dragOverIndex.value = -1
-                }
-              }
-
-              const handleDrop = (targetIndex: number, event: DragEvent) => {
-                event.preventDefault()
-                const sourceIndex = parseInt(event.dataTransfer!.getData('text/plain'))
-                if (sourceIndex !== targetIndex && sourceIndex >= 0 && targetIndex >= 0) {
-                  const images_display = [...data[imageDisplayField]]
-                  const [movedItem1] = images_display.splice(sourceIndex, 1)
-                  images_display.splice(targetIndex, 0, movedItem1)
-                  data[imageDisplayField] = images_display
-
-                  const images_data = [...data[imageField]]
-                  const [movedItem2] = images_data.splice(sourceIndex, 1)
-                  images_data.splice(targetIndex, 0, movedItem2)
-                  data[imageField] = images_data
-                }
-                dragIndex.value = -1
-                dragOverIndex.value = -1
-              }
-
-              const handleDragEnd = () => {
-                dragIndex.value = -1
-                dragOverIndex.value = -1
-                const draggingElements = document.querySelectorAll('.dragging')
-                draggingElements.forEach(el => {
-                  el.classList.remove('dragging')
-                })
-              }
-
-              /**
-               * 生成预览列表：过滤掉删除标记和 OSS 参数
-               */
-              const generatePreviewList = (): string[] => {
-                if (!data[imageDisplayField] || !Array.isArray(data[imageDisplayField])) {
-                  return []
-                }
-                return data[imageDisplayField]
-                  .filter((img: string) => img && !img.endsWith('?delete'))
-                  .map((img: string) => {
-                    // 移除 OSS 参数，使用原始图片进行预览
-                    if (typeof img === 'string' && img.includes('?')) {
-                      const [path] = img.split('?')
-                      return path || img
-                    }
-                    return img
-                  })
-                  .filter(Boolean)
-              }
-
-              const previewList = generatePreviewList()
-
-              /**
-               * 图片加载失败处理
-               */
-              const handleError = (e: Event) => {
-                const img = e.target as HTMLImageElement
-                if (img && img.src) {
-                  // 图片加载失败时的处理逻辑
-                }
-              }
-
-              // 是否为查看模式
-              const isView = isViewMode.value
 
               return (
-                <div class="image-container">
-                  {data[imageDisplayField]?.map((image: string, index: number) => (
-                    image && !image.endsWith('?delete') && (
-                      <div
-                        key={`${index}-${image}`}
-                        class={`image-group ${!isView && dragIndex.value === index ? 'dragging' : ''} ${!isView && dragOverIndex.value === index ? 'drag-over' : ''}`}
-                        onClick={(e) => { e.stopPropagation(); }}
-                        draggable={!isView}
-                        onDragstart={!isView ? (e) => handleDragStart(index, e) : undefined}
-                        onDragover={!isView ? handleDragOver : undefined}
-                        onDragenter={!isView ? (e) => handleDragEnter(index, e) : undefined}
-                        onDragleave={!isView ? handleDragLeave : undefined}
-                        onDrop={!isView ? (e) => handleDrop(index, e) : undefined}
-                        onDragend={!isView ? handleDragEnd : undefined}
-                      >
-                        <ElImage
-                          src={image}
-                          class="image-item"
-                          onError={handleError}
-                          zoom-rate={1.2}
-                          preview-src-list={previewList.length > 0 ? previewList : []}
-                          preview-teleported={true}
-                          hide-on-click-modal={true}
-                          initial-index={index}
-                          fit="cover"
-                          style="width: 100%; height: 100%;"
-                        />
-                        {!isView && (
-                          <div onClick={(e) => { e.stopPropagation(); handleremoveimage(index);}} class="remove-btn">x</div>
-                        )}
-                      </div>
-                    )
-                  ))}
-                  {!isView && (
-                    <div class="image-group-uploader">
-                      {(!data[imageDisplayField] || data[imageDisplayField]?.length < 10) && (
-                        <ElUpload
-                          action="/api/vadmin/system/upload/image/to/local"
-                          data={{ path: 'system' }}
-                          show-file-list={false}
-                          multiple={true}
-                          auto-upload={false}
-                          before-upload={beforeImageUpload}
-                          on-change={handleFileChange}
-                          accept="image/jpeg,image/gif,image/png"
-                          name="file"
-                          drag={true}
-                          headers={{ Authorization: token.value }}
-                          limit={10}
-                        >
-                          <div>
-                            <ElIcon class="el-icon--upload"><UploadFilled /></ElIcon>
-                            <div class="upload-text">拖拽文件到此或点击上传</div>
-                          </div>
-                        </ElUpload>
-                      )}
-                    </div>
-                  )}
-                </div>
+                <ImagePlus
+                  ref={(el: any) => {
+                    if (el) {
+                      imagePlusRefs.value[imageField] = el
+                    }
+                  }}
+                  modelValue={data[imageField]}
+                  // @ts-ignore - TSX 中 onUpdate:modelValue 的类型定义问题，但实际运行时是支持的
+                  onUpdate:modelValue={(val: any[]) => {
+                    // 直接赋值，data 是响应式对象 formModel.value 的引用
+                    data[imageField] = val
+                  }}
+                  disabled={isViewMode.value}
+                  limit={10}
+                  size={field.size || 'normal'}
+                />
               )
             }
           }
@@ -566,6 +407,40 @@ const getFieldsByTab = (tabName: string) => {
 
 // ==================== 数据初始化 ====================
 /**
+ * 创建默认表单数据
+ * 
+ * 根据 formSchema 生成包含所有字段默认值的表单数据对象
+ * 用于新增模式的表单初始化
+ * 
+ * 处理逻辑：
+ * 1. 如果字段配置中有 value，使用该值
+ * 2. 图片类型字段如果没有 value，默认值为空数组
+ * 3. 必填的文本类型字段如果没有 value，默认值为空字符串（与 ImportGrid 保持一致）
+ * 
+ * @returns {object} 默认表单数据对象
+ */
+const createDefaultFormData = (): any => {
+  const defaultData: any = {}
+  
+  // 遍历 formSchema，设置所有有默认值的字段
+  props.formSchema.forEach(field => {
+    if (field.value !== undefined) {
+      // 如果字段配置中有 value，使用该值
+      defaultData[field.field] = field.value
+    } else if (field.type === 'image') {
+      // 图片类型字段如果没有默认值，初始化为空数组
+      defaultData[field.field] = []
+    } else if (field.component === 'Input' && field.formItemProps?.required) {
+      // 必填的文本输入字段如果没有默认值，初始化为空字符串（与 ImportGrid 保持一致）
+      defaultData[field.field] = ''
+    }
+    // 其他类型默认值为 undefined，不需要设置
+  })
+  
+  return defaultData
+}
+
+/**
  * 初始化表单数据
  */
 const initFormData = async () => {
@@ -576,57 +451,12 @@ const initFormData = async () => {
   
   if (props.currentRow && (props.mode === 'edit' || props.mode === 'view')) {
     formData = { ...props.currentRow }
-    props.formSchema.forEach(field => {
-      if (field.type === 'image') {
-        const imageField = field.field
-        const imageDisplayField = `${field.field}_display`
-        if (formData[imageField] && Array.isArray(formData[imageField])) {
-          // 编辑模式下，对图片进行排序并标记为 original（参考 Dish.vue 第537-540行）
-          if (props.mode === 'edit') {
-            // 排序图片（参考 Dish.vue 第537行）
-            formData[imageField].sort((a: string, b: string) => a.localeCompare(b))
-            // 提取图片路径（参考 Dish.vue 第538行：item.split('-')[1]）
-            formData[imageField] = formData[imageField].map((item: string) => {
-              if (item.includes('-')) {
-                return item.split('-')[1]
-              }
-              // 如果包含 '?'，提取前面的部分（移除已有标记）
-              if (item.includes('?')) {
-                return item.split('?')[0]
-              }
-              return item
-            })
-            // 设置显示字段（参考 Dish.vue 第539行）
-            formData[imageDisplayField] = [...formData[imageField]]
-            // 标记为 original（参考 Dish.vue 第540行）
-            formData[imageField] = formData[imageField].map((item: string) => `${item}?original`)
-          } else {
-            // 查看模式下，直接设置显示字段
-            formData[imageDisplayField] = formData[imageField].map((img: any) => {
-              if (typeof img === 'string') {
-                // 移除标记，只显示路径
-                return img.includes('?') ? img.split('?')[0] : img
-              }
-              if (Array.isArray(img) && img.length > 0) {
-                return img[0]
-              }
-              return img
-            })
-          }
-        }
-      }
-    })
+    // 注意：图片数据格式处理已封装到 ImagePlus 组件中，无需在此处理
+    // ImagePlus 组件会自动检测并规范化数据格式（排序、提取路径、添加标记等）
     await setValues(formData)
   } else {
-    // 新增模式：应用字段默认值
-    formData = {}
-    
-    props.formSchema.forEach(field => {
-      if (field.value !== undefined) {
-        formData[field.field] = field.value
-      }
-    })
-    
+    // 新增模式：使用默认表单数据
+    formData = createDefaultFormData()
     await setValues(formData)
   }
   
@@ -686,78 +516,6 @@ watch(() => {
 
 // ==================== 方法 ====================
 /**
- * 上传文件（参考 Dish.vue 的 uploadFile 函数）
- */
-const uploadFile = async (file: FormData) => {
-  try {
-    const res = await fetch('/api/vadmin/system/upload/image/to/local', {
-      method: 'POST',
-      body: file,
-      headers: {
-        'Authorization': token.value || ''
-      }
-    })
-
-    if (!res.ok) {
-      throw new Error(`HTTP错误！状态：${res.status}`)
-    }
-
-    const data = await res.json()
-    return {
-      success: true,
-      message: '上传成功',
-      data: data
-    }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : '未知的错误.'
-    return {
-      success: false,
-      message: msg
-    }
-  }
-}
-
-/**
- * 处理图片上传（参考 Dish.vue 的 handleImageUpload 函数）
- * 将图片字段中的数组格式（包含文件对象）转换为字符串格式（图片路径）
- */
-const handleImageUpload = async (formData: any) => {
-  // 遍历所有图片字段
-  for (const field of props.formSchema) {
-    if (field.type === 'image') {
-      const imageField = field.field
-      const imageDisplayField = `${field.field}_display`
-      
-      // 检查字段是否存在且为数组
-      if (!formData[imageField] || !Array.isArray(formData[imageField])) {
-        continue
-      }
-      
-      // 处理每个图片项
-      for (let index = 0; index < formData[imageField].length; index++) {
-        const fileData = formData[imageField][index]
-        
-        // 如果是数组格式（包含文件对象），说明是未上传的图片，需要上传
-        if (Array.isArray(fileData)) {
-          const fileForm = new FormData()
-          fileForm.append('file', fileData[3].raw)
-          fileForm.append('path', 'system')
-          const res = await uploadFile(fileForm)
-          if (!res.success) {
-            throw new Error(`图片上传错误：${res.message}`)
-          }
-          // 转换为字符串格式：路径 + 操作类型（add/update/delete）
-          formData[imageField][index] = `${res.data.data.remote_path}?${fileData[1]}`
-          formData[imageDisplayField][index] = `${res.data.data.remote_path}?${fileData[1]}`
-        }
-        // 如果已经是字符串格式，保持不变
-        // 如果包含 ?delete 标记，保持原样（用于删除操作）
-      }
-    }
-  }
-}
-
-/**
  * 重置表单为新增模式的初始值
  * 
  * 功能说明：
@@ -781,36 +539,8 @@ const resetFormToInitial = async () => {
   }
   
   // ==================== 2. 构建新增模式的初始表单数据 ====================
-  const newFormData: any = {}
-  
-  // ==================== 2.1 处理普通字段 ====================
-  // 只设置有默认值的字段（与 initFormData 的新增模式逻辑一致）
-  props.formSchema.forEach(field => {
-    // 跳过图片字段，图片字段需要特殊处理
-    if (field.type === 'image') {
-      return
-    }
-    
-    if (field.value !== undefined) {
-      newFormData[field.field] = field.value
-    }
-  })
-  
-  // ==================== 2.2 处理图片字段 ====================
-  // 确保图片字段被重置为空数组（即使没有默认值）
-  props.formSchema.forEach(field => {
-    if (field.type === 'image') {
-      const imageField = field.field
-      const imageDisplayField = `${field.field}_display`
-      
-      if (newFormData[imageField] === undefined) {
-        newFormData[imageField] = []
-      }
-      if (newFormData[imageDisplayField] === undefined) {
-        newFormData[imageDisplayField] = []
-      }
-    }
-  })
+  // 复用 createDefaultFormData 函数，避免重复代码
+  const newFormData = createDefaultFormData()
   
   // ==================== 3. 应用初始值到表单 ====================
   await setValues(newFormData)
@@ -895,9 +625,43 @@ const processSaveData = async (onSuccess?: (formData: any) => Promise<void> | vo
   }
   
   // ==================== 处理图片字段上传 ====================
-  // 如果存在未上传的图片，则处理上传
+  // 如果存在未上传的图片，则处理上传（参考 Test/components/Response.vue 第 207-211 行）
   try {
-    await handleImageUpload(formData)
+    // 遍历所有图片字段，上传待上传的图片
+    for (const field of props.formSchema) {
+      if (field.type === 'image') {
+        const imageField = field.field
+        const imagePlusRef = imagePlusRefs.value[imageField]
+        
+        // 如果 ImagePlus 组件引用存在，使用组件的方法上传图片
+        if (imagePlusRef && typeof imagePlusRef.uploadPendingImages === 'function') {
+          await imagePlusRef.uploadPendingImages()
+        }
+      }
+    }
+    
+    // 上传完成后，重新获取表单数据（因为图片数据已更新）
+    // 注意：直接返回 getFormData() 的数据，不要使用 getNormalizedImages
+    // 因为后端需要接收包含 ?add、?delete、?original 等标记的完整图片列表
+    formData = await getFormData()
+    
+    // 处理模式切换（重新获取数据后，需要再次处理 id 字段）
+    if (currentMode.value === 'add' && formData && 'id' in formData) {
+      formData = { ...formData }
+      delete formData.id
+    }
+    
+    // 处理图片字段：确保只保留字符串格式的图片（过滤掉数组格式的未上传图片）
+    // 因为 uploadPendingImages 已经将数组格式转换为字符串格式了
+    for (const field of props.formSchema) {
+      if (field.type === 'image') {
+        const imageField = field.field
+        if (formData[imageField] && Array.isArray(formData[imageField])) {
+          // 过滤掉数组格式的项（如果还有未上传的图片，说明上传失败）
+          formData[imageField] = formData[imageField].filter((item: any) => typeof item === 'string')
+        }
+      }
+    }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : '图片上传失败'
     // 在 PrompInfo 中显示错误信息
@@ -1138,7 +902,8 @@ const resetFormToCopyNew = async (savedData: any) => {
   }
   
   // ==================== 2. 构建拷贝新增模式的初始表单数据 ====================
-  const newFormData: any = {}
+  // 先获取默认表单数据（复用 createDefaultFormData 函数）
+  const newFormData = createDefaultFormData()
   
   // ==================== 2.1 处理普通字段 ====================
   // 根据 newCopy 标记决定使用哪个值
@@ -1162,24 +927,19 @@ const resetFormToCopyNew = async (savedData: any) => {
           newFormData[field.field] = originalValue
         }
       }
-    } else {
-      // 其他字段：使用初始化新增时的默认值
-      if (field.value !== undefined) {
-        newFormData[field.field] = field.value
-      }
     }
+    // 如果 newCopy !== true，使用默认值（已在 createDefaultFormData 中设置）
   })
   
   // ==================== 2.2 处理图片字段 ====================
+  // ImagePlus 组件会自动维护显示数据，不需要 imageDisplayField
   props.formSchema.forEach(field => {
     if (field.type === 'image') {
       const imageField = field.field
-      const imageDisplayField = `${field.field}_display`
       
       if (field.newCopy === true && savedData) {
         // 图片字段标记了 newCopy=true：保留图片并重新标记为 ?add
-        // 优先使用 imageField，如果没有则使用 imageDisplayField
-        const savedImages = savedData[imageField] || savedData[imageDisplayField]
+        const savedImages = savedData[imageField]
         
         if (savedImages && Array.isArray(savedImages) && savedImages.length > 0) {
           // 拷贝图片数据，移除原有操作标记，重新标记为 ?add（新增操作）
@@ -1191,28 +951,12 @@ const resetFormToCopyNew = async (savedData: any) => {
             }
             return img
           })
-          
-          // 显示字段不包含操作标记，只保留路径
-          newFormData[imageDisplayField] = savedImages.map((img: any) => {
-            if (typeof img === 'string') {
-              return img.split('?')[0]
-            }
-            return img
-          })
         } else {
           // 如果没有图片数据，重置为空数组
           newFormData[imageField] = []
-          newFormData[imageDisplayField] = []
-        }
-      } else {
-        // 图片字段未标记 newCopy：重置为空数组
-        if (newFormData[imageField] === undefined) {
-          newFormData[imageField] = []
-        }
-        if (newFormData[imageDisplayField] === undefined) {
-          newFormData[imageDisplayField] = []
         }
       }
+      // 如果 newCopy !== true，使用默认值（已在 createDefaultFormData 中设置为空数组）
     }
   })
   

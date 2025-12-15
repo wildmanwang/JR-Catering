@@ -233,6 +233,7 @@ async def put_dish(
 ):
     res = SuccessResponse(await crud.DishDal(auth.db).put_data(data_id, data))
     if res.data['code'] == 200:
+        print(data.dish_images)
         await crud.DishDal(auth.db).update_image(data_id, data.dish_images)
     return res
 

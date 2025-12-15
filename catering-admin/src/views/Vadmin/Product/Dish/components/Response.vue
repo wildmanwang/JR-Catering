@@ -117,6 +117,7 @@
       field: 'dish_images',
       label: '图片',
       type: 'image',
+      size: 'normal',
       colProps: {
         span: 24
       },

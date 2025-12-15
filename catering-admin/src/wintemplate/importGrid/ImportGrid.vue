@@ -1,47 +1,19 @@
 <!--
-  ImportGrid 组件 - Excel 风格的通用数据导入/批量维护模板
+  ImportGrid - Excel 风格的通用数据导入/批量维护组件
   
-  功能特性：
-  1. Excel 风格的表格交互（单元格编辑、键盘导航、复制粘贴）
-  2. 支持多种数据类型（文本、数字、下拉选择、图片、日期）
-  3. 数据持久化（通过 sessionStorage 在页面间传递数据，支持标签页状态恢复）
-  4. 单元格编辑（单击聚焦、双击编辑、键盘输入自动进入编辑）
-  5. 键盘导航（Tab/Enter 跳转、方向键移动、Esc 取消）
-  6. 复制粘贴（Ctrl+C/Ctrl+V）
-  
-  使用场景：
-  - 从父窗口选择记录后批量编辑
-  - 新建多条记录
-  - 批量维护数据
-  
-  样式特性：
-  - 编辑模式下输入组件背景透明，不遮挡单元格边框
-  - 支持无缝的 Excel 风格编辑体验
-  
-  使用示例：
-  ```vue
-  <ImportGrid
-    :columns="columns"
-    :storage-key="STORAGE_KEY"
-    :create-default-row="createDefaultRow"
-    :map-row-data="mapRowData"
-    @data-loaded="handleDataLoaded"
-    @data-changed="handleDataChanged"
-  />
-  ```
-  
-  注意事项：
-  - 组件会自动管理编辑状态和页面状态
-  - 标签页关闭时会自动清理状态缓存
-  - 编辑模式下通过透明背景确保单元格边框可见
+  功能：Excel 风格表格编辑、多种数据类型、数据持久化、键盘导航、复制粘贴
+  使用：通过 columns 配置列，通过 saveConfig 配置保存逻辑
 -->
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, onUnmounted, watch, nextTick, toRaw } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElTable, ElTableColumn, ElInput, ElInputNumber, ElSelect, ElOption, ElImage, ElUpload, ElIcon, ElMessage, UploadProps } from 'element-plus'
-import { UploadFilled, Delete } from '@element-plus/icons-vue'
+import { Delete } from '@element-plus/icons-vue'
 import { useTagsViewStoreWithOut } from '@/store/modules/tagsView'
 import { useAuthStore } from '@/store/modules/auth'
+import ImagePlus from '@/components/ImagePlus/src/ImagePlus.vue'
+import { ButtonPlus } from '@/components/ButtonPlus'
+import { PrompInfo } from '@/components/PrompInfo'
 
 /**
  * 列配置接口
@@ -59,6 +31,10 @@ export interface ImportGridColumn {
   show?: boolean
   /** 数据类型 */
   type?: 'text' | 'number' | 'select' | 'image' | 'date'
+  /** ImagePlus 组件尺寸（仅当 type='image' 时有效，默认 'small'） */
+  size?: 'normal' | 'small'
+  /** 字段初始值（用于新增行时，与 FormSchema 的 value 属性保持一致） */
+  value?: any
   /** 自定义格式化函数 */
   formatter?: (row: any, column: any, cellValue: any) => string
   /** 下拉选择选项（type='select' 时必填） */
@@ -85,6 +61,56 @@ export interface ImportGridColumn {
 }
 
 /**
+ * 工具栏按钮配置接口
+ */
+export interface ToolbarButton {
+  /** 按钮类型：'add' | 'save' | 'custom' */
+  type: 'add' | 'save' | 'custom'
+  /** 按钮文本（custom 类型时必填） */
+  label?: string
+  /** 按钮样式类型（custom 类型时使用） */
+  stype?: string
+  /** 点击回调函数 */
+  onClick?: () => void | Promise<void>
+  /** 是否显示 loading 状态 */
+  loading?: boolean
+  /** 其他 ButtonPlus 属性 */
+  [key: string]: any
+}
+
+/**
+ * 保存配置接口
+ */
+export interface SaveConfig {
+  /** 必填字段配置 */
+  requiredFields?: Array<{ field: string; label: string }>
+  /** 新增数据的 API 函数（如果提供，将自动处理新增逻辑） */
+  addApi?: (data: any) => Promise<{ code: number; data?: any; msg?: string }>
+  /** 更新数据的 API 函数（如果提供，将自动处理更新逻辑） */
+  updateApi?: (data: any) => Promise<{ code: number; data?: any; msg?: string }>
+  /** 获取详情的 API 函数（如果提供，将自动处理获取详情逻辑） */
+  getDetailApi?: (id: any) => Promise<{ code: number; data?: any; msg?: string }>
+  /** 保存单条数据的回调函数（新增或修改）- 如果提供了 addApi 和 updateApi，则不需要此回调 */
+  onSave?: (data: { row: any; index: number; isNew: boolean }) => Promise<{ success: boolean; data?: any; id?: any; message?: string }>
+  /** 获取详情数据的回调函数（保存后重新获取完整数据）- 如果提供了 getDetailApi，则不需要此回调 */
+  onGetDetail?: (id: any) => Promise<any>
+  /** 进度回调函数 */
+  onProgress?: (message: string) => void
+  /** 错误回调函数 */
+  onError?: (message: string) => void
+  /** 成功回调函数 */
+  onSuccess?: (message: string) => void
+  /** 警告回调函数 */
+  onWarn?: (message: string) => void
+  /** 数据修改检测函数（可选，默认会比较所有字段） */
+  isDataModified?: (currentRow: any, originalRow: any) => boolean
+  /** 数据预处理函数（在保存前对数据进行处理，如添加 status=0 等） */
+  preprocessData?: (data: any, isNew: boolean) => any
+  /** 数据后处理函数（保存后更新表格数据时的处理） */
+  postprocessData?: (detail: any, currentRow: any) => any
+}
+
+/**
  * 组件 Props 接口
  */
 export interface ImportGridProps {
@@ -96,79 +122,539 @@ export interface ImportGridProps {
   createDefaultRow?: () => any
   /** 数据转换函数（将父窗口传入的数据转换为表格所需格式） */
   mapRowData?: (row: any) => any
+  /** 保存配置（如果提供，则启用内置的保存功能） */
+  saveConfig?: SaveConfig
+  /** 是否显示工具栏（默认 true） */
+  showToolbar?: boolean
+  /** 工具栏按钮配置（如果提供，则使用自定义按钮；否则默认只显示保存按钮） */
+  toolbarButtons?: ToolbarButton[]
+  /** 新增行后的回调函数 */
+  onRowAdded?: (row: any, index: number) => void
+  /** 新增行后的提示消息（默认：'已新增 1 行'） */
+  addRowMessage?: string
 }
 
 const props = withDefaults(defineProps<ImportGridProps>(), {
   createDefaultRow: () => ({}),
-  mapRowData: (row: any) => row
+  mapRowData: (row: any) => row,
+  showToolbar: true,
+  addRowMessage: '已新增 1 行'
 })
 
 /**
- * 组件事件定义
+ * 获取默认行数据
+ * 
+ * 根据列配置中的 value 生成默认行数据（与 FormSchema 的 value 属性保持一致）
+ * 如果列配置中没有 value，则根据类型设置默认值：
+ * - image: []
+ * - text: ''（如果 required 为 true）
+ * 
+ * 如果提供了 createDefaultRow 函数，会先合并它的返回值（向后兼容）
+ * 
+ * @returns {object} 默认行数据对象
  */
+const getDefaultRow = (): any => {
+  // 根据列配置生成默认行数据
+  const defaultRowFromColumns: any = {}
+  
+  props.columns.forEach(column => {
+    if (column.value !== undefined) {
+      // 如果列配置中有 value，使用该值（与 FormSchema 保持一致）
+      defaultRowFromColumns[column.field] = column.value
+    } else if (column.type === 'image') {
+      // 图片类型默认值为空数组
+      defaultRowFromColumns[column.field] = []
+    } else if (column.type === 'text' && column.required) {
+      // 必填的文本类型默认值为空字符串
+      defaultRowFromColumns[column.field] = ''
+    }
+    // 其他类型默认值为 undefined，不需要设置
+  })
+  
+  // 如果提供了 createDefaultRow 函数，先合并它的返回值（向后兼容）
+  // 然后覆盖列配置中的默认值
+  const createDefaultRowResult = props.createDefaultRow()
+  return {
+    ...createDefaultRowResult,
+    ...defaultRowFromColumns
+  }
+}
+
 const emit = defineEmits<{
-  /** 数据加载完成事件 */
   dataLoaded: [data: any[]]
-  /** 数据变化事件 */
   dataChanged: [data: any[]]
+  rowAdded: [row: any, index: number]
 }>()
 
-// ==================== 状态管理 ====================
-
-/** Router 实例（用于获取当前路由路径） */
+// ==================== 状态 ====================
 const router = useRouter()
-
-/** 标签页 Store（用于检测标签页是否被关闭） */
 const tagsViewStore = useTagsViewStoreWithOut()
-
-/** Auth Store（用于获取上传 token） */
 const authStore = useAuthStore()
 const token = computed(() => authStore.getToken)
 
-/** 默认图片路径 */
 const DEFAULT_IMAGE = '/src/assets/imgs/no_image.png'
+const PAGE_STATE_KEY = computed(() => `IMPORT_GRID_STATE_${router.currentRoute.value.fullPath}`)
 
-/** 页面状态存储的 sessionStorage key（基于当前路由路径） */
-const PAGE_STATE_KEY = computed(() => {
-  return `IMPORT_GRID_STATE_${router.currentRoute.value.fullPath}`
-})
-
-/** 页面准备就绪标志（用于防止恢复状态时触发保存） */
 const pageReady = ref(false)
-
-/** 正在恢复状态标志（用于防止恢复状态时触发保存） */
 const isRestoring = ref(false)
-
-/** 状态保存定时器 */
 let saveStateTimer: NodeJS.Timeout | null = null
-
-/** 组件挂载时的路由信息（用于检测标签页关闭） */
 let mountedRoutePath: string | null = null
 let mountedRouteFullPath: string | null = null
 
-/** 表格数据列表 */
 const dataList = ref<any[]>([])
-
-/** 当前正在编辑的单元格信息 { rowIndex: 行索引, field: 字段名 } */
+const originalData = ref<any[]>([])
 const editingCell = ref<{ rowIndex: number; field: string } | null>(null)
-
-/** 当前选中的单元格所在的行索引（用于跟踪 DOM 中的选中状态） */
 const selectedRowIndex = ref<number | null>(null)
-
-/** 标记是否正在输入（防止 blur 事件误触发导致退出编辑模式） */
+const prompInfoRef = ref<InstanceType<typeof PrompInfo>>()
+const saveLoading = ref(false)
 const isInputting = ref(false)
-
-/** 当前正在编辑的输入框 DOM 引用 */
 const currentInputRef = ref<HTMLInputElement | null>(null)
-
-/** blur 事件延迟处理的定时器引用 */
 const blurTimerRef = ref<NodeJS.Timeout | null>(null)
-
-/** 待输入的值的引用（用于键盘输入时暂存第一个字符） */
 const pendingInputValue = ref<{ rowIndex: number; field: string; value: string } | null>(null)
-
-/** Element Plus Table 组件引用 */
 const tableRef = ref<InstanceType<typeof ElTable>>()
+
+// ==================== ImagePlus 引用管理 ====================
+/**
+ * ImagePlus 组件引用映射
+ * 使用非响应式 Map 避免在 ref 回调中触发响应式更新导致的 parentNode 错误
+ */
+const imagePlusRefsMap = new Map<string, InstanceType<typeof ImagePlus>>()
+
+/**
+ * 设置 ImagePlus 组件引用
+ * 使用 setTimeout 延迟执行，确保 DOM 更新完成
+ */
+const setImagePlusRef = (rowIndex: number, field: string, el: any) => {
+  setTimeout(() => {
+    const refKey = `${rowIndex}-${field}`
+    el ? imagePlusRefsMap.set(refKey, el) : imagePlusRefsMap.delete(refKey)
+  }, 0)
+}
+
+/**
+ * 上传指定行的图片字段
+ */
+const uploadRowImageField = async (rowIndex: number, field: string): Promise<void> => {
+  const refKey = `${rowIndex}-${field}`
+  const imagePlusRef = imagePlusRefsMap.get(refKey)
+  
+  if (imagePlusRef?.uploadPendingImages) {
+    await imagePlusRef.uploadPendingImages()
+  }
+}
+
+/**
+ * 上传所有行的图片字段
+ */
+const uploadAllRowImages = async (): Promise<void> => {
+  const imageColumns = props.columns.filter(col => col.type === 'image')
+  if (!imageColumns.length) return
+  
+  for (let rowIndex = 0; rowIndex < dataList.value.length; rowIndex++) {
+    for (const column of imageColumns) {
+      await uploadRowImageField(rowIndex, column.field)
+    }
+  }
+}
+
+// ==================== 数据修改检测 ====================
+
+/**
+ * 判断数据是否被修改（默认实现）
+ * 
+ * 比较当前行和原始行的所有字段，如果字段值不同则返回 true
+ * 对于图片字段，会比较数组长度和每个元素（包括顺序）
+ * 
+ * @param currentRow 当前行数据
+ * @param originalRow 原始行数据
+ * @returns 是否被修改
+ */
+const defaultIsDataModified = (currentRow: any, originalRow: any): boolean => {
+  if (!originalRow) return true // 新增记录
+  
+  // 获取所有列字段
+  const fieldsToCompare = props.columns.map(col => col.field)
+  
+  for (const field of fieldsToCompare) {
+    const column = props.columns.find(col => col.field === field)
+    
+    if (column?.type === 'image') {
+      // 图片字段需要特殊比较
+      const currentImages = currentRow[field] || []
+      const originalImages = originalRow[field] || []
+      
+      // 如果长度不同，肯定有变化
+      if (currentImages.length !== originalImages.length) {
+        return true
+      }
+      
+      // 比较每个元素（包括顺序），因为排序变化也应该被检测到
+      for (let i = 0; i < currentImages.length; i++) {
+        if (currentImages[i] !== originalImages[i]) {
+          return true
+        }
+      }
+    } else {
+      if (currentRow[field] !== originalRow[field]) {
+        return true
+      }
+    }
+  }
+  
+  return false
+}
+
+// ==================== 保存逻辑 ====================
+
+/**
+ * 使用 API 接口保存单条数据
+ */
+const saveWithApi = async (row: any, isNew: boolean): Promise<{ success: boolean; data?: any; id?: any; message?: string }> => {
+  const config = props.saveConfig!
+  
+  let res
+  if (isNew) {
+    if (!config.addApi) {
+      throw new Error('addApi is required for new records')
+    }
+    res = await config.addApi(row)
+  } else {
+    if (!config.updateApi) {
+      throw new Error('updateApi is required for updating records')
+    }
+    res = await config.updateApi(row)
+  }
+  
+  if (res.code !== 200) {
+    return { success: false, message: res.msg || '保存失败' }
+  }
+  
+  const id = res.data?.id || (res.data && typeof res.data === 'object' && 'id' in res.data ? res.data.id : null)
+  return { success: true, data: res.data, id }
+}
+
+/**
+ * 使用 API 接口获取详情数据
+ */
+const getDetailWithApi = async (id: any): Promise<any> => {
+  const config = props.saveConfig!
+  
+  if (!config.getDetailApi) {
+    throw new Error('getDetailApi is required')
+  }
+  
+  const res = await config.getDetailApi(id)
+  if (res.code === 200 && res.data) {
+    return res.data
+  }
+  throw new Error(res.msg || '获取详情失败')
+}
+
+/**
+ * 保存数据
+ * 包含：数据校验、筛选变更、图片上传、API 调用、数据刷新
+ */
+const save = async (): Promise<void> => {
+  if (!props.saveConfig) {
+    throw new Error('saveConfig is required')
+  }
+  
+  const config = props.saveConfig
+  const useApi = !!(config.addApi && config.updateApi && config.getDetailApi)
+  
+  if (!useApi && (!config.onSave || !config.onGetDetail)) {
+    throw new Error('Either provide addApi/updateApi/getDetailApi or provide onSave/onGetDetail callbacks')
+  }
+  
+  const data = dataList.value
+  if (!data.length) {
+    const msg = '没有数据需要保存。'
+    prompInfoRef.value?.warn(msg)
+    config.onWarn?.(msg)
+    return
+  }
+  
+  // 校验必填字段
+  if (config.requiredFields?.length) {
+    const errors: string[] = []
+    data.forEach((row: any, index: number) => {
+      config.requiredFields!.forEach(({ field, label }) => {
+        const value = row[field]
+        if (value === undefined || value === null || value === '') {
+          errors.push(`第 ${index + 1} 行：${label} 为必填项`)
+        }
+      })
+    })
+    
+    if (errors.length > 0) {
+      const msg = errors.join('；')
+      prompInfoRef.value?.err(msg)
+      config.onError?.(msg)
+      return
+    }
+  }
+  
+  // 筛选需要保存的数据
+  const dataToSave: Array<{ row: any; index: number; isNew: boolean; originalRow: any }> = []
+  const isDataModifiedFn = config.isDataModified || defaultIsDataModified
+  
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i]
+    const originalRow = originalData.value[i]
+    const isNew = !row.id
+    
+    if (isNew) {
+      dataToSave.push({ row, index: i, isNew: true, originalRow: null })
+    } else if (isDataModifiedFn(row, originalRow)) {
+      dataToSave.push({ row, index: i, isNew: false, originalRow })
+    }
+  }
+  
+  if (dataToSave.length === 0) {
+    const msg = '没有数据需要保存。'
+    prompInfoRef.value?.warn(msg)
+    config.onWarn?.(msg)
+    return
+  }
+  
+  let addCount = 0
+  let updateCount = 0
+  
+  try {
+    // ==================== 处理图片字段上传 ====================
+    try {
+      // 遍历所有需要保存的行，上传每行的图片字段
+      const imageColumns = props.columns.filter(col => col.type === 'image')
+      for (const { index } of dataToSave) {
+        // 遍历所有图片类型的列
+        for (const column of imageColumns) {
+          await uploadRowImageField(index, column.field)
+        }
+      }
+      
+      // 上传完成后，重新获取数据（因为图片数据已更新）
+      await nextTick()
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : '图片上传失败'
+      if (prompInfoRef.value) {
+        prompInfoRef.value.err(errorMessage)
+      }
+      config.onError?.(errorMessage)
+      return
+    }
+    
+    // 逐行处理
+    for (const { row, index, isNew } of dataToSave) {
+      // 设置当前行
+      setCurrentRow(index)
+      
+      // 显示进度
+      const progressMessage = `正在提交第 ${index + 1} 行...`
+      if (prompInfoRef.value) {
+        prompInfoRef.value.info(progressMessage)
+      }
+      config.onProgress?.(progressMessage)
+      
+      try {
+        // 重新获取行数据（因为图片上传后数据已更新）
+        const currentData = dataList.value
+        const updatedRow = currentData[index] || row
+        
+        // 深拷贝行数据
+        let submitData = JSON.parse(JSON.stringify(updatedRow))
+        
+        // 处理图片字段：确保只保留字符串格式的图片（过滤掉数组格式的未上传图片）
+        const imageColumns = props.columns.filter(col => col.type === 'image')
+        for (const column of imageColumns) {
+          if (Array.isArray(submitData[column.field])) {
+            submitData[column.field] = submitData[column.field].filter((item: any) => typeof item === 'string')
+          }
+        }
+        
+        // 数据预处理
+        if (config.preprocessData) {
+          submitData = config.preprocessData(submitData, isNew)
+        }
+        
+        // 提交数据（使用 API 接口或回调函数）
+        const result = useApi 
+          ? await saveWithApi(submitData, isNew)
+          : await config.onSave!({ row: submitData, index, isNew })
+        
+        if (!result.success) {
+          throw new Error(result.message || '保存失败')
+        }
+        
+        // 保存成功后，从数据库重新获取该条记录
+        const id = result.id || (isNew ? (result.data?.id || (result.data && typeof result.data === 'object' && 'id' in result.data ? result.data.id : null)) : row.id)
+        
+        if (id) {
+          // 重新获取完整记录（使用 API 接口或回调函数）
+          const detail = useApi
+            ? await getDetailWithApi(id)
+            : await config.onGetDetail!(id)
+          
+          if (detail) {
+            const currentData = dataList.value
+            const currentRow = currentData[index]
+            
+            // 数据后处理
+            let updatedDetail = detail
+            if (config.postprocessData) {
+              updatedDetail = config.postprocessData(detail, currentRow)
+            }
+            
+            // 更新表格中的数据
+            currentData[index] = {
+              ...currentRow,
+              ...updatedDetail
+            }
+            
+            dataList.value = [...currentData]
+            
+            // 更新原始数据
+            originalData.value[index] = JSON.parse(JSON.stringify(currentData[index]))
+          }
+        }
+        
+        if (isNew) {
+          addCount++
+        } else {
+          updateCount++
+        }
+      } catch (err: any) {
+        const errorMsg = err.message || err.msg || '保存失败'
+        const errorMessage = `第 ${index + 1} 行：${errorMsg}，修改后点击"保存"继续处理...`
+        if (prompInfoRef.value) {
+          prompInfoRef.value.err(errorMessage)
+        }
+        config.onError?.(errorMessage)
+        // 中断整个处理流程
+        return
+      }
+    }
+    
+    // 显示最终统计
+    const messages: string[] = []
+    if (addCount > 0) {
+      messages.push(`新增了 ${addCount} 条`)
+    }
+    if (updateCount > 0) {
+      messages.push(`修改了 ${updateCount} 条`)
+    }
+    if (messages.length > 0) {
+      const successMessage = `成功${messages.join('、')}数据。`
+      if (prompInfoRef.value) {
+        prompInfoRef.value.info(successMessage)
+      }
+      config.onSuccess?.(successMessage)
+    }
+    
+    // 清除当前行
+    setCurrentRow(null)
+  } catch (err) {
+    console.error('保存失败：', err)
+    const errorMessage = '保存失败，请稍后重试'
+    if (prompInfoRef.value) {
+      prompInfoRef.value.err(errorMessage)
+    }
+    config.onError?.(errorMessage)
+  }
+}
+
+// ==================== 新增行 ====================
+const addRow = (): { row: any; index: number } => {
+  const newRow = getDefaultRow()
+  const newIndex = dataList.value.length
+  
+  dataList.value.push(newRow)
+  originalData.value.push(JSON.parse(JSON.stringify(newRow)))
+  
+  emit('rowAdded', newRow, newIndex)
+  props.onRowAdded?.(newRow, newIndex)
+  prompInfoRef.value?.info(props.addRowMessage)
+  
+  return { row: newRow, index: newIndex }
+}
+
+// ==================== 工具栏相关 ====================
+
+/**
+ * 计算工具栏按钮配置
+ */
+const toolbarButtons = computed<ToolbarButton[]>(() => {
+  if (props.toolbarButtons && props.toolbarButtons.length > 0) {
+    // 使用自定义按钮配置
+    return props.toolbarButtons.map(btn => {
+      if (btn.type === 'add') {
+        return {
+          ...btn,
+          stype: 'new',
+          onClick: async () => {
+            addRow()
+            if (btn.onClick) {
+              await btn.onClick()
+            }
+          }
+        }
+      } else if (btn.type === 'save') {
+        return {
+          ...btn,
+          stype: 'save',
+          loading: saveLoading.value,
+          onClick: async () => {
+            await handleSave()
+            if (btn.onClick) {
+              await btn.onClick()
+            }
+          }
+        }
+      }
+      return btn
+    })
+  }
+  
+  // 默认按钮配置：只有保存按钮
+  const buttons: ToolbarButton[] = []
+  
+  // 如果提供了 saveConfig，显示保存按钮
+  if (props.saveConfig) {
+    buttons.push({
+      type: 'save',
+      stype: 'save',
+      loading: saveLoading.value,
+      onClick: handleSave
+    })
+  }
+  
+  return buttons
+})
+
+/**
+ * 处理保存操作
+ */
+const handleSave = async (): Promise<void> => {
+  if (!props.saveConfig) {
+    console.warn('saveConfig is required to use save functionality')
+    return
+  }
+  
+  saveLoading.value = true
+  try {
+    await save()
+  } catch (err) {
+    console.error('保存失败：', err)
+    const errorMessage = err instanceof Error ? err.message : '保存失败，请稍后重试'
+    if (prompInfoRef.value) {
+      prompInfoRef.value.err(errorMessage)
+    }
+    if (props.saveConfig?.onError) {
+      props.saveConfig.onError(errorMessage)
+    }
+  } finally {
+    saveLoading.value = false
+  }
+}
 
 // ==================== 计算属性 ====================
 
@@ -354,12 +840,20 @@ const loadDataFromStorage = () => {
     if (cache) {
       const payload = JSON.parse(cache)
       if (Array.isArray(payload) && payload.length > 0) {
-        // 使用 mapRowData 转换数据，并合并默认行数据
+        // 合并默认行数据和传入数据
+        // 如果 mapRowData 只是做合并操作，可以直接使用传入的 row
+        const defaultRow = getDefaultRow()
         dataList.value = payload.map(row => ({
-          ...props.createDefaultRow(),
+          ...defaultRow,
           ...props.mapRowData(row)
         }))
+        // 初始化原始数据
+        originalData.value = JSON.parse(JSON.stringify(dataList.value))
         emit('dataLoaded', dataList.value)
+        // 显示准备就绪提示
+        if (prompInfoRef.value) {
+          prompInfoRef.value.ready()
+        }
         // 清除 sessionStorage，避免重复加载
         sessionStorage.removeItem(props.storageKey)
         return true
@@ -370,8 +864,14 @@ const loadDataFromStorage = () => {
   }
   
   // 如果没有数据，创建一行默认数据
-  dataList.value = [props.createDefaultRow()]
+  dataList.value = [getDefaultRow()]
+  // 初始化原始数据
+  originalData.value = JSON.parse(JSON.stringify(dataList.value))
   emit('dataLoaded', dataList.value)
+  // 显示准备就绪提示
+  if (prompInfoRef.value) {
+    prompInfoRef.value.ready()
+  }
   return false
 }
 
@@ -860,7 +1360,7 @@ const handleInputKeydown = (event: KeyboardEvent, rowIndex: number, field: strin
         }
       } else {
         // 如果已是最后1行，则新增1行，并跳转到该行第1列
-        const newRow = { ...props.createDefaultRow() }
+        const newRow = { ...getDefaultRow() }
         dataList.value.push(newRow)
         nextTick(() => {
           const firstField = editableFields.value[0]
@@ -960,7 +1460,7 @@ const handleInputKeydown = (event: KeyboardEvent, rowIndex: number, field: strin
         newRowIndex = rowIndex + 1
       } else {
         // 添加新行
-        const newRow = { ...props.createDefaultRow() }
+        const newRow = { ...getDefaultRow() }
         dataList.value.push(newRow)
         newRowIndex = dataList.value.length - 1
       }
@@ -1570,14 +2070,26 @@ onMounted(async () => {
       ...props.createDefaultRow(),
       ...row
     }))
+    // 初始化原始数据
+    originalData.value = JSON.parse(JSON.stringify(dataList.value))
     emit('dataLoaded', dataList.value)
+    // 显示准备就绪提示
+    if (prompInfoRef.value) {
+      prompInfoRef.value.ready()
+    }
   } else {
     // 如果没有页面状态，尝试从父窗口传入的数据加载
     const loaded = loadDataFromStorage()
     if (!loaded) {
       // 如果两者都没有，创建一行默认数据
-      dataList.value = [props.createDefaultRow()]
+      dataList.value = [getDefaultRow()]
+      // 初始化原始数据
+      originalData.value = JSON.parse(JSON.stringify(dataList.value))
       emit('dataLoaded', dataList.value)
+      // 显示准备就绪提示
+      if (prompInfoRef.value) {
+        prompInfoRef.value.ready()
+      }
     }
   }
   
@@ -1717,7 +2229,7 @@ onMounted(async () => {
           }
         } else {
           // 如果已是最后1行，则新增1行，并跳转到该行第1列
-          const newRow = { ...props.createDefaultRow() }
+          const newRow = { ...getDefaultRow() }
           dataList.value.push(newRow)
           nextTick(() => {
             const newRowElement = tbody.children[dataList.value.length - 1] as HTMLElement
@@ -1778,6 +2290,9 @@ onBeforeUnmount(() => {
   // 先保存状态（无论切换还是关闭都先保存，确保数据不丢失）
   savePageState()
   
+  // 清理 ImagePlus 引用
+  imagePlusRefsMap.clear()
+  
   // 清除定时器
   if (saveStateTimer) {
     clearTimeout(saveStateTimer)
@@ -1831,15 +2346,67 @@ defineExpose({
   getData: () => dataList.value,
   setData: (data: any[]) => {
     dataList.value = data
+    // 更新原始数据
+    originalData.value = JSON.parse(JSON.stringify(data))
   },
+  getDefaultRow,
   loadDataFromStorage,
-  setCurrentRow // 允许程序内部指定当前行
+  setCurrentRow, // 允许程序内部指定当前行
+  uploadRowImageField, // 上传指定行的图片字段
+  uploadAllRowImages, // 上传所有行的图片字段
+  save: save, // 通用的保存方法（显式引用，确保可以访问）
+  addRow, // 新增行方法
+  prompInfoRef // 暴露 PrompInfo 引用，方便外部调用
 })
 </script>
 
 <template>
   <div class="import-grid-container">
-    <ElTable
+    <!-- 工具栏 -->
+    <div v-if="props.showToolbar" class="import-grid-toolbar">
+      <div class="toolbar-left">
+        <template v-for="(btn, index) in toolbarButtons" :key="index">
+          <ButtonPlus
+            v-if="btn.type === 'add'"
+            :stype="btn.stype"
+            :loading="btn.loading"
+            @click="btn.onClick"
+          />
+          <ButtonPlus
+            v-else-if="btn.type === 'custom' && !btn.alignRight"
+            :stype="btn.stype"
+            :loading="btn.loading"
+            @click="btn.onClick"
+          >
+            {{ btn.label }}
+          </ButtonPlus>
+        </template>
+      </div>
+      <div class="toolbar-info">
+        <PrompInfo ref="prompInfoRef" />
+      </div>
+      <div class="toolbar-right">
+        <template v-for="(btn, index) in toolbarButtons" :key="`right-${index}`">
+          <ButtonPlus
+            v-if="btn.type === 'save'"
+            :stype="btn.stype"
+            :loading="btn.loading"
+            @click="btn.onClick"
+          />
+          <ButtonPlus
+            v-else-if="btn.type === 'custom' && btn.alignRight"
+            :stype="btn.stype"
+            :loading="btn.loading"
+            @click="btn.onClick"
+          >
+            {{ btn.label }}
+          </ButtonPlus>
+        </template>
+      </div>
+    </div>
+    
+    <div class="table-wrapper">
+      <ElTable
       ref="tableRef"
       :data="dataList"
       border
@@ -1898,75 +2465,23 @@ defineExpose({
           </span>
         </template>
         <template #default="scope">
-          <!-- 图片列：始终显示编辑模式（类似 BaseFree.vue 的新增/修改模式） -->
+          <!-- 图片列：使用 ImagePlus 组件 -->
           <div
             v-if="column.type === 'image' && column.editable !== false"
             :key="`image-${scope.$index}-${column.field}`"
             class="excel-edit-image"
             @click.stop
           >
-            <div class="image-container-edit">
-              <template v-if="scope.row[`${column.field}_display`]">
-                <div
-                  v-for="(image, imgIndex) in scope.row[`${column.field}_display`]"
-                  :key="`${imgIndex}-${image}`"
-                  v-show="image && !image.endsWith('?delete')"
-                  class="image-group-edit"
-                  :class="{
-                    dragging: dragIndex[`${scope.$index}-${column.field}`] === imgIndex,
-                    'drag-over': dragOverIndex[`${scope.$index}-${column.field}`] === imgIndex
-                  }"
-                  draggable="true"
-                  @dragstart="handleDragStart(imgIndex, scope.$index, column.field, $event)"
-                  @dragover="handleDragOver"
-                  @dragenter="handleDragEnter(imgIndex, scope.$index, column.field, $event)"
-                  @dragleave="handleDragLeave(scope.$index, column.field, $event)"
-                  @drop="handleDrop(imgIndex, scope.$index, column.field, $event)"
-                  @dragend="handleDragEnd(scope.$index, column.field)"
-                >
-                  <ElImage
-                    :src="image"
-                    class="image-item-edit"
-                    @error="handleImageError"
-                    :zoom-rate="1.2"
-                    :preview-src-list="generatePreviewList(scope.row[`${column.field}_display`] || [])"
-                    :preview-teleported="true"
-                    :hide-on-click-modal="true"
-                    :initial-index="imgIndex"
-                    fit="cover"
-                    style="width: 100%; height: 100%;"
-                  />
-                  <div
-                    class="remove-btn-edit"
-                    @click.stop="handleRemoveImage(imgIndex, scope.$index, column.field)"
-                  >x</div>
-                </div>
-              </template>
-              <div
-                v-if="!scope.row[`${column.field}_display`] || scope.row[`${column.field}_display`].length < 10"
-                class="image-group-uploader-edit"
-              >
-                <ElUpload
-                  action="/api/vadmin/system/upload/image/to/local"
-                  :data="{ path: 'system' }"
-                  :show-file-list="false"
-                  :multiple="true"
-                  :auto-upload="false"
-                  :before-upload="beforeImageUpload"
-                  @change="(file: any) => handleImageFileChange(file, scope.$index, column.field)"
-                  accept="image/jpeg,image/gif,image/png"
-                  name="file"
-                  :drag="true"
-                  :headers="{ Authorization: token.value }"
-                  :limit="10"
-                >
-                  <div class="upload-content-wrapper">
-                    <ElIcon class="el-icon--upload"><UploadFilled /></ElIcon>
-                    <div class="upload-text-edit">拖拽或点击</div>
-                  </div>
-                </ElUpload>
-              </div>
-            </div>
+            <ImagePlus
+              :ref="(el: any) => setImagePlusRef(scope.$index, column.field, el)"
+              :model-value="scope.row[column.field] || []"
+              @update:model-value="(val: any[]) => {
+                scope.row[column.field] = val
+              }"
+              :disabled="false"
+              :limit="10"
+              :size="column.size || 'small'"
+            />
           </div>
           
           <!-- 编辑模式：数字输入框 -->
@@ -2064,15 +2579,49 @@ defineExpose({
         </template>
       </ElTableColumn>
     </ElTable>
+    </div>
   </div>
 </template>
 
 <style lang="less" scoped>
 .import-grid-container {
-  padding: 0;
+  padding: 0 !important;
   height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 工具栏样式 */
+.import-grid-toolbar {
+  display: flex;
+  align-items: center;
+  margin: 0 0 10px 0;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.toolbar-left {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 10px;
+}
+
+.toolbar-info {
+  flex: 1;
+  min-width: 0; // 允许收缩
+}
+
+.toolbar-right {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.table-wrapper {
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
-  margin-top: 10px;
 }
 
 :deep(.excel-table) {

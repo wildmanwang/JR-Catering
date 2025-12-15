@@ -20,6 +20,7 @@ import { Dialog } from '@/components/Dialog'
 import Response from './components/Response.vue'
 import { BaseButton } from '@/components/Button'
 import { useRouter } from 'vue-router'
+import { ImagePlus } from '@/components/ImagePlus'
 
 defineOptions({
   name: 'ProductDish'
@@ -63,6 +64,9 @@ const dishStatusOptions = ref<Array<{ label: string; value: number }>>([])
 // 状态保存定时器
 let saveStateTimer: ReturnType<typeof setTimeout> | null = null
 
+// ImagePlus 组件实例（用于调用规范化方法）
+const imagePlusHelperRef = ref<InstanceType<typeof ImagePlus>>()
+
 // ==================== 工具函数 ====================
 /**
  * 安全转换数字
@@ -73,14 +77,6 @@ const safeNumber = (value: any, fallback: number | null = null): number | null =
   return Number.isNaN(num) ? fallback : num
 }
 
-/**
- * 规范化图片路径
- */
-const normalizeImage = (img: string): string => {
-  if (typeof img !== 'string' || !img.length) return ''
-  const [path] = img.split('?')
-  return path ? `${path}?original` : ''
-}
 
 /**
  * 过滤空值参数
@@ -107,9 +103,9 @@ const filterEmptyParams = (params: Record<string, any>): Record<string, any> => 
  */
 const mapDishRowToImport = (dish: any) => {
   if (!dish) return null
-  const images = Array.isArray(dish.dish_images)
-    ? dish.dish_images.filter((img) => typeof img === 'string' && img)
-    : []
+
+  // 使用 ImagePlus 组件实例的规范化方法处理图片路径
+  const normalizedImages = (imagePlusHelperRef.value as any)?.getNormalizedImages?.(dish.dish_images) || []
 
   return {
     id: dish.id ?? undefined,
@@ -123,7 +119,8 @@ const mapDishRowToImport = (dish: any) => {
     order_number: dish.order_number ?? null,
     status: safeNumber(dish.status, -1),
     // dish_images_display 由 ImagePlus 组件内部自动维护，不需要手动设置
-    dish_images: images.map(normalizeImage).filter(Boolean),
+    // 使用 ImagePlus 组件提供的规范化函数处理图片路径（自动过滤删除标记和未上传的图片）
+    dish_images: normalizedImages,
     action: null
   }
 }
@@ -512,18 +509,18 @@ const configBase = async () => {
   if (!selections?.length) {
     persistImportPayload([])
     ElMessage.info('未选择菜品，将打开空白批量维护页')
-    push('/product/dish/import')
+    push('/system/test/import')
     return
   }
   const payload = selections.map(mapDishRowToImport).filter((item) => item !== null)
   if (!payload.length) {
     ElMessage.warning('所选菜品数据异常，已打开空白批量维护页')
     persistImportPayload([])
-    push('/product/dish/import')
+    push('/system/test/import')
     return
   }
   persistImportPayload(payload)
-  push('/product/dish/import')
+  push('/system/test/import')
 }
 
 /**
@@ -909,6 +906,11 @@ fetchKitchens()
       <ButtonPlus stype="return" @click="dialogVisible = false" />
     </template>
   </Dialog>
+
+  <!-- 隐藏的 ImagePlus 组件实例，用于调用规范化方法 -->
+  <div style="display: none">
+    <ImagePlus ref="imagePlusHelperRef" :model-value="[]" />
+  </div>
 </template>
 
 <style scoped>
