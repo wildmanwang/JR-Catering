@@ -682,6 +682,51 @@ const currentRowIndex = computed(() => {
 /** 当前行颜色常量 */
 const CURRENT_ROW_COLOR = 'rgb(16, 153, 104)'
 
+/** 整行选中的索引（通过点击序号列选中） */
+const selectedWholeRowIndex = ref<number | null>(null)
+
+/**
+ * 更新选中行的单元格样式
+ * 通过 DOM 操作直接添加/移除类名
+ */
+const updateSelectedRowCells = () => {
+  nextTick(() => {
+    // 移除所有选中行样式
+    document.querySelectorAll('.selected-row-cell').forEach(el => {
+      el.classList.remove('selected-row-cell', 'selected-row-cell-first', 'selected-row-cell-last')
+    })
+    
+    if (selectedWholeRowIndex.value === null) return
+    
+    // 添加新的选中行样式
+    const tbody = document.querySelector('.excel-table .el-table__body tbody')
+    if (!tbody) return
+    
+    const rows = tbody.querySelectorAll('tr')
+    const targetRow = rows[selectedWholeRowIndex.value]
+    if (!targetRow) return
+    
+    const cells = Array.from(targetRow.querySelectorAll('.el-table__cell'))
+    
+    // 跳过第一个单元格（序号列）和最后一个单元格（action列）
+    cells.forEach((cell, index) => {
+      if (index === 0) return // 序号列
+      if (index === cells.length - 1) return // action列
+      
+      cell.classList.add('selected-row-cell')
+      
+      // 第二列（index=1）添加左边框
+      if (index === 1) {
+        cell.classList.add('selected-row-cell-first')
+      }
+      // 倒数第二列添加右边框
+      if (index === cells.length - 2) {
+        cell.classList.add('selected-row-cell-last')
+      }
+    })
+  })
+}
+
 /**
  * 更新选中行的索引
  * 从选中的单元格元素中提取行索引
@@ -1088,6 +1133,31 @@ const handleCellClick = (row: any, column: any, cell?: HTMLElement, event?: Mous
   const rowIndex = dataList.value.indexOf(row)
   const field = column.property || column.field
   
+  // 处理序号列的点击（序号列没有 field，type 为 'index'）
+  if (!field && column.type === 'index') {
+    // 选中行时，清除单元格选中状态（两者互斥）
+    // 清除单元格选中会触发结束编辑
+    document.querySelectorAll('.el-table__cell.selected-cell').forEach(el => {
+      el.classList.remove('selected-cell')
+    })
+    
+    // 如果有编辑状态，退出编辑
+    if (editingCell.value) {
+      endEdit()
+    }
+    
+    // 切换选中状态
+    if (selectedWholeRowIndex.value === rowIndex) {
+      selectedWholeRowIndex.value = null
+    } else {
+      selectedWholeRowIndex.value = rowIndex
+    }
+    
+    // 更新选中行的样式
+    updateSelectedRowCells()
+    return
+  }
+  
   if (rowIndex === -1 || !field) return
   
   const col = props.columns.find(c => c.field === field)
@@ -1113,6 +1183,12 @@ const handleCellClick = (row: any, column: any, cell?: HTMLElement, event?: Mous
   document.querySelectorAll('.el-table__cell.selected-cell').forEach(el => {
     el.classList.remove('selected-cell')
   })
+  
+  // 单元格被选中时，取消选中行（两者互斥）
+  if (selectedWholeRowIndex.value !== null) {
+    selectedWholeRowIndex.value = null
+    updateSelectedRowCells()
+  }
   
   // 添加当前单元格的选中状态
   // 使用 nextTick 确保 DOM 已更新
@@ -1165,6 +1241,12 @@ const handleCellDblclick = (row: any, column: any, cell?: HTMLElement, event?: M
   document.querySelectorAll('.el-table__cell.selected-cell').forEach(el => {
     el.classList.remove('selected-cell')
   })
+  
+  // 单元格被选中时，取消选中行（两者互斥）
+  if (selectedWholeRowIndex.value !== null) {
+    selectedWholeRowIndex.value = null
+    updateSelectedRowCells()
+  }
   
   if (cell) {
     cell.classList.add('selected-cell')
@@ -2651,6 +2733,7 @@ defineExpose({
     padding-left: 0 !important;
     padding-right: 0 !important;
     font-size: 12px !important; // 减小2级字号
+    cursor: pointer !important; // 序号列可点击
   }
   
   // 行号单元格样式
@@ -2674,6 +2757,37 @@ defineExpose({
     justify-content: center;
     width: 100%;
     height: 100%;
+  }
+  
+  // ==================== 选中行样式 ====================
+  // 选中行的单元格边框样式
+  // 使用伪元素绘制边框，不影响单元格内容布局
+  .selected-row-cell {
+    position: relative;
+    
+    // 使用伪元素绘制边框
+    &::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      border-top: 2px solid rgb(16, 153, 104);
+      border-bottom: 2px solid rgb(16, 153, 104);
+      pointer-events: none;
+      z-index: 1;
+    }
+    
+    // 第一列（第2列，因为序号是第1列）左边框
+    &.selected-row-cell-first::before {
+      border-left: 2px solid rgb(16, 153, 104);
+    }
+    
+    // 最后一列（倒数第2列，因为action是最后1列）右边框
+    &.selected-row-cell-last::before {
+      border-right: 2px solid rgb(16, 153, 104);
+    }
   }
   
   // 序号列表头隐藏
