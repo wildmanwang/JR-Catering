@@ -862,12 +862,16 @@ const currentRowIndex = computed(() => {
 /** 当前行颜色常量 */
 const CURRENT_ROW_COLOR = 'rgb(16, 153, 104)'
 
-/** 整行选中的索引（通过点击序号列选中） */
-const selectedWholeRowIndex = ref<number | null>(null)
+/** 整行选中的索引数组（通过点击序号列选中，支持多选） */
+const selectedWholeRowIndices = ref<number[]>([])
+
+/** 最后选中的行索引（用于Shift范围选择） */
+const lastSelectedRowIndex = ref<number | null>(null)
 
 /**
  * 更新选中行的单元格样式
  * 通过 DOM 操作直接添加/移除类名
+ * 支持多行选择
  */
 const updateSelectedRowCells = () => {
   nextTick(() => {
@@ -876,33 +880,36 @@ const updateSelectedRowCells = () => {
       el.classList.remove('selected-row-cell', 'selected-row-cell-first', 'selected-row-cell-last')
     })
     
-    if (selectedWholeRowIndex.value === null) return
+    if (selectedWholeRowIndices.value.length === 0) return
     
-    // 添加新的选中行样式
+    // 为所有选中的行添加样式
     const tbody = document.querySelector('.excel-table .el-table__body tbody')
     if (!tbody) return
     
     const rows = tbody.querySelectorAll('tr')
-    const targetRow = rows[selectedWholeRowIndex.value]
-    if (!targetRow) return
     
-    const cells = Array.from(targetRow.querySelectorAll('.el-table__cell'))
-    
-    // 跳过第一个单元格（序号列）和最后一个单元格（action列）
-    cells.forEach((cell, index) => {
-      if (index === 0) return // 序号列
-      if (index === cells.length - 1) return // action列
+    selectedWholeRowIndices.value.forEach(rowIndex => {
+      const targetRow = rows[rowIndex]
+      if (!targetRow) return
       
-      cell.classList.add('selected-row-cell')
+      const cells = Array.from(targetRow.querySelectorAll('.el-table__cell'))
       
-      // 第二列（index=1）添加左边框
-      if (index === 1) {
-        cell.classList.add('selected-row-cell-first')
-      }
-      // 倒数第二列添加右边框
-      if (index === cells.length - 2) {
-        cell.classList.add('selected-row-cell-last')
-      }
+      // 跳过第一个单元格（序号列）和最后一个单元格（action列）
+      cells.forEach((cell, index) => {
+        if (index === 0) return // 序号列
+        if (index === cells.length - 1) return // action列
+        
+        cell.classList.add('selected-row-cell')
+        
+        // 第二列（index=1）添加左边框
+        if (index === 1) {
+          cell.classList.add('selected-row-cell-first')
+        }
+        // 倒数第二列添加右边框
+        if (index === cells.length - 2) {
+          cell.classList.add('selected-row-cell-last')
+        }
+      })
     })
   })
 }
@@ -1324,7 +1331,6 @@ const handleCellClick = (row: any, column: any, cell?: HTMLElement, event?: Mous
   // 处理序号列的点击（序号列没有 field，type 为 'index'）
   if (!field && column.type === 'index') {
     // 选中行时，清除单元格选中状态（两者互斥）
-    // 清除单元格选中会触发结束编辑
     document.querySelectorAll('.el-table__cell.selected-cell').forEach(el => {
       el.classList.remove('selected-cell')
     })
@@ -1334,11 +1340,51 @@ const handleCellClick = (row: any, column: any, cell?: HTMLElement, event?: Mous
       endEdit()
     }
     
-    // 切换选中状态
-    if (selectedWholeRowIndex.value === rowIndex) {
-      selectedWholeRowIndex.value = null
+    // 判断是否按住了 Ctrl 或 Shift 键
+    const isCtrlPressed = event?.ctrlKey || event?.metaKey // metaKey 为 Mac 的 Cmd 键
+    const isShiftPressed = event?.shiftKey
+    
+    if (isShiftPressed && lastSelectedRowIndex.value !== null) {
+      // Shift + 点击：选择范围内的所有行
+      const start = Math.min(lastSelectedRowIndex.value, rowIndex)
+      const end = Math.max(lastSelectedRowIndex.value, rowIndex)
+      const rangeIndices: number[] = []
+      for (let i = start; i <= end; i++) {
+        rangeIndices.push(i)
+      }
+      selectedWholeRowIndices.value = rangeIndices
+      selectedRowIndex.value = rowIndex
+    } else if (isCtrlPressed) {
+      // Ctrl + 点击：切换该行的选中状态
+      const index = selectedWholeRowIndices.value.indexOf(rowIndex)
+      if (index > -1) {
+        // 已选中，取消选中
+        selectedWholeRowIndices.value.splice(index, 1)
+        if (selectedWholeRowIndices.value.length === 0) {
+          selectedRowIndex.value = null
+          lastSelectedRowIndex.value = null
+        } else {
+          selectedRowIndex.value = selectedWholeRowIndices.value[selectedWholeRowIndices.value.length - 1]
+        }
+      } else {
+        // 未选中，添加到选中列表
+        selectedWholeRowIndices.value.push(rowIndex)
+        selectedRowIndex.value = rowIndex
+        lastSelectedRowIndex.value = rowIndex
+      }
     } else {
-      selectedWholeRowIndex.value = rowIndex
+      // 普通点击：单选该行
+      if (selectedWholeRowIndices.value.length === 1 && selectedWholeRowIndices.value[0] === rowIndex) {
+        // 点击已选中的行，取消选中
+        selectedWholeRowIndices.value = []
+        selectedRowIndex.value = null
+        lastSelectedRowIndex.value = null
+      } else {
+        // 选中该行
+        selectedWholeRowIndices.value = [rowIndex]
+        selectedRowIndex.value = rowIndex
+        lastSelectedRowIndex.value = rowIndex
+      }
     }
     
     // 更新选中行的样式
@@ -1373,8 +1419,9 @@ const handleCellClick = (row: any, column: any, cell?: HTMLElement, event?: Mous
   })
   
   // 单元格被选中时，取消选中行（两者互斥）
-  if (selectedWholeRowIndex.value !== null) {
-    selectedWholeRowIndex.value = null
+  if (selectedWholeRowIndices.value.length > 0) {
+    selectedWholeRowIndices.value = []
+    lastSelectedRowIndex.value = null
     updateSelectedRowCells()
   }
   
@@ -1431,8 +1478,9 @@ const handleCellDblclick = (row: any, column: any, cell?: HTMLElement, event?: M
   })
   
   // 单元格被选中时，取消选中行（两者互斥）
-  if (selectedWholeRowIndex.value !== null) {
-    selectedWholeRowIndex.value = null
+  if (selectedWholeRowIndices.value.length > 0) {
+    selectedWholeRowIndices.value = []
+    lastSelectedRowIndex.value = null
     updateSelectedRowCells()
   }
   
@@ -1484,8 +1532,9 @@ const handleImageCellClick = (rowIndex: number, field: string, event: MouseEvent
   })
   
   // 单元格被选中时，取消选中行（两者互斥）
-  if (selectedWholeRowIndex.value !== null) {
-    selectedWholeRowIndex.value = null
+  if (selectedWholeRowIndices.value.length > 0) {
+    selectedWholeRowIndices.value = []
+    lastSelectedRowIndex.value = null
     updateSelectedRowCells()
   }
   
@@ -3269,7 +3318,7 @@ defineExpose({
   }
   
   .el-table__cell {
-    padding: 4px 8px !important;
+    padding: 4px !important;
     position: relative;
     // 确保单元格有最小高度
     min-height: 32px;
@@ -3352,6 +3401,12 @@ defineExpose({
     border-right: 1px solid #ebeef5;
   }
   
+  // 强制覆盖 Element Plus 表头的默认 padding
+  .el-table.el-table--default :deep(thead .cell) {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+  
   // Element Plus Table 自动生成的 .cell 包装器
   // 重置其默认样式，确保完全填充单元格内容区域
   :deep(.el-table__cell .cell) {
@@ -3360,7 +3415,10 @@ defineExpose({
     max-width: 100% !important;
     height: 100% !important; // 充满父容器
     min-height: 32px !important;
-    padding: 0 !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
     margin: 0 !important;
     box-sizing: border-box !important;
     // 使用 flex 布局实现纵向居中
@@ -3368,6 +3426,28 @@ defineExpose({
     align-items: center !important; // 纵向居中
     border: none !important;
     position: relative !important;
+  }
+  
+  // 标题栏 .cell 包装器 - 确保没有额外 padding
+  // 使用多重选择器增强优先级
+  :deep(.el-table__header-wrapper .el-table__header .el-table__cell .cell),
+  :deep(.el-table__header .el-table__cell .cell) {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    justify-content: center; // 文本居中
+    
+    // 标题栏内的 span - 使用 flex 占满宽度
+    span {
+      padding: 0 !important;
+      margin: 0 !important;
+      flex: 1; // 占满 flex 容器的宽度
+      min-width: 0; // 允许缩小
+      line-height: 1.2;
+      text-align: center;
+      word-break: break-word; // 必要时允许单词内换行
+    }
   }
   
   .excel-cell {
@@ -3932,6 +4012,31 @@ defineExpose({
 </style>
 
 <style lang="less">
+// 全局样式：强制覆盖 Element Plus 表头 .cell 的 padding
+// 必须使用全局样式才能覆盖 Element Plus 的默认样式
+.excel-table {
+  .el-table__header {
+    .el-table__cell {
+      .cell {
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+        padding-top: 0 !important;
+        padding-bottom: 0 !important;
+      }
+    }
+  }
+  
+  // 也覆盖数据行的 .cell（如果需要）
+  .el-table__body {
+    .el-table__cell {
+      .cell {
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+      }
+    }
+  }
+}
+
 // 全局样式：下拉菜单宽度与单元格一致
 // 注意：下拉菜单是 teleported 到 body 的，所以需要使用全局样式
 .excel-select-dropdown {
