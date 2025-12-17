@@ -1258,6 +1258,37 @@ const handleCellDblclick = (row: any, column: any, cell?: HTMLElement, event?: M
 }
 
 /**
+ * 处理图片单元格点击
+ */
+const handleImageCellClick = (rowIndex: number, field: string, event: MouseEvent) => {
+  // 如果点击的是正在编辑的其他单元格，先退出编辑模式
+  if (editingCell.value) {
+    endEdit()
+  }
+  
+  // 清除其他单元格的选中状态
+  document.querySelectorAll('.el-table__cell.selected-cell').forEach(el => {
+    el.classList.remove('selected-cell')
+  })
+  
+  // 单元格被选中时，取消选中行（两者互斥）
+  if (selectedWholeRowIndex.value !== null) {
+    selectedWholeRowIndex.value = null
+    updateSelectedRowCells()
+  }
+  
+  // 添加当前图片单元格的选中状态
+  nextTick(() => {
+    // 通过事件目标查找单元格
+    const targetCell = (event.target as HTMLElement).closest('.el-table__cell') as HTMLElement
+    if (targetCell) {
+      targetCell.classList.add('selected-cell')
+      updateSelectedRowIndex()
+    }
+  })
+}
+
+/**
  * 处理键盘输入（直接进入编辑）
  */
 const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
@@ -2604,7 +2635,7 @@ defineExpose({
             v-if="column.type === 'image' && column.editable !== false"
             :key="`image-${scope.$index}-${column.field}`"
             class="excel-edit-image"
-            @click.stop
+            @click="handleImageCellClick(scope.$index, column.field, $event)"
           >
             <ImagePlus
               :ref="(el: any) => setImagePlusRef(scope.$index, column.field, el)"
