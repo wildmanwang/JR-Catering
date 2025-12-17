@@ -407,23 +407,21 @@ const save = async (): Promise<void> => {
     return
   }
   
-  // 校验必填字段
+  // 校验必填字段（遇到第一个错误就停止）
   if (config.requiredFields?.length) {
-    const errors: string[] = []
-    data.forEach((row: any, index: number) => {
-      config.requiredFields!.forEach(({ field, label }) => {
+    for (let index = 0; index < data.length; index++) {
+      const row = data[index]
+      for (const { field, label } of config.requiredFields) {
         const value = row[field]
         if (value === undefined || value === null || value === '') {
-          errors.push(`第 ${index + 1} 行：${label} 为必填项`)
+          const msg = `第 ${index + 1} 行：${label} 为必填项，请修改后再保存。`
+          prompInfoRef.value?.err(msg)
+          config.onError?.(msg)
+          // 选中出错的单元格，方便用户定位和修改
+          selectCell(index, field)
+          return
         }
-      })
-    })
-    
-    if (errors.length > 0) {
-      const msg = errors.join('；')
-      prompInfoRef.value?.err(msg)
-      config.onError?.(msg)
-      return
+      }
     }
   }
   
@@ -455,26 +453,28 @@ const save = async (): Promise<void> => {
   
   try {
     // ==================== 处理图片字段上传 ====================
-    try {
-      // 遍历所有需要保存的行，上传每行的图片字段
-      const imageColumns = props.columns.filter(col => col.type === 'image')
-      for (const { index } of dataToSave) {
-        // 遍历所有图片类型的列
-        for (const column of imageColumns) {
+    const imageColumns = props.columns.filter(col => col.type === 'image')
+    for (const { index } of dataToSave) {
+      // 遍历所有图片类型的列
+      for (const column of imageColumns) {
+        try {
           await uploadRowImageField(index, column.field)
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : '图片上传失败'
+          const errorMessage = `第 ${index + 1} 行：${column.label || column.field} 图片上传失败，${errorMsg}`
+          if (prompInfoRef.value) {
+            prompInfoRef.value.err(errorMessage)
+          }
+          config.onError?.(errorMessage)
+          // 选中出错的单元格
+          selectCell(index, column.field)
+          return
         }
       }
-      
-      // 上传完成后，重新获取数据（因为图片数据已更新）
-      await nextTick()
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : '图片上传失败'
-      if (prompInfoRef.value) {
-        prompInfoRef.value.err(errorMessage)
-      }
-      config.onError?.(errorMessage)
-      return
     }
+    
+    // 上传完成后，重新获取数据（因为图片数据已更新）
+    await nextTick()
     
     // 逐行处理
     for (const { row, index, isNew } of dataToSave) {
@@ -608,6 +608,8 @@ const save = async (): Promise<void> => {
           prompInfoRef.value.err(errorMessage)
         }
         config.onError?.(errorMessage)
+        // 设置当前行（不选中具体单元格，因为无法确定具体字段）
+        selectCell(index)
         // 中断整个处理流程
         return
       }
@@ -1351,6 +1353,56 @@ const handleCellClick = (row: any, column: any, cell?: HTMLElement, event?: Mous
       if (cellElement) {
         cellElement.classList.add('selected-cell')
         updateSelectedRowIndex()
+      }
+    }
+  })
+}
+
+/**
+ * 选中指定的单元格（用于错误定位）
+ * @param rowIndex 行索引
+ * @param field 字段名（可选，如果不提供则只设置当前行）
+ */
+const selectCell = (rowIndex: number, field?: string) => {
+  // 如果有编辑状态，退出编辑
+  if (editingCell.value) {
+    endEdit()
+  }
+  
+  // 清除其他单元格的选中状态
+  document.querySelectorAll('.el-table__cell.selected-cell').forEach(el => {
+    el.classList.remove('selected-cell')
+  })
+  
+  // 取消选中行（单元格选中和行选中互斥）
+  if (selectedWholeRowIndices.value.length > 0) {
+    selectedWholeRowIndices.value = []
+    lastSelectedRowIndex.value = null
+    updateSelectedRowCells()
+  }
+  
+  // 如果没有指定字段，只设置当前行，不选中任何单元格
+  if (!field) {
+    selectedRowIndex.value = rowIndex
+    return
+  }
+  
+  // 选中指定的单元格
+  nextTick(() => {
+    const visibleColumns = props.columns.filter(col => col.show !== false)
+    const columnIndex = visibleColumns.findIndex(c => c.field === field)
+    if (columnIndex !== -1) {
+      // 跳过序号列，所以 columnIndex + 2
+      const cellElement = document.querySelector(
+        `.el-table__body tbody tr:nth-child(${rowIndex + 1}) .el-table__cell:nth-child(${columnIndex + 2})`
+      ) as HTMLElement
+      if (cellElement) {
+        cellElement.classList.add('selected-cell')
+        // 更新当前行索引
+        selectedRowIndex.value = rowIndex
+        
+        // 滚动到该单元格（确保用户能看到）
+        cellElement.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' })
       }
     }
   })
@@ -3171,6 +3223,17 @@ defineExpose({
   max-height: 100% !important;
 }
 
+// Mixin: 移除所有边框、阴影和背景
+.remove-all-borders() {
+  border: none !important;
+  border-width: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  outline: none !important;
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
 // ==================== 基础布局样式 ====================
 .import-grid-container {
   padding: 0 !important;
@@ -3244,7 +3307,8 @@ defineExpose({
   }
   
   // 行号单元格样式
-  .row-index-cell {
+  .row-index-cell,
+  .row-index-pointer {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -3256,14 +3320,6 @@ defineExpose({
   .row-index-number {
     font-size: 12px;
     color: #606266;
-  }
-  
-  .row-index-pointer {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 100%;
-    height: 100%;
   }
   
   // ==================== 选中行样式 ====================
@@ -3778,63 +3834,46 @@ defineExpose({
     transition: all 0.2s ease;
   }
   
+  // 注意：ImagePlus 已提取为独立组件，以下样式可能是旧代码遗留，仅保留以防兼容性问题
   .image-group-uploader-edit {
     width: 60px;
     height: 60px;
     flex-shrink: 0;
     box-sizing: border-box;
-    overflow: hidden; // 防止子元素溢出
+    overflow: hidden;
     
-    // 修复 ElUpload 组件自动生成的中间层 div（没有 class 的包装元素）
+    // 修复 ElUpload 组件自动生成的中间层 div
     > div {
-      width: 100% !important;
-      height: 100% !important;
-      min-width: 100% !important;
-      min-height: 100% !important;
-      max-width: 100% !important;
-      max-height: 100% !important;
+      .fill-container();
       margin: 0 !important;
       padding: 0 !important;
-      box-sizing: border-box !important;
       display: block !important;
     }
-  }
-  
-  .image-group-uploader-edit .el-upload {
-    border: 2px dashed #c0c4cc;
-    width: 100% !important;
-    height: 100% !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    border-radius: 4px;
-    box-sizing: border-box !important; // 确保 border 包含在尺寸内
-    min-width: 100% !important;
-    min-height: 100% !important;
-    max-width: 100% !important;
-    max-height: 100% !important;
-  }
-  
-  .image-group-uploader-edit .el-upload:hover {
-    border-color: #409eff;
-    background: #f0f7ff;
-    color: #409eff;
-  }
-  
-  .image-group-uploader-edit .el-upload-dragger {
-    width: 100% !important;
-    height: 100% !important;
-    min-width: 100% !important;
-    min-height: 100% !important;
-    max-width: 100% !important;
-    max-height: 100% !important;
-    border: none;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-direction: column;
-    padding: 0 !important;
-    margin: 0 !important;
-    box-sizing: border-box !important;
+    
+    .el-upload {
+      .fill-container();
+      border: 2px dashed #c0c4cc;
+      border-radius: 4px;
+      margin: 0 !important;
+      padding: 0 !important;
+      
+      &:hover {
+        border-color: #409eff;
+        background: #f0f7ff;
+        color: #409eff;
+      }
+    }
+    
+    .el-upload-dragger {
+      .fill-container();
+      border: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      padding: 0 !important;
+      margin: 0 !important;
+    }
   }
   
   // 上传内容包装器：确保上传图标和文字居中显示
@@ -3867,8 +3906,9 @@ defineExpose({
     overflow: visible !important;
     position: relative;
     
-    // SVG 图标样式：固定尺寸 24x24，通过 flex 居中
-    :deep(svg) {
+    // SVG 图标样式：固定尺寸 24x24
+    :deep(svg),
+    :deep(svg[height]) {
       width: 24px !important;
       height: 24px !important;
       min-width: 24px !important;
@@ -3881,16 +3921,6 @@ defineExpose({
       box-sizing: border-box !important;
       overflow: visible !important;
       position: static !important;
-    }
-    
-    // 覆盖 SVG 元素上可能存在的固定高度属性
-    :deep(svg[height]),
-    :deep(svg[height="67"]),
-    :deep(svg[height="67px"]) {
-      height: 24px !important;
-      max-height: 24px !important;
-      width: 24px !important;
-      max-width: 24px !important;
     }
   }
   
@@ -3907,45 +3937,32 @@ defineExpose({
 </style>
 
 <style lang="less">
-// 全局样式：强制覆盖 Element Plus 表头 .cell 的 padding
+// ==================== Mixins（全局样式块） ====================
+// Mixin: 移除所有边框、阴影和背景
+.remove-all-borders() {
+  border: none !important;
+  border-width: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  outline: none !important;
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+// ==================== 全局样式：.excel-table ====================
 // 必须使用全局样式才能覆盖 Element Plus 的默认样式
 .excel-table {
-  .el-table__header {
-    .el-table__cell {
-      .cell {
-        padding-left: 0 !important;
-        padding-right: 0 !important;
-        padding-top: 0 !important;
-        padding-bottom: 0 !important;
-      }
-    }
+  // 强制覆盖 Element Plus .cell 的 padding
+  .el-table__header .el-table__cell .cell {
+    padding: 0 !important;
   }
   
-  // 也覆盖数据行的 .cell（如果需要）
-  .el-table__body {
-    .el-table__cell {
-      .cell {
-        padding-left: 0 !important;
-        padding-right: 0 !important;
-      }
-    }
+  .el-table__body .el-table__cell .cell {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
   }
-}
-
-// 全局样式：下拉菜单宽度与单元格一致
-// 注意：下拉菜单是 teleported 到 body 的，所以需要使用全局样式
-.excel-select-dropdown {
-  min-width: fit-content !important;
   
-  .el-select-dropdown__item {
-    padding: 8px 12px;
-    white-space: nowrap;
-  }
-}
-
-
-// ==================== 全局样式：单元格内部容器 ====================
-.excel-table {
+  // 单元格内部容器：充满容器并居中对齐
   tbody .el-table__cell .cell {
     width: 100% !important;
     min-width: 100% !important;
@@ -3953,54 +3970,32 @@ defineExpose({
     height: 100% !important;
     padding: 0 !important;
     margin: 0 !important;
-    display: flex !important; // 使用 flex 布局实现纵向居中
+    display: flex !important;
     align-items: center !important;
   }
   
-  // 编辑模式下，让 .cell 不作为定位容器，编辑组件直接相对于 td 定位
+  // 编辑模式下，td 作为定位容器
   tbody .el-table__cell.editing-cell {
-    position: relative !important; // td 作为定位容器
-    // 移除 .cell 的高度限制，让它完全不影响布局
-    // 编辑组件直接相对于 td 绝对定位，不依赖 .cell 的高度
+    position: relative !important;
   }
-}
-
-// ==================== 全局样式：多行文本单元格样式 ====================
-// 包含多行文本的单元格，限制高度防止撑大行高
-.excel-table {
+  
+  // 多行文本单元格：限制高度防止撑大行高
   .el-table__cell:has(.cell-text-multiline) {
-    vertical-align: top !important; // 顶部对齐，避免文本被裁剪
+    vertical-align: top !important;
     
-    // 在父容器上限制高度，防止行高被撑大
     .cell {
       max-height: 4.8em !important; // 约 3 行的高度 (line-height: 1.5)
       overflow: hidden !important;
-      // 使用 flex 布局，但从顶部开始显示（不居中），避免文本被从上下裁剪
       display: flex !important;
       align-items: flex-start !important; // 顶部对齐，文本从第一行完整显示
     }
   }
-}
-
-// ==================== 全局样式：强制移除编辑组件边框 ====================
-// 编辑模式下的所有 Element Plus 输入组件，强制移除边框和背景
-.excel-table {
-  // 所有编辑组件的 wrapper
+  
+  // 强制移除编辑组件边框和背景
   .el-input__wrapper,
   .el-select__wrapper,
   .el-input-number__wrapper {
-    border: none !important;
-    border-width: 0 !important;
-    border-top: none !important;
-    border-right: none !important;
-    border-bottom: none !important;
-    border-left: none !important;
-    border-radius: 0 !important;
-    box-shadow: none !important;
-    outline: none !important;
-    background: transparent !important;
-    background-color: transparent !important;
-    // 垂直居中对齐
+    .remove-all-borders();
     display: flex !important;
     align-items: center !important;
     
@@ -4009,16 +4004,7 @@ defineExpose({
     &:focus-within,
     &.is-focus,
     &.is-hover {
-      border: none !important;
-      border-width: 0 !important;
-      border-top: none !important;
-      border-right: none !important;
-      border-bottom: none !important;
-      border-left: none !important;
-      box-shadow: none !important;
-      outline: none !important;
-      background: transparent !important;
-      background-color: transparent !important;
+      .remove-all-borders();
     }
   }
   
@@ -4033,18 +4019,8 @@ defineExpose({
   
   // textarea 单独处理，不需要 flex 居中
   .el-textarea__inner {
-    border: none !important;
-    border-width: 0 !important;
-    border-top: none !important;
-    border-right: none !important;
-    border-bottom: none !important;
-    border-left: none !important;
-    border-radius: 0 !important;
-    box-shadow: none !important;
-    outline: none !important;
-    background: transparent !important;
-    background-color: transparent !important;
-    padding: 4px 5px !important; // 恢复原来的边距
+    .remove-all-borders();
+    padding: 4px 5px !important;
     box-sizing: border-box !important;
     width: 100% !important;
     height: 100% !important;
@@ -4056,40 +4032,20 @@ defineExpose({
     &:focus-within,
     &.is-focus,
     &.is-hover {
-      border: none !important;
-      border-width: 0 !important;
-      box-shadow: none !important;
-      outline: none !important;
-      background: transparent !important;
-      background-color: transparent !important;
+      .remove-all-borders();
     }
   }
   
   // 所有 input 元素（单行输入框）
   .el-input__inner,
   input:not([type="textarea"]) {
-    border: none !important;
-    border-width: 0 !important;
-    border-top: none !important;
-    border-right: none !important;
-    border-bottom: none !important;
-    border-left: none !important;
-    box-shadow: none !important;
-    outline: none !important;
-    background: transparent !important;
-    background-color: transparent !important;
-    // 垂直居中对齐
+    .remove-all-borders();
     line-height: normal !important;
     
     &:hover,
     &:focus,
     &:active {
-      border: none !important;
-      border-width: 0 !important;
-      box-shadow: none !important;
-      outline: none !important;
-      background: transparent !important;
-      background-color: transparent !important;
+      .remove-all-borders();
     }
   }
   
@@ -4119,9 +4075,18 @@ defineExpose({
   .el-input,
   .el-input-number,
   .el-textarea {
-    border: none !important;
-    box-shadow: none !important;
-    outline: none !important;
+    .remove-all-borders();
+  }
+}
+
+// ==================== 全局样式：下拉菜单 ====================
+// 注意：下拉菜单是 teleported 到 body 的，所以需要使用全局样式
+.excel-select-dropdown {
+  min-width: fit-content !important;
+  
+  .el-select-dropdown__item {
+    padding: 8px 12px;
+    white-space: nowrap;
   }
 }
 </style>
