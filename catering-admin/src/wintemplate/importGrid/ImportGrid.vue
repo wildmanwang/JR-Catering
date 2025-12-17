@@ -1525,8 +1525,8 @@ const handleInputKeydown = (event: KeyboardEvent, rowIndex: number, field: strin
   
   // 方向键导航
   if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
-    if (col?.type === 'select') {
-      // 下拉框时，方向键用于选择，不阻止
+    if (col?.type === 'select' || col?.type === 'text' || col?.type === 'number') {
+      // 下拉框、文本框、数字框时，方向键用于编辑框内的光标操作，不阻止
       return
     }
     event.preventDefault()
@@ -2342,6 +2342,58 @@ onMounted(async () => {
       document.querySelectorAll('.el-table__cell.selected-cell').forEach(el => {
         el.classList.remove('selected-cell')
       })
+      return
+    }
+    
+    // 方向键导航（非编辑模式）
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
+      event.preventDefault()
+      
+      let newRowIndex = rowIndex
+      let newColumnIndex = columnIndex
+      let needsNewRow = false
+      
+      if (event.key === 'ArrowUp' && rowIndex > 0) {
+        newRowIndex = rowIndex - 1
+      } else if (event.key === 'ArrowDown') {
+        if (rowIndex < dataList.value.length - 1) {
+          newRowIndex = rowIndex + 1
+        } else {
+          // 添加新行
+          const newRow = { ...getDefaultRow() }
+          dataList.value.push(newRow)
+          newRowIndex = dataList.value.length - 1
+          needsNewRow = true
+        }
+      } else if (event.key === 'ArrowLeft' && currentIndex > 0) {
+        newColumnIndex = visibleColumns.findIndex(col => col.field === editableFields.value[currentIndex - 1])
+      } else if (event.key === 'ArrowRight' && currentIndex < editableFields.value.length - 1) {
+        newColumnIndex = visibleColumns.findIndex(col => col.field === editableFields.value[currentIndex + 1])
+      }
+      
+      // 跳转到新单元格
+      const navigateToCell = () => {
+        const targetRow = tbody.children[newRowIndex] as HTMLElement
+        if (targetRow) {
+          const targetCell = targetRow.children[newColumnIndex + 1] as HTMLElement
+          if (targetCell) {
+            document.querySelectorAll('.el-table__cell.selected-cell').forEach(el => {
+              el.classList.remove('selected-cell')
+            })
+            targetCell.classList.add('selected-cell')
+            updateSelectedRowIndex()
+            // 确保单元格可见
+            targetCell.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+          }
+        }
+      }
+      
+      // 如果添加了新行，需要等待 DOM 更新
+      if (needsNewRow) {
+        nextTick(navigateToCell)
+      } else {
+        navigateToCell()
+      }
       return
     }
     
