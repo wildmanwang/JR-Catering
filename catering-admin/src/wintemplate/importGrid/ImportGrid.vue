@@ -153,50 +153,54 @@ const props = withDefaults(defineProps<ImportGridProps>(), {
  * 
  * @returns {object} 默认行数据对象
  */
+/**
+ * 深拷贝对象的字段值（数组和对象）
+ */
+const deepCloneValue = (value: any): any => {
+  if (Array.isArray(value)) {
+    return [...value]
+  } else if (typeof value === 'object' && value !== null) {
+    return { ...value }
+  }
+  return value
+}
+
+/**
+ * 深拷贝对象的所有字段
+ */
+const deepCloneObject = (obj: any): any => {
+  const cloned: any = {}
+  for (const key in obj) {
+    cloned[key] = deepCloneValue(obj[key])
+  }
+  return cloned
+}
+
+/**
+ * 清理图片数组的状态标记
+ */
+const cleanImageArray = (imageArray: any[]): any[] => {
+  if (!Array.isArray(imageArray)) return []
+  return imageArray
+    .filter((item: any) => typeof item === 'string' && !item.includes('?delete'))
+    .map((item: any) => typeof item === 'string' ? item.replace(/\?(original|add|delete)/, '') : item)
+}
+
 const getDefaultRow = (): any => {
-  // 根据列配置生成默认行数据
   const defaultRowFromColumns: any = {}
   
   props.columns.forEach(column => {
     if (column.value !== undefined) {
-      // 如果列配置中有 value，使用该值（与 FormSchema 保持一致）
-      // 深拷贝数组和对象，避免多行共享引用
-      if (Array.isArray(column.value)) {
-        defaultRowFromColumns[column.field] = [...column.value]
-      } else if (typeof column.value === 'object' && column.value !== null) {
-        defaultRowFromColumns[column.field] = { ...column.value }
-      } else {
-        defaultRowFromColumns[column.field] = column.value
-      }
+      defaultRowFromColumns[column.field] = deepCloneValue(column.value)
     } else if (column.type === 'image') {
-      // 图片类型默认值为空数组（每次创建新数组）
       defaultRowFromColumns[column.field] = []
     } else if (column.type === 'text' && column.required) {
-      // 必填的文本类型默认值为空字符串
       defaultRowFromColumns[column.field] = ''
     }
-    // 其他类型默认值为 undefined，不需要设置
   })
   
-  // 如果提供了 createDefaultRow 函数，先合并它的返回值（向后兼容）
-  // 然后覆盖列配置中的默认值
-  const createDefaultRowResult = props.createDefaultRow()
-  
-  // 深拷贝 createDefaultRowResult 中的数组，避免多行共享引用
-  const clonedResult: any = {}
-  for (const key in createDefaultRowResult) {
-    const value = createDefaultRowResult[key]
-    if (Array.isArray(value)) {
-      clonedResult[key] = [...value]
-    } else if (typeof value === 'object' && value !== null) {
-      clonedResult[key] = { ...value }
-    } else {
-      clonedResult[key] = value
-    }
-  }
-  
   return {
-    ...clonedResult,
+    ...deepCloneObject(props.createDefaultRow()),
     ...defaultRowFromColumns
   }
 }
@@ -235,16 +239,10 @@ const pendingInputValue = ref<{ rowIndex: number; field: string; value: string }
 const tableRef = ref<InstanceType<typeof ElTable>>()
 
 // ==================== ImagePlus 引用管理 ====================
-/**
- * ImagePlus 组件引用映射
- * 使用非响应式 Map 避免在 ref 回调中触发响应式更新导致的 parentNode 错误
- */
+/** ImagePlus 组件引用映射 */
 const imagePlusRefsMap = new Map<string, InstanceType<typeof ImagePlus>>()
 
-/**
- * 设置 ImagePlus 组件引用
- * 使用 setTimeout 延迟执行，确保 DOM 更新完成
- */
+/** 设置 ImagePlus 组件引用 */
 const setImagePlusRef = (rowIndex: number, field: string, el: any) => {
   setTimeout(() => {
     const refKey = `${rowIndex}-${field}`
@@ -252,21 +250,16 @@ const setImagePlusRef = (rowIndex: number, field: string, el: any) => {
   }, 0)
 }
 
-/**
- * 上传指定行的图片字段
- */
+/** 上传指定行的图片字段 */
 const uploadRowImageField = async (rowIndex: number, field: string): Promise<void> => {
   const refKey = `${rowIndex}-${field}`
   const imagePlusRef = imagePlusRefsMap.get(refKey)
-  
   if (imagePlusRef?.uploadPendingImages) {
     await imagePlusRef.uploadPendingImages()
   }
 }
 
-/**
- * 上传所有行的图片字段
- */
+/** 上传所有行的图片字段 */
 const uploadAllRowImages = async (): Promise<void> => {
   const imageColumns = props.columns.filter(col => col.type === 'image')
   if (!imageColumns.length) return
@@ -545,50 +538,11 @@ const save = async (): Promise<void> => {
             }
             
             // 更新表格中的数据（完全深拷贝以避免引用共享）
-            // 创建新的行对象，确保所有数组/对象字段都是深拷贝
-            const updatedRow: any = {}
-            
-            // 先复制 currentRow 的所有字段（深拷贝数组和对象）
-            for (const key in currentRow) {
-              const column = props.columns.find(col => col.field === key)
-              const value = currentRow[key]
-              
-              if (column?.type === 'image' && Array.isArray(value)) {
-                // 图片字段：深拷贝数组
-                updatedRow[key] = [...value]
-              } else if (Array.isArray(value)) {
-                // 其他数组字段：深拷贝
-                updatedRow[key] = [...value]
-              } else if (typeof value === 'object' && value !== null) {
-                // 对象字段：浅拷贝（避免破坏复杂对象）
-                updatedRow[key] = { ...value }
-              } else {
-                // 基本类型：直接复制
-                updatedRow[key] = value
-              }
+            const updatedRow = {
+              ...deepCloneObject(currentRow),
+              ...deepCloneObject(updatedDetail)
             }
             
-            // 再用 updatedDetail 的字段覆盖（同样深拷贝）
-            for (const key in updatedDetail) {
-              const column = props.columns.find(col => col.field === key)
-              const value = updatedDetail[key]
-              
-              if (column?.type === 'image' && Array.isArray(value)) {
-                // 图片字段：深拷贝数组
-                updatedRow[key] = [...value]
-              } else if (Array.isArray(value)) {
-                // 其他数组字段：深拷贝
-                updatedRow[key] = [...value]
-              } else if (typeof value === 'object' && value !== null) {
-                // 对象字段：浅拷贝
-                updatedRow[key] = { ...value }
-              } else {
-                // 基本类型：直接复制
-                updatedRow[key] = value
-              }
-            }
-            
-            // 更新 dataList，确保每行都是独立的对象
             dataList.value = dataList.value.map((row, idx) => 
               idx === index ? updatedRow : row
             )
@@ -600,96 +554,44 @@ const save = async (): Promise<void> => {
             // 更新原始数据（使用规范化后的数据）
             originalData.value[index] = JSON.parse(JSON.stringify(dataList.value[index]))
           } else {
-            // 如果没有获取到详情，需要清理图片标记并更新原始数据
-            // 创建新的行对象，避免引用共享
+            // 如果没有获取到详情，清理图片标记并更新原始数据
             currentData = dataList.value
             const currentRow = currentData[index]
-            const cleanedRow: any = {}
+            const cleanedRow = deepCloneObject(currentRow)
             
-            // 深拷贝所有字段
-            for (const key in currentRow) {
-              const column = props.columns.find(col => col.field === key)
-              const value = currentRow[key]
-              
-              if (column?.type === 'image' && Array.isArray(value)) {
-                // 图片字段：过滤并清理状态标记
-                cleanedRow[key] = value
-                  .filter((item: any) => {
-                    if (typeof item !== 'string') return false
-                    if (item.includes('?delete')) return false
-                    return true
-                  })
-                  .map((item: any) => {
-                    if (typeof item === 'string') {
-                      return item.replace(/\?(original|add|delete)/, '')
-                    }
-                    return item
-                  })
-              } else if (Array.isArray(value)) {
-                // 其他数组：深拷贝
-                cleanedRow[key] = [...value]
-              } else if (typeof value === 'object' && value !== null) {
-                // 对象：浅拷贝
-                cleanedRow[key] = { ...value }
-              } else {
-                // 基本类型：直接复制
-                cleanedRow[key] = value
+            // 清理图片字段的状态标记
+            const imageColumns = props.columns.filter(col => col.type === 'image')
+            imageColumns.forEach(column => {
+              if (Array.isArray(cleanedRow[column.field])) {
+                cleanedRow[column.field] = cleanImageArray(cleanedRow[column.field])
               }
-            }
+            })
             
-            // 更新 dataList
             dataList.value = dataList.value.map((row, idx) => 
               idx === index ? cleanedRow : row
             )
             
-            // 更新原始数据
             await nextTick()
             originalData.value[index] = JSON.parse(JSON.stringify(dataList.value[index]))
           }
         } else {
-          // 如果没有 id，需要清理图片标记并更新原始数据
-          // 创建新的行对象，避免引用共享
+          // 如果没有 id，清理图片标记并更新原始数据
           currentData = dataList.value
           const currentRow = currentData[index]
-          const cleanedRow: any = {}
+          const cleanedRow = deepCloneObject(currentRow)
           
-          // 深拷贝所有字段
-          for (const key in currentRow) {
-            const column = props.columns.find(col => col.field === key)
-            const value = currentRow[key]
-            
-            if (column?.type === 'image' && Array.isArray(value)) {
-              // 图片字段：过滤并清理状态标记
-              cleanedRow[key] = value
-                .filter((item: any) => {
-                  if (typeof item !== 'string') return false
-                  if (item.includes('?delete')) return false
-                  return true
-                })
-                .map((item: any) => {
-                  if (typeof item === 'string') {
-                    return item.replace(/\?(original|add|delete)/, '')
-                  }
-                  return item
-                })
-            } else if (Array.isArray(value)) {
-              // 其他数组：深拷贝
-              cleanedRow[key] = [...value]
-            } else if (typeof value === 'object' && value !== null) {
-              // 对象：浅拷贝
-              cleanedRow[key] = { ...value }
-            } else {
-              // 基本类型：直接复制
-              cleanedRow[key] = value
+          // 清理图片字段的状态标记
+          const imageColumns = props.columns.filter(col => col.type === 'image')
+          imageColumns.forEach(column => {
+            if (Array.isArray(cleanedRow[column.field])) {
+              cleanedRow[column.field] = cleanImageArray(cleanedRow[column.field])
             }
-          }
+          })
           
-          // 更新 dataList
           dataList.value = dataList.value.map((row, idx) => 
             idx === index ? cleanedRow : row
           )
           
-          // 更新原始数据
           await nextTick()
           originalData.value[index] = JSON.parse(JSON.stringify(dataList.value[index]))
         }
@@ -3413,7 +3315,7 @@ defineExpose({
     width: 100% !important;
     min-width: 100% !important;
     max-width: 100% !important;
-    height: 100% !important; // 充满父容器
+    height: 100% !important;
     min-height: 32px !important;
     padding-left: 0 !important;
     padding-right: 0 !important;
@@ -3421,44 +3323,37 @@ defineExpose({
     padding-bottom: 0 !important;
     margin: 0 !important;
     box-sizing: border-box !important;
-    // 使用 flex 布局实现纵向居中
     display: flex !important;
-    align-items: center !important; // 纵向居中
+    align-items: center !important;
     border: none !important;
     position: relative !important;
   }
   
-  // 标题栏 .cell 包装器 - 确保没有额外 padding
-  // 使用多重选择器增强优先级
+  // 标题栏 .cell 包装器
   :deep(.el-table__header-wrapper .el-table__header .el-table__cell .cell),
   :deep(.el-table__header .el-table__cell .cell) {
     padding-left: 0 !important;
     padding-right: 0 !important;
     padding-top: 0 !important;
     padding-bottom: 0 !important;
-    justify-content: center; // 文本居中
+    justify-content: center;
     
-    // 标题栏内的 span - 使用 flex 占满宽度
     span {
       padding: 0 !important;
       margin: 0 !important;
-      flex: 1; // 占满 flex 容器的宽度
-      min-width: 0; // 允许缩小
+      flex: 1;
+      min-width: 0;
       line-height: 1.2;
       text-align: center;
-      word-break: break-word; // 必要时允许单词内换行
+      word-break: break-word;
     }
   }
   
   .excel-cell {
-    // 宽度与上层div一样宽（100%）
     width: 100% !important;
     min-width: 100% !important;
     max-width: 100% !important;
-    padding-top: 2px !important;
-    padding-right: 5px !important;
-    padding-bottom: 2px !important;
-    padding-left: 5px !important;
+    padding: 2px 5px !important;
     cursor: cell;
     outline: none;
     box-sizing: border-box !important;
