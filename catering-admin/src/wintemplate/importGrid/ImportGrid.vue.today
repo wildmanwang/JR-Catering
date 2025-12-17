@@ -2689,11 +2689,6 @@ defineExpose({
 .remove-border-bg() {
   border: none !important;
   border-width: 0 !important;
-  border-top: none !important;
-  border-right: none !important;
-  border-bottom: none !important;
-  border-left: none !important;
-  border-radius: 0 !important;
   box-shadow: none !important;
   outline: none !important;
   background: transparent !important;
@@ -2719,8 +2714,6 @@ defineExpose({
   min-width: calc(100% + 2px) !important;
   max-width: calc(100% + 2px) !important;
   height: 100% !important;
-  min-height: 100% !important;
-  max-height: 100% !important;
 }
 
 // ==================== 基础布局样式 ====================
@@ -2934,6 +2927,26 @@ defineExpose({
     }
   }
   
+  // ==================== 编辑组件通用样式 ====================
+  // 所有编辑组件的通用样式：绝对定位填充单元格 + 透明背景
+  .excel-edit-input,
+  .excel-edit-select,
+  .excel-edit-number,
+  .excel-edit-textarea {
+    .absolute-fill-cell();
+    min-height: 32px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: block !important;
+    box-sizing: border-box !important;
+    z-index: 10 !important;
+    
+    // 所有子元素移除边框和背景
+    * {
+      .remove-border-bg();
+    }
+  }
+  
   // ==================== ElSelect 下拉框 ====================
   .excel-edit-select {
     overflow: visible !important;
@@ -2991,9 +3004,6 @@ defineExpose({
       .fill-container();
       .remove-border-bg();
       padding: 0 4px !important;
-      // 垂直居中对齐
-      display: flex !important;
-      align-items: center !important;
       
       &:hover, &:focus, &:focus-within, &.is-focus {
         .remove-border-bg();
@@ -3004,10 +3014,6 @@ defineExpose({
       .fill-container();
       .remove-border-bg();
       padding: 0 !important;
-      // 垂直居中对齐
-      line-height: normal !important;
-      display: flex !important;
-      align-items: center !important;
       
       &:hover, &:focus {
         .remove-border-bg();
@@ -3038,10 +3044,6 @@ defineExpose({
   
   // ==================== 多行文本框 (Textarea) ====================
   .excel-edit-textarea {
-    .absolute-fill-cell();
-    display: block !important;
-    z-index: 10 !important;
-    
     :deep(.el-textarea) {
       .absolute-fill-cell();
       display: block !important;
@@ -3052,12 +3054,11 @@ defineExpose({
     :deep(.el-textarea__inner) {
       .absolute-fill-cell();
       .remove-border-bg();
-      padding: 4px 5px !important; // 恢复原来的边距
+      padding: 4px 5px !important;
       margin: 0 !important;
       resize: none !important;
       overflow-y: auto !important;
       overflow-x: hidden !important;
-      box-sizing: border-box !important;
       
       &:hover, &:focus, &:active {
         .remove-border-bg();
@@ -3071,12 +3072,15 @@ defineExpose({
     overflow: visible !important;
     position: relative !important; // td 作为定位容器
     
-    // 编辑模式下 .cell 完全不影响布局，编辑组件直接相对于 td 定位
+    // 确保编辑模式下 .cell 不影响编辑组件定位
     :deep(.cell) {
+      .fill-container();
       padding: 0 !important;
       margin: 0 !important;
-      position: static !important; // 不作为定位容器
-      // 不设置任何高度，让编辑组件直接相对于 td 定位
+      display: block !important;
+      // 编辑模式下移除 position: relative，让编辑组件相对于 td 定位
+      position: static !important;
+      min-height: 32px !important;
     }
   }
   
@@ -3181,20 +3185,354 @@ defineExpose({
   }
   
   .image-item-edit {
-    width: 100%;
-    height: 100%;
-    display: block;
-    border-radius: 4px;
-    overflow: hidden;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    transition: all 0.3s ease;
+          border-bottom: none !important;
+          border-left: none !important;
+          background: transparent !important;
+          background-color: transparent !important;
+          box-shadow: none !important;
+          outline: none !important;
+        }
+      }
+      
+      :deep(.el-input__wrapper) {
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        height: 100% !important;
+        min-height: 100% !important;
+        max-height: 100% !important;
+        border: none !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        box-shadow: none !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: flex-start !important;
+        box-sizing: border-box !important;
+        outline: none !important;
+        
+        &:hover,
+        &:focus,
+        &:focus-within {
+          border: none !important;
+          background: transparent !important;
+          background-color: transparent !important;
+          box-shadow: none !important;
+          outline: none !important;
+        }
+      }
+      
+      :deep(.el-input__inner) {
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        height: 100% !important;
+        min-height: 100% !important;
+        max-height: 100% !important;
+        border: none !important;
+        border-width: 0 !important;
+        border-top: none !important;
+        border-right: none !important;
+        border-bottom: none !important;
+        border-left: none !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        line-height: inherit !important;
+        display: flex !important;
+        align-items: center !important;
+        box-sizing: border-box !important;
+        text-align: left !important;
+        outline: none !important;
+        
+        &:hover,
+        &:focus {
+          border: none !important;
+          border-width: 0 !important;
+          outline: none !important;
+        }
+      }
+      
+      :deep(.el-select__placeholder),
+      :deep(.el-select__selected-item) {
+        line-height: inherit !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: flex-start !important;
+        height: 100% !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
+        text-align: left !important;
+      }
+      
+      :deep(.el-select__caret) {
+        display: flex !important;
+        align-items: center !important;
+        flex-shrink: 0 !important;
+      }
+    }
+    
+    // ElInput 和 ElInputNumber 文本/数字输入框样式（独立设置，不影响 ElSelect）
+    // wrapper 背景透明，完全填充单元格而不会遮挡边框
+    .excel-edit-input {
+      position: absolute !important;
+      top: 0 !important;
+      left: -1px !important;
+      right: -1px !important;
+      bottom: 0 !important;
+      width: calc(100% + 2px) !important;
+      min-width: calc(100% + 2px) !important;
+      max-width: calc(100% + 2px) !important;
+      height: 100% !important;
+      display: block !important;
+      z-index: 10 !important;
+      
+      // 确保 Element Plus 组件的根元素（直接子元素）也有正确的宽度
+      > * {
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+      }
+      
+      // ElInput（文本输入框）样式
+      :deep(.el-input) {
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        height: 100% !important;
+        display: block !important;
+        box-sizing: border-box !important;
+      }
+      
+      :deep(.el-input__wrapper) {
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        height: 100% !important;
+        border: none !important;
+        border-width: 0 !important;
+        border-top: none !important;
+        border-right: none !important;
+        border-bottom: none !important;
+        border-left: none !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        box-shadow: none !important;
+        border-radius: 0 !important;
+        padding: 0 4px !important;
+        margin: 0 !important;
+        box-sizing: border-box !important;
+        outline: none !important;
+        
+        &:hover,
+        &:focus,
+        &:focus-within,
+        &.is-focus,
+        &.is-hover {
+          border: none !important;
+          border-width: 0 !important;
+          border-top: none !important;
+          border-right: none !important;
+          border-bottom: none !important;
+          border-left: none !important;
+          background: transparent !important;
+          background-color: transparent !important;
+          box-shadow: none !important;
+          outline: none !important;
+        }
+      }
+      
+      :deep(.el-input__inner) {
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        height: 100% !important;
+        border: none !important;
+        border-width: 0 !important;
+        border-top: none !important;
+        border-right: none !important;
+        border-bottom: none !important;
+        border-left: none !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        text-align: left !important;
+        box-sizing: border-box !important;
+        outline: none !important;
+        
+        &:hover,
+        &:focus {
+          border: none !important;
+          border-width: 0 !important;
+          background: transparent !important;
+          background-color: transparent !important;
+          outline: none !important;
+        }
+      }
+      
+      // 所有 input 元素都要透明
+      :deep(input),
+      :deep(input:hover),
+      :deep(input:focus),
+      :deep(textarea),
+      :deep(textarea:hover),
+      :deep(textarea:focus) {
+        background: transparent !important;
+        background-color: transparent !important;
+      }
+      
+      // ElInputNumber（数字输入框）样式
+      :deep(.el-input-number) {
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        height: 100% !important;
+        min-height: 32px !important;
+        display: flex !important;
+        align-items: stretch !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        text-align: left !important;
+        box-sizing: border-box !important;
+      }
+      
+      :deep(.el-input-number__input) {
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        height: 100% !important;
+        flex: 1 !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        text-align: left !important;
+        box-sizing: border-box !important;
+      }
+      
+      :deep(.el-input-number__input-wrapper) {
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        height: 100% !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        border: none !important;
+        border-width: 0 !important;
+        border-top: none !important;
+        border-right: none !important;
+        border-bottom: none !important;
+        border-left: none !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        box-shadow: none !important;
+        border-radius: 0 !important;
+        padding: 0 4px !important;
+        margin: 0 !important;
+        text-align: left !important;
+        box-sizing: border-box !important;
+        outline: none !important;
+        
+        &:hover,
+        &:focus,
+        &:focus-within,
+        &.is-focus,
+        &.is-hover {
+          border: none !important;
+          border-width: 0 !important;
+          border-top: none !important;
+          border-right: none !important;
+          border-bottom: none !important;
+          border-left: none !important;
+          background: transparent !important;
+          background-color: transparent !important;
+          box-shadow: none !important;
+          outline: none !important;
+        }
+      }
+      
+      // ElInputNumber 内部的 input 元素样式
+      :deep(.el-input-number__input input) {
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        height: 100% !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        color: inherit !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        text-align: left !important;
+        box-sizing: border-box !important;
+        outline: none !important;
+        
+        &:hover,
+        &:focus {
+          border: none !important;
+          background: transparent !important;
+          background-color: transparent !important;
+          outline: none !important;
+        }
+      }
+      
+      // 覆盖 Element Plus 默认的右对齐样式
+      :deep(.el-input-number__input input[type="text"]),
+      :deep(.el-input-number__input input[type="number"]) {
+        text-align: left !important;
+      }
+    }
   }
   
-  .image-item-edit:hover {
-    transform: scale(1.05);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  // ==================== 图片列样式 ====================
+  // 图片列始终显示编辑模式（类似 BaseFree.vue 的新增/修改模式）
+  // image列随内容增长自动伸长，以容纳内容
+  .excel-edit-image {
+    position: relative !important;
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: none !important; // 允许超出，随内容增长
+    height: auto !important; // 改为 auto，让高度由内容决定
+    min-height: auto !important; // 移除固定的 min-height
+    margin: 0 !important;
+    padding: 4px !important;
+    display: block !important;
+    box-sizing: border-box !important;
+    overflow: visible !important; // 改为 visible，不显示滚动条，让内容自然撑开
+    background: transparent !important;
   }
   
+  // 确保 image 列的单元格可以自动伸长
+  // 使用更兼容的方式，通过类名选择器
+  // 如果行包含图片编辑组件，允许行自动伸长
+  :deep(.el-table__body tbody tr:has(.excel-edit-image)) {
+    height: auto !important;
+    max-height: none !important;
+  }
+  
+  .el-table__cell {
+    // 如果单元格包含图片编辑组件，允许自动伸长
+    &:has(.excel-edit-image) {
+      height: auto !important;
+      max-height: none !important;
+      min-height: 32px !important;
+      white-space: normal !important;
+    }
+  }
+  
+  // 兼容性处理：直接为包含图片编辑的单元格设置样式
+  :deep(.el-table__cell) {
+    .excel-edit-image {
+      // 确保图片容器可以超出单元格宽度
+      max-width: none !important;
+    }
+  }
+  
+  // ==================== Action 列样式 ====================
   .action-delete {
     display: flex;
     align-items: center;
@@ -3463,168 +3801,25 @@ defineExpose({
   // 编辑模式下，让 .cell 不作为定位容器，编辑组件直接相对于 td 定位
   tbody .el-table__cell.editing-cell {
     position: relative !important; // td 作为定位容器
-    // 移除 .cell 的高度限制，让它完全不影响布局
-    // 编辑组件直接相对于 td 绝对定位，不依赖 .cell 的高度
+    
+    .cell {
+      position: static !important; // .cell 不作为定位容器
+    }
   }
 }
 
 // ==================== 全局样式：多行文本单元格样式 ====================
-// 包含多行文本的单元格，限制高度防止撑大行高
+// 包含多行文本的单元格，由 -webkit-line-clamp 自动控制高度和省略号
 .excel-table {
   .el-table__cell:has(.cell-text-multiline) {
-    vertical-align: top !important; // 顶部对齐，避免文本被裁剪
+    vertical-align: middle !important; // 也使用居中对齐
     
-    // 在父容器上限制高度，防止行高被撑大
+    // 在父容器上限制高度，而不是在 .cell-text-multiline 上
+    // 这样 line-clamp 可以正常工作，同时防止行高被撑大
     .cell {
-      max-height: 4.8em !important; // 约 3 行的高度 (line-height: 1.5)
+      max-height: 4.8em !important; // 约 3.2 行的高度
       overflow: hidden !important;
-      // 使用 flex 布局，但从顶部开始显示（不居中），避免文本被从上下裁剪
-      display: flex !important;
-      align-items: flex-start !important; // 顶部对齐，文本从第一行完整显示
     }
-  }
-}
-
-// ==================== 全局样式：强制移除编辑组件边框 ====================
-// 编辑模式下的所有 Element Plus 输入组件，强制移除边框和背景
-.excel-table {
-  // 所有编辑组件的 wrapper
-  .el-input__wrapper,
-  .el-select__wrapper,
-  .el-input-number__wrapper {
-    border: none !important;
-    border-width: 0 !important;
-    border-top: none !important;
-    border-right: none !important;
-    border-bottom: none !important;
-    border-left: none !important;
-    border-radius: 0 !important;
-    box-shadow: none !important;
-    outline: none !important;
-    background: transparent !important;
-    background-color: transparent !important;
-    // 垂直居中对齐
-    display: flex !important;
-    align-items: center !important;
-    
-    &:hover,
-    &:focus,
-    &:focus-within,
-    &.is-focus,
-    &.is-hover {
-      border: none !important;
-      border-width: 0 !important;
-      border-top: none !important;
-      border-right: none !important;
-      border-bottom: none !important;
-      border-left: none !important;
-      box-shadow: none !important;
-      outline: none !important;
-      background: transparent !important;
-      background-color: transparent !important;
-    }
-  }
-  
-  // .el-textarea 组件本身，强制充满容器
-  .el-textarea {
-    width: 100% !important;
-    height: 100% !important;
-    min-height: 100% !important;
-    max-height: 100% !important;
-    display: block !important;
-  }
-  
-  // textarea 单独处理，不需要 flex 居中
-  .el-textarea__inner {
-    border: none !important;
-    border-width: 0 !important;
-    border-top: none !important;
-    border-right: none !important;
-    border-bottom: none !important;
-    border-left: none !important;
-    border-radius: 0 !important;
-    box-shadow: none !important;
-    outline: none !important;
-    background: transparent !important;
-    background-color: transparent !important;
-    padding: 4px 5px !important; // 恢复原来的边距
-    box-sizing: border-box !important;
-    width: 100% !important;
-    height: 100% !important;
-    min-height: 100% !important;
-    max-height: 100% !important;
-    
-    &:hover,
-    &:focus,
-    &:focus-within,
-    &.is-focus,
-    &.is-hover {
-      border: none !important;
-      border-width: 0 !important;
-      box-shadow: none !important;
-      outline: none !important;
-      background: transparent !important;
-      background-color: transparent !important;
-    }
-  }
-  
-  // 所有 input 元素（单行输入框）
-  .el-input__inner,
-  input:not([type="textarea"]) {
-    border: none !important;
-    border-width: 0 !important;
-    border-top: none !important;
-    border-right: none !important;
-    border-bottom: none !important;
-    border-left: none !important;
-    box-shadow: none !important;
-    outline: none !important;
-    background: transparent !important;
-    background-color: transparent !important;
-    // 垂直居中对齐
-    line-height: normal !important;
-    
-    &:hover,
-    &:focus,
-    &:active {
-      border: none !important;
-      border-width: 0 !important;
-      box-shadow: none !important;
-      outline: none !important;
-      background: transparent !important;
-      background-color: transparent !important;
-    }
-  }
-  
-  // textarea 单独处理（多行文本框）
-  textarea {
-    border: none !important;
-    border-width: 0 !important;
-    box-shadow: none !important;
-    outline: none !important;
-    background: transparent !important;
-    background-color: transparent !important;
-    
-    &:hover,
-    &:focus,
-    &:active {
-      border: none !important;
-      border-width: 0 !important;
-      box-shadow: none !important;
-      outline: none !important;
-      background: transparent !important;
-      background-color: transparent !important;
-    }
-  }
-  
-  // ElSelect 组件
-  .el-select,
-  .el-input,
-  .el-input-number,
-  .el-textarea {
-    border: none !important;
-    box-shadow: none !important;
-    outline: none !important;
   }
 }
 </style>
