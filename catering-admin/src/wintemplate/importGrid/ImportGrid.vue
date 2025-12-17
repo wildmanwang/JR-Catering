@@ -160,9 +160,16 @@ const getDefaultRow = (): any => {
   props.columns.forEach(column => {
     if (column.value !== undefined) {
       // 如果列配置中有 value，使用该值（与 FormSchema 保持一致）
-      defaultRowFromColumns[column.field] = column.value
+      // 深拷贝数组和对象，避免多行共享引用
+      if (Array.isArray(column.value)) {
+        defaultRowFromColumns[column.field] = [...column.value]
+      } else if (typeof column.value === 'object' && column.value !== null) {
+        defaultRowFromColumns[column.field] = { ...column.value }
+      } else {
+        defaultRowFromColumns[column.field] = column.value
+      }
     } else if (column.type === 'image') {
-      // 图片类型默认值为空数组
+      // 图片类型默认值为空数组（每次创建新数组）
       defaultRowFromColumns[column.field] = []
     } else if (column.type === 'text' && column.required) {
       // 必填的文本类型默认值为空字符串
@@ -174,8 +181,22 @@ const getDefaultRow = (): any => {
   // 如果提供了 createDefaultRow 函数，先合并它的返回值（向后兼容）
   // 然后覆盖列配置中的默认值
   const createDefaultRowResult = props.createDefaultRow()
+  
+  // 深拷贝 createDefaultRowResult 中的数组，避免多行共享引用
+  const clonedResult: any = {}
+  for (const key in createDefaultRowResult) {
+    const value = createDefaultRowResult[key]
+    if (Array.isArray(value)) {
+      clonedResult[key] = [...value]
+    } else if (typeof value === 'object' && value !== null) {
+      clonedResult[key] = { ...value }
+    } else {
+      clonedResult[key] = value
+    }
+  }
+  
   return {
-    ...createDefaultRowResult,
+    ...clonedResult,
     ...defaultRowFromColumns
   }
 }
@@ -283,14 +304,33 @@ const defaultIsDataModified = (currentRow: any, originalRow: any): boolean => {
       const currentImages = currentRow[field] || []
       const originalImages = originalRow[field] || []
       
-      // 如果长度不同，肯定有变化
-      if (currentImages.length !== originalImages.length) {
+      // 检查是否有新上传的图片（对象格式）
+      const hasNewUploads = currentImages.some((item: any) => 
+        typeof item === 'object' && item !== null && Array.isArray(item)
+      )
+      
+      // 如果有新上传的图片，说明有变化
+      if (hasNewUploads) {
         return true
       }
       
-      // 比较每个元素（包括顺序），因为排序变化也应该被检测到
-      for (let i = 0; i < currentImages.length; i++) {
-        if (currentImages[i] !== originalImages[i]) {
+      // 过滤掉删除标记的图片，只比较有效图片
+      const currentValidImages = currentImages.filter((item: any) => 
+        typeof item === 'string' && !item.includes('?delete')
+      )
+      const originalValidImages = originalImages.filter((item: any) => 
+        typeof item === 'string' && !item.includes('?delete')
+      )
+      
+      // 如果长度不同，肯定有变化
+      if (currentValidImages.length !== originalValidImages.length) {
+        return true
+      }
+      
+      // 比较每个元素（包括顺序和标记），因为排序变化也应该被检测到
+      // 保存后 originalData 应该已经是规范化后的格式，可以直接比较
+      for (let i = 0; i < currentValidImages.length; i++) {
+        if (currentValidImages[i] !== originalValidImages[i]) {
           return true
         }
       }
@@ -457,7 +497,7 @@ const save = async (): Promise<void> => {
       
       try {
         // 重新获取行数据（因为图片上传后数据已更新）
-        const currentData = dataList.value
+        let currentData = dataList.value
         const updatedRow = currentData[index] || row
         
         // 深拷贝行数据
@@ -485,7 +525,7 @@ const save = async (): Promise<void> => {
           throw new Error(result.message || '保存失败')
         }
         
-        // 保存成功后，从数据库重新获取该条记录
+        // 从数据库重新获取该条记录
         const id = result.id || (isNew ? (result.data?.id || (result.data && typeof result.data === 'object' && 'id' in result.data ? result.data.id : null)) : row.id)
         
         if (id) {
@@ -495,7 +535,7 @@ const save = async (): Promise<void> => {
             : await config.onGetDetail!(id)
           
           if (detail) {
-            const currentData = dataList.value
+            currentData = dataList.value
             const currentRow = currentData[index]
             
             // 数据后处理
@@ -504,17 +544,154 @@ const save = async (): Promise<void> => {
               updatedDetail = config.postprocessData(detail, currentRow)
             }
             
-            // 更新表格中的数据
-            currentData[index] = {
-              ...currentRow,
-              ...updatedDetail
+            // 更新表格中的数据（完全深拷贝以避免引用共享）
+            // 创建新的行对象，确保所有数组/对象字段都是深拷贝
+            const updatedRow: any = {}
+            
+            // 先复制 currentRow 的所有字段（深拷贝数组和对象）
+            for (const key in currentRow) {
+              const column = props.columns.find(col => col.field === key)
+              const value = currentRow[key]
+              
+              if (column?.type === 'image' && Array.isArray(value)) {
+                // 图片字段：深拷贝数组
+                updatedRow[key] = [...value]
+              } else if (Array.isArray(value)) {
+                // 其他数组字段：深拷贝
+                updatedRow[key] = [...value]
+              } else if (typeof value === 'object' && value !== null) {
+                // 对象字段：浅拷贝（避免破坏复杂对象）
+                updatedRow[key] = { ...value }
+              } else {
+                // 基本类型：直接复制
+                updatedRow[key] = value
+              }
             }
             
-            dataList.value = [...currentData]
+            // 再用 updatedDetail 的字段覆盖（同样深拷贝）
+            for (const key in updatedDetail) {
+              const column = props.columns.find(col => col.field === key)
+              const value = updatedDetail[key]
+              
+              if (column?.type === 'image' && Array.isArray(value)) {
+                // 图片字段：深拷贝数组
+                updatedRow[key] = [...value]
+              } else if (Array.isArray(value)) {
+                // 其他数组字段：深拷贝
+                updatedRow[key] = [...value]
+              } else if (typeof value === 'object' && value !== null) {
+                // 对象字段：浅拷贝
+                updatedRow[key] = { ...value }
+              } else {
+                // 基本类型：直接复制
+                updatedRow[key] = value
+              }
+            }
+            
+            // 更新 dataList，确保每行都是独立的对象
+            dataList.value = dataList.value.map((row, idx) => 
+              idx === index ? updatedRow : row
+            )
+            
+            // 等待 ImagePlus 组件规范化数据后再更新原始数据
+            await nextTick()
+            await nextTick() // 双重 nextTick 确保 ImagePlus 完成规范化
+            
+            // 更新原始数据（使用规范化后的数据）
+            originalData.value[index] = JSON.parse(JSON.stringify(dataList.value[index]))
+          } else {
+            // 如果没有获取到详情，需要清理图片标记并更新原始数据
+            // 创建新的行对象，避免引用共享
+            currentData = dataList.value
+            const currentRow = currentData[index]
+            const cleanedRow: any = {}
+            
+            // 深拷贝所有字段
+            for (const key in currentRow) {
+              const column = props.columns.find(col => col.field === key)
+              const value = currentRow[key]
+              
+              if (column?.type === 'image' && Array.isArray(value)) {
+                // 图片字段：过滤并清理状态标记
+                cleanedRow[key] = value
+                  .filter((item: any) => {
+                    if (typeof item !== 'string') return false
+                    if (item.includes('?delete')) return false
+                    return true
+                  })
+                  .map((item: any) => {
+                    if (typeof item === 'string') {
+                      return item.replace(/\?(original|add|delete)/, '')
+                    }
+                    return item
+                  })
+              } else if (Array.isArray(value)) {
+                // 其他数组：深拷贝
+                cleanedRow[key] = [...value]
+              } else if (typeof value === 'object' && value !== null) {
+                // 对象：浅拷贝
+                cleanedRow[key] = { ...value }
+              } else {
+                // 基本类型：直接复制
+                cleanedRow[key] = value
+              }
+            }
+            
+            // 更新 dataList
+            dataList.value = dataList.value.map((row, idx) => 
+              idx === index ? cleanedRow : row
+            )
             
             // 更新原始数据
-            originalData.value[index] = JSON.parse(JSON.stringify(currentData[index]))
+            await nextTick()
+            originalData.value[index] = JSON.parse(JSON.stringify(dataList.value[index]))
           }
+        } else {
+          // 如果没有 id，需要清理图片标记并更新原始数据
+          // 创建新的行对象，避免引用共享
+          currentData = dataList.value
+          const currentRow = currentData[index]
+          const cleanedRow: any = {}
+          
+          // 深拷贝所有字段
+          for (const key in currentRow) {
+            const column = props.columns.find(col => col.field === key)
+            const value = currentRow[key]
+            
+            if (column?.type === 'image' && Array.isArray(value)) {
+              // 图片字段：过滤并清理状态标记
+              cleanedRow[key] = value
+                .filter((item: any) => {
+                  if (typeof item !== 'string') return false
+                  if (item.includes('?delete')) return false
+                  return true
+                })
+                .map((item: any) => {
+                  if (typeof item === 'string') {
+                    return item.replace(/\?(original|add|delete)/, '')
+                  }
+                  return item
+                })
+            } else if (Array.isArray(value)) {
+              // 其他数组：深拷贝
+              cleanedRow[key] = [...value]
+            } else if (typeof value === 'object' && value !== null) {
+              // 对象：浅拷贝
+              cleanedRow[key] = { ...value }
+            } else {
+              // 基本类型：直接复制
+              cleanedRow[key] = value
+            }
+          }
+          
+          // 更新 dataList
+          dataList.value = dataList.value.map((row, idx) => 
+            idx === index ? cleanedRow : row
+          )
+          
+          // 更新原始数据
+          await nextTick()
+          originalData.value[index] = JSON.parse(JSON.stringify(dataList.value[index]))
         }
         
         if (isNew) {
@@ -550,7 +727,10 @@ const save = async (): Promise<void> => {
       config.onSuccess?.(successMessage)
     }
     
-    // 清除当前行
+    // 清除编辑状态和当前行
+    if (editingCell.value) {
+      endEdit()
+    }
     setCurrentRow(null)
   } catch (err) {
     console.error('保存失败：', err)
@@ -803,8 +983,9 @@ const setCurrentRow = (rowIndex: number | null) => {
  */
 const savePageState = async () => {
   try {
+    // 深拷贝数据，避免保存引用
     const state = {
-      dataList: toRaw(dataList.value) || []
+      dataList: JSON.parse(JSON.stringify(toRaw(dataList.value) || []))
     }
     
     // 同时保存到内存（tagsViewStore）和 sessionStorage
@@ -828,8 +1009,8 @@ const restorePageState = () => {
     let state = tagsViewStore.getPageState(fullPath)
     
     if (state) {
-      // 内存中有状态，直接返回
-      return state
+      // 内存中有状态，深拷贝后返回（避免多次打开时共享引用）
+      return JSON.parse(JSON.stringify(state))
     }
     
     // 内存中没有，尝试从 sessionStorage 恢复（页面刷新场景）
@@ -838,7 +1019,8 @@ const restorePageState = () => {
       state = JSON.parse(cache)
       // 同步到 tagsViewStore（内存）
       tagsViewStore.setPageState(fullPath, state)
-      return state
+      // 深拷贝后返回
+      return JSON.parse(JSON.stringify(state))
     }
     
     return null
@@ -886,12 +1068,18 @@ const loadDataFromStorage = () => {
       const payload = JSON.parse(cache)
       if (Array.isArray(payload) && payload.length > 0) {
         // 合并默认行数据和传入数据
-        // 如果 mapRowData 只是做合并操作，可以直接使用传入的 row
-        const defaultRow = getDefaultRow()
-        dataList.value = payload.map(row => ({
-          ...defaultRow,
-          ...props.mapRowData(row)
-        }))
+        // 每行都需要创建独立的 defaultRow 以避免引用共享
+        dataList.value = payload.map(row => {
+          const defaultRow = getDefaultRow() // 每行独立创建
+          const mappedRow = props.mapRowData(row)
+          // 对mappedRow做完全深拷贝，避免任何引用共享
+          const deepClonedMappedRow = JSON.parse(JSON.stringify(mappedRow))
+          const mergedRow = {
+            ...defaultRow,
+            ...deepClonedMappedRow
+          }
+          return mergedRow
+        })
         // 初始化原始数据
         originalData.value = JSON.parse(JSON.stringify(dataList.value))
         emit('dataLoaded', dataList.value)
@@ -1260,6 +1448,30 @@ const handleCellDblclick = (row: any, column: any, cell?: HTMLElement, event?: M
 /**
  * 处理图片单元格点击
  */
+/**
+ * 获取 ImagePlus 组件的唯一key
+ */
+const getImagePlusKey = (rowIndex: number, field: string) => {
+  const row = dataList.value[rowIndex]
+  const rowId = row?.id || `temp-${rowIndex}`
+  return `image-${rowId}-${field}`
+}
+
+/**
+ * 处理 ImagePlus 组件的值更新
+ * 创建新行对象避免引用共享
+ */
+const handleImageUpdate = (rowIndex: number, field: string, val: any[]) => {
+  const newValue = Array.isArray(val) ? [...val] : val
+  
+  dataList.value = dataList.value.map((row, idx) => {
+    if (idx === rowIndex) {
+      return { ...row, [field]: newValue }
+    }
+    return row
+  })
+}
+
 const handleImageCellClick = (rowIndex: number, field: string, event: MouseEvent) => {
   // 如果点击的是正在编辑的其他单元格，先退出编辑模式
   if (editingCell.value) {
@@ -1618,24 +1830,119 @@ const getSelectedCellInfo = () => {
 }
 
 /**
+ * 处理原图片数组的删除标记
+ * 在粘贴新图片之前，需要将原图片标记为删除
+ */
+const markOriginalImagesAsDeleted = (imageArray: any[]): any[] => {
+  if (!Array.isArray(imageArray)) {
+    return []
+  }
+  
+  return imageArray
+    .map(item => {
+      // 如果是对象：直接删除（还没保存到后台，不需要保留）
+      if (typeof item === 'object' && item !== null) {
+        return null
+      }
+      
+      // 如果是字符串：处理标记
+      if (typeof item === 'string') {
+        if (item.includes('?original') || item.includes('?add')) {
+          // original 或 add → delete（标记为删除）
+          return item.replace(/\?(original|add)/, '?delete')
+        } else if (item.includes('?delete')) {
+          // delete → 保持不变
+          return item
+        } else {
+          // 没有标记的字符串（默认是 original），改为 delete
+          return item + '?delete'
+        }
+      }
+      
+      return item
+    })
+    .filter(item => item !== null) // 过滤掉对象元素
+}
+
+/**
+ * 处理图片数组的粘贴转换
+ * 将复制的图片数组转换为可粘贴的格式
+ * 注意：只复制粘贴字符串格式的图片 URL，不复制对象（内存预览）
+ */
+const processImageArrayForPaste = (imageArray: any[]): any[] => {
+  if (!Array.isArray(imageArray)) {
+    return []
+  }
+  
+  return imageArray
+    .filter(item => {
+      // 过滤掉对象格式（内存预览），只保留字符串格式的图片 URL
+      // 因为内存预览 URL 在其他行无法访问
+      if (typeof item === 'object' && item !== null) {
+        return false
+      }
+      // 过滤掉删除标记的图片
+      if (typeof item === 'string' && item.includes('?delete')) {
+        return false
+      }
+      return typeof item === 'string'
+    })
+    .map(item => {
+      // 处理字符串格式的图片标记
+      if (typeof item === 'string') {
+        // original → add（这样后台会新增这个图片）
+        if (item.includes('?original')) {
+          return item.replace('?original', '?add')
+        }
+        // add → 保持不变（后台会新增）
+        if (item.includes('?add')) {
+          return item
+        }
+        // 没有标记的，添加 ?add 标记
+        return item + '?add'
+      }
+      return item
+    })
+    .filter(Boolean) // 过滤掉空值
+}
+
+/**
  * 处理复制（Ctrl+C）
  */
 const handleCopy = (event: ClipboardEvent) => {
   // 优先处理编辑模式
   if (editingCell.value) {
     const { rowIndex, field } = editingCell.value
+    const col = props.columns.find(c => c.field === field)
     const value = dataList.value[rowIndex]?.[field]
+    
     if (value !== undefined && value !== null) {
-      const copyValue = String(value)
-      // 使用 clipboardData 设置剪贴板（必须在 copy 事件中同步设置）
-      if (event.clipboardData) {
-        event.clipboardData.setData('text/plain', copyValue)
+      event.preventDefault()
+      let copyValue = ''
+      let copyData = value
+      
+      // 根据列类型处理显示值和复制数据
+      if (col?.type === 'image') {
+        // 图片类型：只复制字符串格式的图片 URL，过滤掉对象（内存预览）
+        const imageArray = Array.isArray(value) ? value : []
+        const stringImages = imageArray.filter((item: any) => typeof item === 'string')
+        copyData = stringImages
+        copyValue = `${stringImages.length} image(s)`
+      } else {
+        copyValue = String(value)
       }
-      // 同时使用 Clipboard API 确保设置成功（异步，作为备用）
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(copyValue).catch(() => {
-          // Clipboard API 失败时静默处理（已通过 clipboardData 设置）
-        })
+      
+      // 使用 clipboardData 设置剪贴板
+      if (event.clipboardData) {
+        // text/plain: 用户可见的文本
+        event.clipboardData.setData('text/plain', copyValue)
+        // 自定义格式：包含类型和值的元数据
+        const cellData = {
+          type: col?.type || 'text',
+          value: copyData,
+          field: field
+        }
+        event.clipboardData.setData('application/x-importgrid-cell', JSON.stringify(cellData))
       }
     }
     return
@@ -1644,25 +1951,38 @@ const handleCopy = (event: ClipboardEvent) => {
   // 非编辑模式：从选中的单元格复制
   const cellInfo = getSelectedCellInfo()
   if (cellInfo) {
-    const { rowIndex, field } = cellInfo
+    event.preventDefault()
+    const { rowIndex, field, column } = cellInfo
     const value = dataList.value[rowIndex]?.[field]
     
     let copyValue = ''
+    let copyData = value
+    
     if (value !== undefined && value !== null) {
-      // 拷贝原始值（字符串形式），而不是格式化后的显示值
-      copyValue = String(value)
+      // 根据列类型处理显示值和复制数据
+      if (column.type === 'image') {
+        // 图片类型：只复制字符串格式的图片 URL，过滤掉对象（内存预览）
+        const imageArray = Array.isArray(value) ? value : []
+        const stringImages = imageArray.filter((item: any) => typeof item === 'string')
+        copyData = stringImages
+        copyValue = `${stringImages.length} image(s)`
+      } else {
+        // 其他类型：拷贝原始值（字符串形式）
+        copyValue = String(value)
+      }
     }
     
-    // 使用 clipboardData 设置剪贴板（必须在 copy 事件中同步设置）
+    // 使用 clipboardData 设置剪贴板
     if (event.clipboardData) {
+      // text/plain: 用户可见的文本
       event.clipboardData.setData('text/plain', copyValue)
-    }
-    
-    // 同时使用 Clipboard API 确保设置成功（异步，作为备用）
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(copyValue).catch(() => {
-        // Clipboard API 失败时静默处理（已通过 clipboardData 设置）
-      })
+      // 自定义格式：包含类型和值的元数据
+      const cellData = {
+        type: column.type || 'text',
+        value: copyData,
+        field: field
+      }
+      event.clipboardData.setData('application/x-importgrid-cell', JSON.stringify(cellData))
     }
   }
 }
@@ -1674,19 +1994,72 @@ const handlePaste = (event: ClipboardEvent) => {
   // 优先处理编辑模式
   if (editingCell.value) {
     event.preventDefault()
-    // 直接使用系统剪贴板
-    const pasteData = event.clipboardData?.getData('text/plain') || ''
-    if (pasteData) {
-      const { rowIndex, field } = editingCell.value
-      const col = props.columns.find(c => c.field === field)
-      
-      if (col?.type === 'number') {
-        const num = Number(pasteData)
-        if (!isNaN(num)) {
-          dataList.value[rowIndex][field] = num
-        }
+    const { rowIndex, field } = editingCell.value
+    const targetCol = props.columns.find(c => c.field === field)
+    
+    if (!targetCol || targetCol.editable === false) {
+      return
+    }
+    
+    // 尝试获取自定义格式的数据
+    const customData = event.clipboardData?.getData('application/x-importgrid-cell')
+    let cellData: any = null
+    
+    if (customData) {
+      try {
+        cellData = JSON.parse(customData)
+      } catch (e) {
+        // 解析失败，使用普通文本
+      }
+    }
+    
+    // 如果有自定义数据且类型匹配
+    if (cellData && cellData.type === targetCol.type) {
+      // 类型匹配，直接复制值
+      if (targetCol.type === 'image') {
+        // 图片类型：特殊处理数组
+        // 1. 先标记原图片为删除
+        const deletedImages = markOriginalImagesAsDeleted(dataList.value[rowIndex][field])
+        // 2. 处理要粘贴的新图片（确保深拷贝）
+        const newImages = processImageArrayForPaste(cellData.value)
+        // 3. 合并删除标记的原图片和新图片（创建全新数组）
+        const mergedImages = [...deletedImages, ...newImages]
+        
+        // 4. 更新行数据（创建新行对象以避免引用共享）
+        dataList.value = dataList.value.map((row, idx) => {
+          if (idx === rowIndex) {
+            return { ...row, [field]: mergedImages }
+          }
+          return row
+        })
       } else {
-        dataList.value[rowIndex][field] = pasteData
+        // 非图片类型，也创建新行对象
+        dataList.value = dataList.value.map((row, idx) => {
+          if (idx === rowIndex) {
+            return { ...row, [field]: cellData.value }
+          }
+          return row
+        })
+      }
+    } else if (cellData && cellData.type !== targetCol.type) {
+      // 类型不匹配，忽略粘贴
+      console.log('类型不匹配，忽略粘贴操作')
+      return
+    } else {
+      // 没有自定义数据，使用普通文本粘贴（兼容外部复制）
+      const pasteData = event.clipboardData?.getData('text/plain') || ''
+      if (pasteData) {
+        if (targetCol.type === 'number') {
+          const num = Number(pasteData)
+          if (!isNaN(num)) {
+            dataList.value[rowIndex][field] = num
+          }
+        } else if (targetCol.type === 'image') {
+          // 图片类型不支持从普通文本粘贴
+          console.log('图片列不支持从文本粘贴')
+        } else {
+          dataList.value[rowIndex][field] = pasteData
+        }
       }
     }
     return
@@ -1696,38 +2069,76 @@ const handlePaste = (event: ClipboardEvent) => {
   const cellInfo = getSelectedCellInfo()
   if (cellInfo) {
     event.preventDefault()
-    // 直接使用系统剪贴板
-    const pasteData = event.clipboardData?.getData('text/plain') || ''
-    if (pasteData !== undefined && pasteData !== null && pasteData !== '') {
-      const { rowIndex, field, column } = cellInfo
-      
-      // 检查列是否可编辑
-      if (column.editable === false) {
-        return
+    const { rowIndex, field, column } = cellInfo
+    
+    // 检查列是否可编辑
+    if (column.editable === false) {
+      return
+    }
+    
+    // 尝试获取自定义格式的数据
+    const customData = event.clipboardData?.getData('application/x-importgrid-cell')
+    let cellData: any = null
+    
+    if (customData) {
+      try {
+        cellData = JSON.parse(customData)
+      } catch (e) {
+        // 解析失败，使用普通文本
       }
-      
-      if (column.type === 'number') {
-        const num = Number(pasteData)
-        if (!isNaN(num)) {
-          dataList.value[rowIndex][field] = num
-        }
-      } else if (column.type === 'select' && column.options) {
-        // 对于 select 类型，尝试通过 label 或 value 匹配
-        const option = column.options.find(opt => opt.label === pasteData || String(opt.value) === pasteData)
-        if (option) {
-          dataList.value[rowIndex][field] = option.value
+    }
+    
+    // 如果有自定义数据且类型匹配
+    if (cellData && cellData.type === column.type) {
+      // 类型匹配，直接复制值
+      if (column.type === 'image') {
+        // 图片类型：特殊处理数组
+        // 1. 先标记原图片为删除
+        const deletedImages = markOriginalImagesAsDeleted(dataList.value[rowIndex][field])
+        // 2. 处理要粘贴的新图片
+        const newImages = processImageArrayForPaste(cellData.value)
+        // 3. 合并删除标记的原图片和新图片
+        dataList.value[rowIndex][field] = [...deletedImages, ...newImages]
+      } else {
+        dataList.value[rowIndex][field] = cellData.value
+      }
+    } else if (cellData && cellData.type !== column.type) {
+      // 类型不匹配，忽略粘贴
+      console.log('类型不匹配，忽略粘贴操作')
+      return
+    } else {
+      // 没有自定义数据，使用普通文本粘贴（兼容外部复制）
+      const pasteData = event.clipboardData?.getData('text/plain') || ''
+      if (pasteData !== undefined && pasteData !== null && pasteData !== '') {
+        if (column.type === 'number') {
+          const num = Number(pasteData)
+          if (!isNaN(num)) {
+            dataList.value[rowIndex][field] = num
+          }
+        } else if (column.type === 'select' && column.options) {
+          // 对于 select 类型，尝试通过 label 或 value 匹配
+          const option = column.options.find(opt => opt.label === pasteData || String(opt.value) === pasteData)
+          if (option) {
+            dataList.value[rowIndex][field] = option.value
+          } else {
+            // 如果没有匹配的选项，直接使用粘贴的值
+            dataList.value[rowIndex][field] = pasteData
+          }
+        } else if (column.type === 'image') {
+          // 图片类型不支持从普通文本粘贴
+          console.log('图片列不支持从文本粘贴')
         } else {
-          // 如果没有匹配的选项，直接使用粘贴的值
           dataList.value[rowIndex][field] = pasteData
         }
       } else {
-        dataList.value[rowIndex][field] = pasteData
-      }
-    } else {
-      // 如果粘贴数据为空，清空单元格
-      const { rowIndex, field, column } = cellInfo
-      if (column.editable !== false) {
-        dataList.value[rowIndex][field] = column.type === 'number' ? null : ''
+        // 如果粘贴数据为空，清空单元格
+        if (column.type === 'image') {
+          dataList.value[rowIndex][field] = []
+        } else if (column.type === 'number') {
+          dataList.value[rowIndex][field] = null
+        } else {
+          dataList.value[rowIndex][field] = ''
+        }
       }
     }
   }
@@ -2178,11 +2589,16 @@ onMounted(async () => {
   // 优先恢复页面状态（如果存在）
   const state = restorePageState()
   if (state && state.dataList && Array.isArray(state.dataList) && state.dataList.length > 0) {
-    // 恢复表格数据
-    dataList.value = state.dataList.map(row => ({
-      ...props.createDefaultRow(),
-      ...row
-    }))
+    // 恢复表格数据 - 使用完全深拷贝避免任何引用共享
+    dataList.value = state.dataList.map(row => {
+      const defaultRow = getDefaultRow() // 每行独立创建
+      // 对row做完全深拷贝，避免任何引用共享
+      const deepClonedRow = JSON.parse(JSON.stringify(row))
+      return {
+        ...defaultRow,
+        ...deepClonedRow
+      }
+    })
     // 初始化原始数据
     originalData.value = JSON.parse(JSON.stringify(dataList.value))
     emit('dataLoaded', dataList.value)
@@ -2633,16 +3049,14 @@ defineExpose({
           <!-- 图片列：使用 ImagePlus 组件 -->
           <div
             v-if="column.type === 'image' && column.editable !== false"
-            :key="`image-${scope.$index}-${column.field}`"
+            :key="getImagePlusKey(scope.$index, column.field)"
             class="excel-edit-image"
             @click="handleImageCellClick(scope.$index, column.field, $event)"
           >
             <ImagePlus
               :ref="(el: any) => setImagePlusRef(scope.$index, column.field, el)"
               :model-value="scope.row[column.field] || []"
-              @update:model-value="(val: any[]) => {
-                scope.row[column.field] = val
-              }"
+              @update:model-value="(val: any[]) => handleImageUpdate(scope.$index, column.field, val)"
               :disabled="false"
               :limit="10"
               :size="column.size || 'small'"

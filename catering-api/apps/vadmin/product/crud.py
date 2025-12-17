@@ -105,12 +105,20 @@ class DishDal(DalBase):
                 self.db.add(oper_image)
             elif oper_type == 'delete':
                 order_number -= 10
-                stmt = select(models.DishImage).where(models.DishImage.img_url == url)
+                stmt = select(models.DishImage).where(
+                    models.DishImage.img_url == url,
+                    models.DishImage.product_type == 1,
+                    models.DishImage.product_id == data_id
+                )
                 result = await dishImage.db.execute(stmt)
                 oper_image = result.scalars().first()
                 await dishImage.db.delete(oper_image)
             elif oper_type == 'update':
-                stmt = select(models.DishImage).where(models.DishImage.img_url == url)
+                stmt = select(models.DishImage).where(
+                    models.DishImage.img_url == url,
+                    models.DishImage.product_type == 1,
+                    models.DishImage.product_id == data_id
+                )
                 result = await dishImage.db.execute(stmt)
                 oper_image = result.scalars().first()
                 oper_image.order_number = order_number
@@ -119,7 +127,11 @@ class DishDal(DalBase):
                 elif order_number > 10 and oper_image.is_first == 1:
                     oper_image.is_first = 0
             elif oper_type == 'original':
-                stmt = select(models.DishImage).where(models.DishImage.img_url == url)
+                stmt = select(models.DishImage).where(
+                    models.DishImage.img_url == url,
+                    models.DishImage.product_type == 1,
+                    models.DishImage.product_id == data_id
+                )
                 result = await dishImage.db.execute(stmt)
                 oper_image = result.scalars().first()
                 if oper_image.order_number != order_number:
