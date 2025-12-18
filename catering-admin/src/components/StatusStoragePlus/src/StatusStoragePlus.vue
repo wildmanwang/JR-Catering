@@ -1,56 +1,266 @@
 <!--
   StatusStoragePlus - 页面状态存储组件
   
-  功能：
-  1. 窗口切换走时，保存窗口的各组件的状态
-  2. 窗口切换回时，加载窗口的各组件的状态
-  3. 窗口关闭时，清空窗口的各组件状态的数据
+  功能说明：
+  1. 窗口切换走时，自动保存各组件的状态到本地存储
+  2. 窗口切换回时，自动加载并恢复各组件的状态
+  3. 窗口关闭时，自动清空保存的状态数据
   
-  使用示例：
-  StatusStoragePlus 组件包裹页面内容，通过 stores 属性配置要保存的状态
+  使用方式详见组件文档注释
 -->
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick, type Ref } from 'vue'
 import { useRouter, onBeforeRouteLeave } from 'vue-router'
 import { useTagsViewStoreWithOut } from '@/store/modules/tagsView'
 
 /**
+ * 存储适配器接口（支持扩展不同的存储方式）
+ */
+export interface StorageAdapter {
+  /** 获取存储的数据 */
+  getItem(key: string): string | null
+  /** 设置存储的数据 */
+  setItem(key: string, value: string): void
+  /** 删除存储的数据 */
+  removeItem(key: string): void
+}
+
+/**
+ * 默认的 localStorage 适配器
+ */
+const localStorageAdapter: StorageAdapter = {
+  getItem: (key: string) => {
+    try {
+      return localStorage.getItem(key)
+    } catch {
+      return null
+    }
+  },
+  setItem: (key: string, value: string) => {
+    try {
+      localStorage.setItem(key, value)
+    } catch (err) {
+      console.error('存储数据失败：', err)
+    }
+  },
+  removeItem: (key: string) => {
+    try {
+      localStorage.removeItem(key)
+    } catch (err) {
+      console.error('删除存储数据失败：', err)
+    }
+  }
+}
+
+/**
+ * 默认的 sessionStorage 适配器
+ */
+const sessionStorageAdapter: StorageAdapter = {
+  getItem: (key: string) => {
+    try {
+      return sessionStorage.getItem(key)
+    } catch {
+      return null
+    }
+  },
+  setItem: (key: string, value: string) => {
+    try {
+      sessionStorage.setItem(key, value)
+    } catch (err) {
+      console.error('存储数据失败：', err)
+    }
+  },
+  removeItem: (key: string) => {
+    try {
+      sessionStorage.removeItem(key)
+    } catch (err) {
+      console.error('删除存储数据失败：', err)
+    }
+  }
+}
+
+/**
+ * 深拷贝工具函数
+ */
+function deepClone<T>(obj: T): T {
+  if (obj === null || typeof obj !== 'object') return obj
+  if (obj instanceof Date) return new Date(obj.getTime()) as T
+  if (obj instanceof RegExp) return new RegExp(obj) as T
+  
+  if (Array.isArray(obj)) {
+    return obj.map(item => deepClone(item)) as T
+  }
+  
+  const cloned = {} as T
+  for (const key in obj) {
+    if (Object.prototype.hasOwnProperty.call(obj, key)) {
+      cloned[key] = deepClone(obj[key])
+    }
+  }
+  return cloned
+}
+
+/**
+ * 组件引用配置（用于自动调用组件方法恢复状态）
+ * 
+ * 使用场景：
+ * - 当状态恢复需要调用子组件的方法时（如 QueryBar.setValues）
+ * - 可以自动处理组件未就绪的情况，等待组件挂载完成
+ */
+export interface ComponentRefConfig {
+  /** 组件引用（通过 ref 获取） */
+  ref: Ref<any>
+  /** 恢复方法名（如 'setValues'，会在 ref.value[methodName] 上调用） */
+  methodName: string
+  /** 
+   * 恢复时传递给方法的参数映射函数（可选）
+   * 如果不提供，则直接传递完整的 state 数据
+   * 
+   * 示例：
+   * ```ts
+   * getRestoreParams: (state) => state.formData // 只传递 formData 字段
+   * ```
+   */
+  getRestoreParams?: (state: any) => any
+  /**
+   * 是否等待组件准备就绪（可选，默认：true）
+   * - true: 使用 nextTick 等待组件挂载完成
+   * - false: 立即调用，如果组件未就绪则跳过
+   */
+  waitForComponentReady?: boolean
+}
+
+/**
  * 状态存储配置项
+ * 
+ * 每个配置项代表一个独立的状态单元，可以是一个简单值、对象或包含多个相关状态的集合。
+ * 多个配置项可以组合使用，实现复杂页面的状态管理。
  */
 export interface StatusStoreItem {
-  /** 状态名称（用于标识不同的状态） */
+  /** 
+   * 状态名称（用于标识不同的状态，在同一页面中必须唯一）
+   * 建议使用有意义的名称，如 'formData', 'tableState', 'queryParams' 等
+   */
   name: string
-  /** 获取状态的函数，返回要保存的状态数据 */
+  /** 
+   * 获取状态的函数，返回要保存的状态数据
+   * 
+   * 注意：
+   * - 应返回纯数据，避免返回响应式对象
+   * - 建议使用 toRaw 或深拷贝来获取原始值
+   * - 函数应该是同步的，避免返回 Promise
+   * 
+   * 示例：
+   * ```ts
+   * getState: () => ({ 
+   *   list: toRaw(dataList.value),
+   *   params: toRaw(queryParams.value) 
+   * })
+   * ```
+   */
   getState: () => any
-  /** 设置状态的函数，接收保存的状态数据 */
+  /** 
+   * 设置状态的函数，接收保存的状态数据并恢复状态
+   * 
+   * 注意：
+   * - 可以是同步或异步函数
+   * - 在函数内部可以调用组件方法、更新 ref 值等
+   * - 如果组件方法恢复已经更新了显示，仍需要在这里更新内部状态变量
+   * 
+   * 示例：
+   * ```ts
+   * setState: async (state) => {
+   *   dataList.value = state.list || []
+   *   queryParams.value = state.params || {}
+   *   await nextTick()
+   *   // 其他恢复逻辑
+   * }
+   * ```
+   */
   setState: (state: any) => void | Promise<void>
+  /** 
+   * 组件引用配置（可选）
+   * 
+   * 如果提供，会在 setState 时自动调用组件的方法来恢复状态。
+   * 这适用于需要调用子组件方法的情况，如表单组件、查询组件等。
+   * 
+   * 使用示例：
+   * ```ts
+   * componentRef: {
+   *   ref: queryBarRef,
+   *   methodName: 'setValues',
+   *   getRestoreParams: (state) => state.formData
+   * }
+   * ```
+   */
+  componentRef?: ComponentRefConfig
+  /**
+   * 是否需要等待组件准备就绪（可选，默认：true）
+   * 
+   * 仅当 componentRef 存在时生效。
+   * - true: 会在调用组件方法前等待 nextTick，确保组件已挂载
+   * - false: 立即调用，适用于组件已经挂载的场景
+   */
+  waitForComponentReady?: boolean
 }
 
 /**
  * 组件 Props 接口
  */
 export interface StatusStoragePlusProps {
-  /** 状态存储配置数组 */
+  /** 
+   * 状态存储配置数组
+   * 
+   * 每个配置项代表一个独立的状态单元。
+   * 建议使用 computed 来创建，以便在响应式数据变化时更新配置。
+   */
   stores: StatusStoreItem[]
-  /** 状态存储的前缀（可选，默认：STATUS_STORAGE_） */
+  /** 
+   * 状态存储的前缀（可选，默认：STATUS_STORAGE_）
+   * 
+   * 用于生成唯一的存储 key，避免不同页面的状态冲突。
+   * 建议为每个页面设置唯一的前缀，如 'BASE_GRID_STATE_', 'IMPORT_GRID_STATE_' 等
+   */
   storagePrefix?: string
-  /** 状态数据的最大保存时间（毫秒，默认：24小时） */
+  /** 
+   * 状态数据的最大保存时间（毫秒，默认：24小时）
+   * 
+   * 超过此时间的数据会被自动清除，避免存储过期数据。
+   */
   maxAge?: number
-  /** 是否启用自动保存（默认：true，在路由离开时自动保存） */
+  /** 
+   * 是否启用自动保存（默认：true，在路由离开时自动保存）
+   * 
+   * - true: 在路由切换时自动保存状态
+   * - false: 需要手动调用 saveState 方法保存
+   */
   autoSave?: boolean
-  /** 自动保存的防抖延迟（毫秒，默认：500ms，仅在路由离开时保存，不使用防抖） */
-  autoSaveDelay?: number
+  /** 
+   * 存储适配器（可选，默认：localStorage）
+   * 
+   * 支持自定义存储方式，如 sessionStorage 或其他存储实现。
+   * 可以通过 provideStorageAdapter 提供自定义适配器。
+   */
+  storageAdapter?: StorageAdapter
 }
 
 const props = withDefaults(defineProps<StatusStoragePlusProps>(), {
   storagePrefix: 'STATUS_STORAGE_',
   maxAge: 24 * 60 * 60 * 1000, // 24小时
   autoSave: true,
-  autoSaveDelay: 500
+  storageAdapter: undefined
 })
 
 const router = useRouter()
 const tagsViewStore = useTagsViewStoreWithOut()
+
+// 使用提供的存储适配器或默认适配器
+const storage = computed<StorageAdapter>(() => {
+  if (props.storageAdapter) {
+    return props.storageAdapter
+  }
+  return localStorageAdapter
+})
 
 const PAGE_STATE_KEY = computed(() => `${props.storagePrefix}${router.currentRoute.value.fullPath}`)
 const PAGE_RESTORE_FLAG_KEY = computed(() => `RESTORE_FLAG_${router.currentRoute.value.fullPath}`)
@@ -62,25 +272,7 @@ let mountedRoutePath: string | null = null
 let mountedRouteFullPath: string | null = null
 
 /**
- * 深拷贝数据
- */
-const deepClone = (obj: any): any => {
-  if (obj === null || typeof obj !== 'object') return obj
-  if (obj instanceof Date) return new Date(obj)
-  if (Array.isArray(obj)) {
-    return obj.map(item => deepClone(item))
-  }
-  const cloned: any = {}
-  for (const key in obj) {
-    if (obj.hasOwnProperty(key)) {
-      cloned[key] = deepClone(obj[key])
-    }
-  }
-  return cloned
-}
-
-/**
- * 保存页面状态到 localStorage
+ * 保存页面状态到存储
  */
 const savePageState = async () => {
   if (!pageReady.value || isRestoring.value) return
@@ -95,7 +287,7 @@ const savePageState = async () => {
         const stateData = store.getState()
         state[store.name] = deepClone(stateData)
       } catch (err) {
-        console.error(`保存状态 ${store.name} 失败：`, err)
+        console.error(`[StatusStoragePlus] 保存状态 "${store.name}" 失败：`, err)
       }
     }
     
@@ -105,18 +297,18 @@ const savePageState = async () => {
       fullPath: router.currentRoute.value.fullPath
     }
     
-    localStorage.setItem(PAGE_STATE_KEY.value, JSON.stringify(statePayload))
+    storage.value.setItem(PAGE_STATE_KEY.value, JSON.stringify(statePayload))
   } catch (err) {
-    console.error('保存页面状态失败：', err)
+    console.error('[StatusStoragePlus] 保存页面状态失败：', err)
   }
 }
 
 /**
- * 从 localStorage 恢复页面状态
+ * 从存储恢复页面状态
  */
 const restorePageState = async (): Promise<boolean> => {
   try {
-    const savedState = localStorage.getItem(PAGE_STATE_KEY.value)
+    const savedState = storage.value.getItem(PAGE_STATE_KEY.value)
     if (!savedState) {
       return false
     }
@@ -127,7 +319,7 @@ const restorePageState = async (): Promise<boolean> => {
     const now = Date.now()
     const elapsed = now - statePayload.timestamp
     if (elapsed > props.maxAge) {
-      localStorage.removeItem(PAGE_STATE_KEY.value)
+      storage.value.removeItem(PAGE_STATE_KEY.value)
       return false
     }
     
@@ -143,10 +335,41 @@ const restorePageState = async (): Promise<boolean> => {
     for (const store of props.stores) {
       try {
         if (state[store.name] !== undefined) {
-          await store.setState(state[store.name])
+          const stateData = state[store.name]
+          
+          // 如果有组件引用配置，先尝试通过组件方法恢复
+          if (store.componentRef) {
+            const { ref, methodName, getRestoreParams } = store.componentRef
+            const shouldWait = store.waitForComponentReady !== false // 默认等待
+            
+            if (shouldWait) {
+              await nextTick()
+              // 如果组件仍未就绪，再等待一次
+              if (!ref.value) {
+                await nextTick()
+              }
+            }
+            
+            if (ref.value && typeof ref.value[methodName] === 'function') {
+              try {
+                // 如果有参数映射函数，使用它来转换参数
+                const params = getRestoreParams ? getRestoreParams(stateData) : stateData
+                await ref.value[methodName](params)
+              } catch (err) {
+                console.error(`[StatusStoragePlus] 通过组件方法 "${methodName}" 恢复状态 "${store.name}" 失败：`, err)
+              }
+            }
+            
+            // 无论组件方法是否成功，都调用 setState（用于更新内部状态变量）
+            // 例如：QueryBar.setValues 恢复了显示，但仍需要更新 formDisplayParams 等内部变量
+            await store.setState(stateData)
+          } else {
+            // 没有组件引用配置，直接调用 setState
+            await store.setState(stateData)
+          }
         }
       } catch (err) {
-        console.error(`恢复状态 ${store.name} 失败：`, err)
+        console.error(`[StatusStoragePlus] 恢复状态 "${store.name}" 失败：`, err)
       }
     }
     
@@ -156,7 +379,7 @@ const restorePageState = async (): Promise<boolean> => {
     
     return true
   } catch (err) {
-    console.error('恢复页面状态失败：', err)
+    console.error('[StatusStoragePlus] 恢复页面状态失败：', err)
     isRestoring.value = false
     return false
   }
@@ -170,23 +393,23 @@ const clearPageState = (stateKey?: string, fullPath?: string) => {
   const pathToCheck = fullPath || router.currentRoute.value.fullPath
   
   try {
-    const savedState = localStorage.getItem(keyToRemove)
+    const savedState = storage.value.getItem(keyToRemove)
     if (savedState) {
       const state = JSON.parse(savedState)
       if (state.fullPath === pathToCheck) {
-        localStorage.removeItem(keyToRemove)
+        storage.value.removeItem(keyToRemove)
       }
     }
     
-    // 同时清除恢复标记
+    // 同时清除恢复标记（使用 sessionStorage）
     const flagKey = fullPath ? `RESTORE_FLAG_${fullPath}` : PAGE_RESTORE_FLAG_KEY.value
     try {
-      sessionStorage.removeItem(flagKey)
+      sessionStorageAdapter.removeItem(flagKey)
     } catch (err) {
       // 静默处理
     }
   } catch (err) {
-    console.error('清空页面状态失败：', err)
+    console.error('[StatusStoragePlus] 清空页面状态失败：', err)
   }
 }
 
@@ -213,11 +436,11 @@ onBeforeRouteLeave((_to, _from, next) => {
     }
     savePageState()
     
-    // 设置恢复标记，表示该路由有保存的状态，可以恢复
+    // 设置恢复标记，表示该路由有保存的状态，可以恢复（使用 sessionStorage）
     try {
-      sessionStorage.setItem(PAGE_RESTORE_FLAG_KEY.value, '1')
+      sessionStorageAdapter.setItem(PAGE_RESTORE_FLAG_KEY.value, '1')
     } catch (err) {
-      console.error('设置恢复标记失败：', err)
+      console.error('[StatusStoragePlus] 设置恢复标记失败：', err)
     }
   }
   
@@ -253,15 +476,15 @@ onMounted(async () => {
   // 通过检查 sessionStorage 中的恢复标记来判断
   let shouldRestore = false
   try {
-    const restoreFlag = sessionStorage.getItem(PAGE_RESTORE_FLAG_KEY.value)
+    const restoreFlag = sessionStorageAdapter.getItem(PAGE_RESTORE_FLAG_KEY.value)
     if (restoreFlag === '1') {
       // 有恢复标记，说明是切换回来，应该恢复状态
       shouldRestore = true
       // 清除标记，避免下次误判
-      sessionStorage.removeItem(PAGE_RESTORE_FLAG_KEY.value)
+      sessionStorageAdapter.removeItem(PAGE_RESTORE_FLAG_KEY.value)
     }
   } catch (err) {
-    console.error('检查恢复标记失败：', err)
+    console.error('[StatusStoragePlus] 检查恢复标记失败：', err)
   }
   
   await nextTick()
@@ -314,7 +537,9 @@ defineExpose({
   /** 手动恢复状态 */
   restoreState: restorePageState,
   /** 手动清空状态 */
-  clearState: () => clearPageState()
+  clearState: () => clearPageState(),
+  /** 获取当前是否正在恢复状态 */
+  isRestoring: () => isRestoring.value
 })
 </script>
 
@@ -330,4 +555,3 @@ defineExpose({
   height: 100%;
 }
 </style>
-

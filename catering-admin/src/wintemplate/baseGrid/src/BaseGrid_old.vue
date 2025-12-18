@@ -1,5 +1,6 @@
 <script setup lang="tsx">
-import { unref, ref, reactive, watch, onMounted, onBeforeUnmount, nextTick, toRaw, watchEffect, computed } from 'vue'
+import { unref, ref, reactive, watch, onMounted, onBeforeUnmount, nextTick, toRaw, watchEffect } from 'vue'
+import { useRouter } from 'vue-router'
 import { useTable } from '@/hooks/web/useTable'
 import { Table, TableColumn } from '@/components/Table'
 import { ElImage, ElCard, ElMenu, ElMenuItem } from 'element-plus'
@@ -7,7 +8,7 @@ import { BaseButton } from '@/components/Button'
 import { ButtonPlus } from '@/components/ButtonPlus'
 import { PrompInfo } from '@/components/PrompInfo'
 import { QueryBar, type QueryCondition } from '@/components/QueryBar'
-import { StatusStoragePlus, type StatusStoreItem } from '@/components/StatusStoragePlus'
+import { useTagsViewStoreWithOut } from '@/store/modules/tagsView'
 
 defineOptions({
   name: 'BaseGrid'
@@ -124,21 +125,45 @@ const props = withDefaults(defineProps<Props>(), {
   searchConditions: () => []
 })
 
-// ==================== 页面状态管理 ====================
+// ==================== 路由和状态管理 ====================
+/** 路由实例 */
+const { currentRoute } = useRouter()
+
+/** 标签页 Store（用于检测标签页是否被关闭） */
+const tagsViewStore = useTagsViewStoreWithOut()
+
+/**
+ * 获取页面状态存储的 sessionStorage key（基于路由路径生成唯一key）
+ * 使用函数形式，确保每次获取时都使用当前的 fullPath
+ */
+const getPageStateKey = () => {
+  return `BASE_GRID_PAGE_STATE_${currentRoute.value.fullPath}`
+}
+
 /** 页面加载状态，用于避免闪屏 */
 const pageReady = ref(false)
+
+/** 状态恢复标志，防止恢复过程中触发 watch */
+const isRestoring = ref(false)
 
 /** 防止恢复状态时重复调用 getList() 的标志 */
 const isRestoringState = ref(false)
 
-/** StatusStoragePlus 组件引用 */
-const statusStoragePlusRef = ref<InstanceType<typeof StatusStoragePlus>>()
+/** 状态保存定时器 */
+let saveStateTimer: ReturnType<typeof setTimeout> | null = null
+
+/** 组件挂载时的路由信息（用于检测标签页关闭） */
+let mountedRoutePath: string | null = null
+let mountedRouteFullPath: string | null = null
 
 /** QueryBar 组件引用 */
 const queryBarRef = ref<InstanceType<typeof QueryBar>>()
 
 /** QueryBar 注册状态 */
 const queryBarRegistered = ref(false)
+
+/** 待恢复的查询条件（用于 QueryBar 注册后恢复） */
+const pendingQueryBarParams = ref<Record<string, any> | null>(null)
 
 // ==================== 查询条件 ====================
 /** 查询参数（内部使用） */
@@ -169,7 +194,7 @@ const handleSearch = async (data: any) => {
   formDisplayParams.value = filteredParams
   
   currentPage.value = 1
-  statusStoragePlusRef.value?.saveState()
+  await savePageState()
   getList()
 }
 
@@ -178,6 +203,16 @@ const handleSearch = async (data: any) => {
  */
 const handleQueryBarRegister = async () => {
   queryBarRegistered.value = true
+  
+  // 如果有待恢复的查询条件，立即恢复（减少 nextTick 调用）
+  if (pendingQueryBarParams.value && queryBarRef.value) {
+    await nextTick()
+    if (typeof queryBarRef.value.setValues === 'function') {
+      await queryBarRef.value.setValues(pendingQueryBarParams.value)
+      formDisplayParams.value = { ...pendingQueryBarParams.value }
+      pendingQueryBarParams.value = null
+    }
+  }
 }
 
 /**
@@ -185,7 +220,7 @@ const handleQueryBarRegister = async () => {
  * 只更新表单显示值（formDisplayParams），不更新已执行的查询条件（internalSearchParams）
  */
 const handleQueryBarFieldChange = (field: string, value: any) => {
-  if (!pageReady.value) {
+  if (!pageReady.value || isRestoring.value) {
     return
   }
   
@@ -202,8 +237,13 @@ const handleQueryBarFieldChange = (field: string, value: any) => {
     delete formDisplayParams.value[field]
   }
   
-  // 自动保存状态（通过 StatusStoragePlus）
-  statusStoragePlusRef.value?.saveState()
+  // 自动保存状态（debounce）
+  if (saveStateTimer) {
+    clearTimeout(saveStateTimer)
+  }
+  saveStateTimer = setTimeout(async () => {
+    await savePageState()
+  }, 500)
 }
 
 /**
@@ -213,7 +253,7 @@ const handleReset = async () => {
   internalSearchParams.value = {}
   formDisplayParams.value = {}
   currentPage.value = 1
-  statusStoragePlusRef.value?.saveState()
+  await savePageState()
   getList()
 }
 
@@ -258,11 +298,8 @@ const initQuickQueryList = async () => {
     quickQueryData.value = data
   }
 
-  // 只有在没有保存的索引时才初始化选中项为 '0'
-  // 如果有保存的索引，会在状态恢复时设置
-  if (!savedActiveQuickQueryIndex.value) {
-    activeQuickQueryIndex.value = '0'
-  }
+  // 初始化选中项
+  activeQuickQueryIndex.value = '0'
   
   // 数据加载完成后，设置菜单高度
   await nextTick()
@@ -326,7 +363,7 @@ const handleQuickQuerySelect = async (index: string) => {
 
     // 重置到第一页并刷新列表
     currentPage.value = 1
-    statusStoragePlusRef.value?.saveState()
+    await savePageState()
     getList()
   }
 }
@@ -503,52 +540,125 @@ const debouncedSetMenuMaxHeight = () => {
 }
 
 onMounted(async () => {
-  // 标记正在恢复状态，防止 watch 触发重复调用
-  isRestoringState.value = true
+  // 先不显示页面，等待状态恢复完成
+  isRestoring.value = true
+  isRestoringState.value = true // 标记正在恢复状态，防止 watch 触发重复调用
   
-  // 初始化快捷查询列表（如果存在）
+  // 保存组件挂载时的路由信息（用于检测标签页关闭）
+  mountedRoutePath = currentRoute.value.path
+  mountedRouteFullPath = currentRoute.value.fullPath
+  
+  // 恢复页面状态（先恢复状态，再初始化快捷查询列表，避免阻塞）
+  const state = restorePageState()
+  
+  // 初始化快捷查询列表（如果存在，异步进行，不阻塞页面显示）
   if (props.quickQueryList) {
-    await initQuickQueryList()
-    await nextTick()
-    setMenuMaxHeight()
-    
-    // 如果之前保存了快捷查询索引（状态恢复时 quickQueryData 还没加载），现在恢复它
-    if (savedActiveQuickQueryIndex.value !== null) {
-      restoreQuickQuerySelect(savedActiveQuickQueryIndex.value)
-      savedActiveQuickQueryIndex.value = null
-      await nextTick()
-    }
+    // 异步初始化，不阻塞页面显示
+    initQuickQueryList().then(() => {
+      // 初始化完成后，设置快捷查询菜单高度
+      nextTick(() => {
+        setMenuMaxHeight()
+      })
+    })
   }
-  
-  // 等待 StatusStoragePlus 恢复状态（如果有）
-  // StatusStoragePlus 会在 onMounted 时自动检查并恢复状态
-  await nextTick()
-  await nextTick() // 等待状态恢复完成
-  
-  // 标记状态恢复完成，允许 watch 正常工作
-  isRestoringState.value = false
-  
-  // 调用查询（如果状态已恢复，会根据恢复的查询条件和分页进行查询）
-  getList().then(async () => {
-    // 恢复表格选择状态（必须在数据加载完成后）
-    if (savedSelectedIds.value && savedSelectedIds.value.length > 0) {
-      await nextTick()
-      restoreTableSelection(savedSelectedIds.value)
-      savedSelectedIds.value = [] // 清除已恢复的选中ID
+  if (state) {
+    // 先恢复查询条件（必须在恢复分页之前，避免 watch 触发时使用错误的查询条件）
+    if (state.formDisplayParams || state.executedSearchParams) {
+      // 恢复表单显示值
+      if (state.formDisplayParams && Object.keys(state.formDisplayParams).length > 0) {
+        // 先保存到 formDisplayParams
+        formDisplayParams.value = { ...state.formDisplayParams }
+        
+        // 恢复 QueryBar 表单显示值
+        // 注意：由于页面在数据加载完成后才显示，QueryBar 组件可能还没有挂载
+        // 所以我们需要先保存到 pendingQueryBarParams，等待 QueryBar 注册后再恢复
+        pendingQueryBarParams.value = { ...state.formDisplayParams }
+        
+        // 如果 QueryBar 已经注册，立即尝试恢复
+        if (queryBarRegistered.value && queryBarRef.value) {
+          const restoreQueryBarValues = async () => {
+            if (queryBarRef.value && typeof queryBarRef.value.setValues === 'function') {
+              await nextTick()
+              await queryBarRef.value.setValues(state.formDisplayParams)
+              formDisplayParams.value = { ...state.formDisplayParams }
+              // 恢复成功后，清除待恢复的值
+              pendingQueryBarParams.value = null
+            }
+          }
+          restoreQueryBarValues()
+        }
+        // 否则，等待 handleQueryBarRegister 触发恢复
+      }
+      
+      // 使用已执行的查询条件执行查询
+      if (state.executedSearchParams && Object.keys(state.executedSearchParams).length > 0) {
+        internalSearchParams.value = { ...state.executedSearchParams }
+      } else {
+        // 如果没有已执行的查询条件，使用空查询条件
+        internalSearchParams.value = {}
+      }
     }
     
-    // 显示页面
-    pageReady.value = true
+    // ========== 步骤2：恢复分页状态 ==========
+    // 
+    // 恢复策略说明：
+    // useTable 的 watch 会在 currentPage 或 pageSize 变化时自动调用 getList()
+    // 但是 pageSize 的 watch 可能会先设置 currentPage = 1，导致触发多次 getList()
+    // 
+    // 为了避免重复调用，恢复顺序如下：
+    // 1. 如果 pageSize 变化且 currentPage !== 1，先设置 currentPage = 1
+    // 2. 然后恢复 pageSize（此时 currentPage 已经是 1，不会触发额外的 getList()）
+    // 3. 最后恢复 currentPage（如果需要）
+    // 
+    // 这样确保只触发一次 getList()，避免重复查询
     
-    // 页面显示后，检查并恢复快捷查询菜单状态（如果之前没有恢复成功）
-    if (props.quickQueryList && quickQueryMenuRef.value && quickQueryData.value.length > 0) {
+    const targetCurrentPage = typeof state.currentPage === 'number' && state.currentPage > 0 ? state.currentPage : 1
+    const targetPageSize = typeof state.pageSize === 'number' && state.pageSize > 0 ? state.pageSize : 10
+    
+    const pageSizeChanged = targetPageSize !== pageSize.value
+    const currentPageChanged = targetCurrentPage !== currentPage.value
+    
+    // 步骤2.1：如果 pageSize 变化且 currentPage !== 1，先设置 currentPage = 1
+    // 避免 pageSize 的 watch 再次设置 currentPage = 1，导致触发额外的 getList()
+    if (pageSizeChanged && targetCurrentPage !== 1) {
+      currentPage.value = 1
       await nextTick()
+    }
+    
+    // 步骤2.2：恢复 pageSize（此时 currentPage 已经是 1，不会触发额外的 getList()）
+    if (pageSizeChanged) {
+      pageSize.value = targetPageSize
+      await nextTick()
+    }
+    
+    // 步骤2.3：恢复 currentPage（如果需要）
+    if (currentPageChanged && targetCurrentPage !== currentPage.value) {
+      currentPage.value = targetCurrentPage
+      await nextTick()
+    }
+    
+    // ========== 步骤3：恢复快捷查询选择 ==========
+    // 
+    // 恢复策略：
+    // 1. 优先使用保存的 activeQuickQueryIndex（最直接的方式）
+    // 2. 如果没有保存的索引，但 executedSearchParams 中有对应的字段值，尝试反向查找索引
+    //    例如：executedSearchParams.kitchen_id = 2，则在 quickQueryData 中查找 id = 2 的项
+    // 
+    // 注意：使用 restoreQuickQuerySelect 恢复状态，不触发查询
+    // 避免在恢复过程中触发 getList()，导致表格选中状态被清除
+    
+    if (props.quickQueryList) {
+      let targetIndex: string | undefined = undefined
       
-      // 如果菜单选中状态还是初始值 '0'，但 executedSearchParams 中有对应的字段值，尝试恢复
-      if (activeQuickQueryIndex.value === '0' && internalSearchParams.value) {
+      // 策略1：使用保存的索引
+      if (state.activeQuickQueryIndex !== undefined) {
+        targetIndex = String(state.activeQuickQueryIndex)
+      }
+      // 策略2：根据 executedSearchParams 反向查找索引
+      else if (state.executedSearchParams) {
         const config = props.quickQueryList
         const field = config.field
-        const fieldValue = internalSearchParams.value[field]
+        const fieldValue = state.executedSearchParams[field]
         
         if (fieldValue !== undefined && fieldValue !== null && fieldValue !== '') {
           // 在 quickQueryData 中查找匹配的项
@@ -557,17 +667,94 @@ onMounted(async () => {
           })
           
           if (foundIndex !== -1) {
-            const targetIndex = String(foundIndex)
-            // 使用 restoreQuickQuerySelect 恢复状态，不触发查询
-            restoreQuickQuerySelect(targetIndex)
-            await nextTick()
+            targetIndex = String(foundIndex)
           }
         }
       }
       
-      setMenuMaxHeight()
+      // 恢复快捷查询选择（不触发查询）
+      if (targetIndex !== undefined) {
+        restoreQuickQuerySelect(targetIndex)
+      }
     }
-  })
+    
+    // ========== 步骤4：统一调用一次查询 ==========
+    // 
+    // 说明：
+    // - 等待所有状态恢复完成
+    // - 清除恢复状态标志，允许 watch 正常工作
+    // - 统一调用一次 getList()，确保只调用一次，避免重复查询
+    
+    await nextTick()
+    isRestoringState.value = false
+    
+    getList().then(async () => {
+      // ========== 步骤5：恢复表格选择状态 ==========
+      // 注意：必须在数据加载完成后恢复，否则表格数据不存在
+      if (state.selectedIds && Array.isArray(state.selectedIds) && state.selectedIds.length > 0) {
+        await nextTick()
+        restoreTableSelection(state.selectedIds)
+      }
+      
+      // ========== 步骤6：显示页面 ==========
+      // 数据加载完成后再显示页面，避免多次渲染
+      isRestoring.value = false
+      pageReady.value = true
+      
+      // 页面显示后，检查快捷查询菜单的状态
+      await nextTick()
+      
+      // 如果快捷查询菜单已挂载，但 activeQuickQueryIndex 还是 '0'，尝试根据 executedSearchParams 恢复
+      if (props.quickQueryList && quickQueryMenuRef.value && quickQueryData.value.length > 0) {
+        if (activeQuickQueryIndex.value === '0' && internalSearchParams.value) {
+          const config = props.quickQueryList
+          const field = config.field
+          const fieldValue = internalSearchParams.value[field]
+          
+          if (fieldValue !== undefined && fieldValue !== null && fieldValue !== '') {
+            // 在 quickQueryData 中查找匹配的项
+            const foundIndex = quickQueryData.value.findIndex((item) => {
+              return item.id === fieldValue || String(item.id) === String(fieldValue)
+            })
+            
+            if (foundIndex !== -1) {
+              const targetIndex = String(foundIndex)
+              // 使用 restoreQuickQuerySelect 恢复状态，不触发查询
+              // 因为此时数据已经加载完成，只需要更新菜单状态即可
+              restoreQuickQuerySelect(targetIndex)
+              await nextTick()
+            }
+          }
+        }
+        // 如果索引不是 '0'，ElMenu 的 default-active 属性会自动处理选中状态
+      }
+      
+      // 页面显示后，再次尝试恢复 QueryBar 值（如果之前没有成功）
+      // 因为页面显示后，QueryBar 组件才会挂载
+      if (pendingQueryBarParams.value && Object.keys(pendingQueryBarParams.value).length > 0) {
+        // 等待 QueryBar 注册完成
+        let retries = 0
+        while (retries < 20 && (!queryBarRegistered.value || !queryBarRef.value)) {
+          await new Promise(resolve => setTimeout(resolve, 50))
+          retries++
+        }
+        
+        if (queryBarRef.value && typeof queryBarRef.value.setValues === 'function') {
+          await queryBarRef.value.setValues(pendingQueryBarParams.value)
+          formDisplayParams.value = { ...pendingQueryBarParams.value }
+          pendingQueryBarParams.value = null
+        }
+      }
+    })
+  } else {
+    // 如果没有恢复的状态，立即显示页面，然后正常初始化
+    isRestoring.value = false
+    isRestoringState.value = false
+    pageReady.value = true
+    
+    // 手动调用一次查询（因为已禁用 immediate）
+    getList()
+  }
   
   // 监听窗口大小变化，重新计算高度（如果快捷查询列表存在）
   if (props.quickQueryList) {
@@ -575,13 +762,55 @@ onMounted(async () => {
   }
 })
 
-// 组件卸载前处理
+// 组件卸载前处理状态
 onBeforeUnmount(() => {
+  if (saveStateTimer) {
+    clearTimeout(saveStateTimer)
+  }
+  
+  // 先保存状态（无论切换还是关闭都先保存，确保数据不丢失）
+  savePageState()
+  
+  // 检查标签页是否被关闭
+  // 注意：必须使用挂载时的路由信息，因为关闭标签页时路由会跳转到其他页面
+  if (!mountedRoutePath || !mountedRouteFullPath) {
+    return
+  }
+  
+  const pathToCheck = mountedRoutePath
+  const fullPathToCheck = mountedRouteFullPath
+  
+  // 立即检查一次（同步检查，不延迟）
+  // 因为 tagsViewStore.delVisitedView 是同步执行的，所以可以立即检查
+  const visitedViews = tagsViewStore.getVisitedViews
+  const isStillOpen = visitedViews.some(view => view.path === pathToCheck)
+  
+  if (!isStillOpen) {
+    // 标签页已被关闭，清空状态数据
+    // 使用保存的 fullPath 来生成正确的 key
+    const stateKey = `BASE_GRID_PAGE_STATE_${fullPathToCheck}`
+    clearPageState(stateKey, fullPathToCheck)
+  } else {
+    // 标签页仍然打开，只是切换了路由，保持状态数据
+    // 延迟检查，确保标签页状态已经更新（防止异步更新导致的状态不一致）
+    nextTick(() => {
+      setTimeout(() => {
+        const visitedViewsAfterDelay = tagsViewStore.getVisitedViews
+        const isStillOpenAfterDelay = visitedViewsAfterDelay.some(view => view.path === pathToCheck)
+        
+        if (!isStillOpenAfterDelay) {
+          // 延迟检查发现标签页已被关闭，清空状态数据
+          const stateKey = `BASE_GRID_PAGE_STATE_${fullPathToCheck}`
+          clearPageState(stateKey, fullPathToCheck)
+        }
+      }, 100)
+    })
+  }
+  
   // 移除窗口大小监听器
   if (props.quickQueryList) {
     window.removeEventListener('resize', debouncedSetMenuMaxHeight)
   }
-  // 状态保存和清理由 StatusStoragePlus 自动处理
 })
 
 watch(
@@ -666,40 +895,193 @@ const { showAction, nodeKey, reserveSelection } = props
 
 // ==================== 页面状态管理 ====================
 /**
- * 保存的选中行ID（用于恢复表格选择状态）
+ * 页面状态管理模块
+ * 
+ * 功能说明：
+ * 1. 状态存储：同时保存到内存（tagsViewStore.pageStates）和 sessionStorage
+ *    - 内存存储：用于快速访问，页面切换时使用
+ *    - sessionStorage：用于页面刷新后恢复状态
+ * 
+ * 2. 状态恢复：优先从内存读取，如果没有则从 sessionStorage 恢复
+ *    - 页面切换：从内存快速恢复
+ *    - 页面刷新：从 sessionStorage 恢复并同步到内存
+ * 
+ * 3. 状态清理：标签页关闭时自动清理内存和 sessionStorage
+ * 
+ * 状态结构：
+ * {
+ *   formDisplayParams: {},      // 表单显示值（用户输入的所有条件，包括未执行的）
+ *   executedSearchParams: {},   // 已执行的查询条件（只在点击"查询"按钮时更新）
+ *   currentPage: number,         // 当前页码
+ *   pageSize: number,           // 每页条数
+ *   activeQuickQueryIndex: string, // 快捷查询菜单选中的索引
+ *   selectedIds: any[]          // 表格选中的行ID数组
+ * }
  */
-const savedSelectedIds = ref<any[]>([])
 
 /**
- * 当前选中的行ID（用于状态保存）
+ * 验证状态格式是否正确（BaseGrid 的状态格式）
+ * @param state 待验证的状态对象
+ * @returns 是否为有效的 BaseGrid 状态
  */
-const currentSelectedIds = ref<any[]>([])
-
-/**
- * 保存的快捷查询索引（用于在 quickQueryData 加载完成后恢复）
- */
-const savedActiveQuickQueryIndex = ref<string | null>(null)
-
-/**
- * 标记是否正在恢复状态
- */
-const isRestoring = ref(false)
+const isValidBaseGridState = (state: any): boolean => {
+  if (!state || typeof state !== 'object') return false
+  
+  // BaseGrid 的状态应该包含以下字段之一
+  return (
+    state.formDisplayParams !== undefined ||
+    state.executedSearchParams !== undefined ||
+    state.currentPage !== undefined ||
+    state.pageSize !== undefined
+  )
+}
 
 /**
  * 监听表格选择变化，立即保存状态（不防抖，确保选择状态及时保存）
  */
 const handleSelectionChange = async () => {
+  // 如果正在恢复状态，不触发保存，避免覆盖恢复的状态
   if (pageReady.value && !isRestoring.value) {
-    // 更新当前选中的行ID
-    try {
-      const selections = typeof getSelections === 'function' ? await getSelections() : []
-      currentSelectedIds.value = selections
-        .map((row: any) => row?.[nodeKey])
-        .filter((id: any) => id !== undefined)
-    } catch (err) {
-      currentSelectedIds.value = []
+    await savePageState()
+  }
+}
+
+/**
+ * 监听数据列表、分页、快捷查询变化，自动保存状态（防抖处理）
+ * 注意：必须在 dataList、currentPage、pageSize 定义之后才能使用
+ */
+watch(
+  [() => dataList.value, () => currentPage.value, () => pageSize.value, () => activeQuickQueryIndex.value],
+  async () => {
+    // 如果正在恢复状态，不触发保存，避免多次刷新
+    if (pageReady.value && !isRestoring.value) {
+      if (saveStateTimer) {
+        clearTimeout(saveStateTimer)
+      }
+      saveStateTimer = setTimeout(async () => {
+        await savePageState()
+      }, 500)
     }
-    statusStoragePlusRef.value?.saveState()
+  },
+  { deep: true }
+)
+
+/**
+ * 保存页面状态
+ * 同时写入 tagsViewStore.pageStates（内存）和 sessionStorage（刷新恢复）
+ */
+/**
+ * 保存页面状态
+ * 
+ * 功能：
+ * 1. 收集当前页面的所有状态（查询条件、分页、选中行等）
+ * 2. 同时保存到内存（tagsViewStore.pageStates）和 sessionStorage
+ *    - 内存：用于页面切换时的快速恢复
+ *    - sessionStorage：用于页面刷新后的恢复
+ * 
+ * 保存时机：
+ * - 表格选择变化时（立即保存）
+ * - 查询条件、分页、快捷查询变化时（防抖保存，500ms）
+ * - 组件卸载时（确保数据不丢失）
+ */
+const savePageState = async () => {
+  try {
+    // 1. 收集表格选中的行ID
+    const selections = typeof getSelections === 'function' ? await getSelections() : []
+    const selectedIds = selections
+      .map((row: any) => row?.[nodeKey])
+      .filter((id: any) => id !== undefined)
+    
+    // 2. 收集查询条件（使用 toRaw 确保获取原始值，避免响应式对象）
+    const formDisplayParamsRaw = toRaw(formDisplayParams.value) || {}
+    const executedSearchParams = toRaw(internalSearchParams.value) || {}
+    
+    // 3. 构建状态对象
+    const state = {
+      formDisplayParams: formDisplayParamsRaw,      // 表单显示值（用户输入的所有条件，包括未执行的）
+      executedSearchParams,                        // 已执行的查询条件（只在点击"查询"按钮时更新）
+      currentPage: currentPage.value,              // 当前页码
+      pageSize: pageSize.value,                    // 每页条数
+      activeQuickQueryIndex: activeQuickQueryIndex.value, // 快捷查询菜单选中的索引
+      selectedIds                                  // 表格选中的行ID数组
+    }
+    
+    // 4. 同时保存到内存和 sessionStorage
+    const fullPath = currentRoute.value.fullPath
+    const stateKey = getPageStateKey()
+    
+    // 保存到内存（用于页面切换时的快速恢复）
+    tagsViewStore.setPageState(fullPath, state)
+    
+    // 保存到 sessionStorage（用于页面刷新后的恢复）
+    sessionStorage.setItem(stateKey, JSON.stringify(state))
+  } catch (err) {
+    console.error('BaseGrid: 保存页面状态失败', err)
+  }
+}
+
+/**
+ * 恢复页面状态
+ * 
+ * 恢复策略：
+ * 1. 优先从内存（tagsViewStore.pageStates）读取（页面切换场景）
+ * 2. 如果内存中没有，则从 sessionStorage 恢复（页面刷新场景）
+ * 3. 恢复后同步到内存，确保后续访问快速
+ * 
+ * 状态验证：
+ * - 验证状态格式是否正确（BaseGrid 的状态格式）
+ * - 如果格式不正确（可能是其他组件的状态），则清除并返回 null
+ * 
+ * @returns 恢复的状态对象，如果没有可恢复的状态则返回 null
+ */
+const restorePageState = (): any | null => {
+  try {
+    const fullPath = currentRoute.value.fullPath
+    const stateKey = getPageStateKey()
+    
+    // ========== 步骤1：尝试从内存恢复（页面切换场景） ==========
+    let state = tagsViewStore.getPageState(fullPath)
+    
+    if (state) {
+      // 验证状态格式
+      if (isValidBaseGridState(state)) {
+        return state
+      } else {
+        // 状态格式不正确，可能是其他组件的状态，清除它
+        tagsViewStore.clearPageState(fullPath)
+        state = null
+      }
+    }
+    
+    // ========== 步骤2：尝试从 sessionStorage 恢复（页面刷新场景） ==========
+    const cache = sessionStorage.getItem(stateKey)
+    
+    if (cache) {
+      try {
+        state = JSON.parse(cache)
+        
+        // 验证状态格式
+        if (isValidBaseGridState(state)) {
+          // 同步到内存，确保后续访问快速
+          tagsViewStore.setPageState(fullPath, state)
+          return state
+        } else {
+          // 状态格式不正确，清除它
+          sessionStorage.removeItem(stateKey)
+          state = null
+        }
+      } catch (err) {
+        console.error('BaseGrid: 解析 sessionStorage 状态失败', err)
+        sessionStorage.removeItem(stateKey)
+        state = null
+      }
+    }
+    
+    // ========== 步骤3：没有可恢复的状态 ==========
+    return null
+  } catch (err) {
+    console.error('BaseGrid: 恢复页面状态失败', err)
+    return null
   }
 }
 
@@ -833,101 +1215,30 @@ const restoreTableSelection = async (selectedIds: any[]) => {
 }
 
 /**
- * 配置 StatusStoragePlus 的状态存储
+ * 清除页面状态缓存
+ * 
+ * 功能：
+ * 同时清理内存（tagsViewStore.pageStates）和 sessionStorage 中的状态
+ * 
+ * 使用场景：
+ * - 标签页关闭时自动清理
+ * - 手动清理状态时调用
+ * 
+ * @param stateKey - 可选的状态 key，如果不提供则使用当前的 getPageStateKey()
+ * @param fullPath - 可选的路由完整路径，如果不提供则使用当前路由的 fullPath
  */
-const stateStores = computed<StatusStoreItem[]>(() => {
-  const stores: StatusStoreItem[] = [
-    {
-      name: 'baseGrid',
-      getState: () => {
-        // 收集查询条件（使用 toRaw 确保获取原始值，避免响应式对象）
-        const formDisplayParamsRaw = toRaw(formDisplayParams.value) || {}
-        const executedSearchParams = toRaw(internalSearchParams.value) || {}
-        
-        return {
-          formDisplayParams: formDisplayParamsRaw,
-          executedSearchParams,
-          currentPage: currentPage.value,
-          pageSize: pageSize.value,
-          activeQuickQueryIndex: activeQuickQueryIndex.value,
-          selectedIds: currentSelectedIds.value
-        }
-      },
-      setState: async (state: any) => {
-        isRestoring.value = true
-        
-        try {
-          // 恢复查询条件
-          if (state.formDisplayParams) {
-            formDisplayParams.value = { ...state.formDisplayParams }
-            // 通过 QueryBar 组件恢复表单显示值
-            if (queryBarRef.value && typeof queryBarRef.value.setValues === 'function') {
-              await nextTick()
-              await queryBarRef.value.setValues(state.formDisplayParams)
-            }
-          }
-          
-          if (state.executedSearchParams) {
-            internalSearchParams.value = { ...state.executedSearchParams }
-          }
-          
-          // 恢复分页（需要特殊处理，避免触发多次 getList）
-          if (state.pageSize !== undefined) {
-            const targetPageSize = typeof state.pageSize === 'number' && state.pageSize > 0 ? state.pageSize : 10
-            const targetCurrentPage = typeof state.currentPage === 'number' && state.currentPage > 0 ? state.currentPage : 1
-            
-            const pageSizeChanged = targetPageSize !== pageSize.value
-            const currentPageChanged = targetCurrentPage !== currentPage.value
-            
-            // 如果 pageSize 变化且 currentPage !== 1，先设置 currentPage = 1
-            if (pageSizeChanged && targetCurrentPage !== 1) {
-              currentPage.value = 1
-              await nextTick()
-            }
-            
-            // 恢复 pageSize
-            if (pageSizeChanged) {
-              pageSize.value = targetPageSize
-              await nextTick()
-            }
-            
-            // 恢复 currentPage
-            if (currentPageChanged && targetCurrentPage !== currentPage.value) {
-              currentPage.value = targetCurrentPage
-              await nextTick()
-            }
-          }
-          
-          // 恢复快捷查询选择
-          // 注意：需要确保 quickQueryData 已经加载完成
-          if (state.activeQuickQueryIndex !== undefined && props.quickQueryList && quickQueryData.value.length > 0) {
-            const targetIndex = String(state.activeQuickQueryIndex)
-            restoreQuickQuerySelect(targetIndex)
-          } else if (state.activeQuickQueryIndex !== undefined && props.quickQueryList) {
-            // 如果 quickQueryData 还没有加载完成，保存索引等待后续恢复
-            savedActiveQuickQueryIndex.value = String(state.activeQuickQueryIndex)
-          }
-          
-          // 保存选中的行ID，等待数据加载完成后恢复
-          if (state.selectedIds && Array.isArray(state.selectedIds)) {
-            savedSelectedIds.value = state.selectedIds
-          }
-          
-          await nextTick()
-        } finally {
-          isRestoring.value = false
-        }
-      },
-      componentRef: {
-        ref: queryBarRef,
-        methodName: 'setValues',
-        getRestoreParams: (state: any) => state.formDisplayParams || {}
-      }
-    }
-  ]
-  
-  return stores
-})
+const clearPageState = (stateKey?: string, fullPath?: string) => {
+  try {
+    const keyToRemove = stateKey || getPageStateKey()
+    const pathToClear = fullPath || currentRoute.value.fullPath
+    
+    // 同时清理内存和 sessionStorage
+    tagsViewStore.clearPageState(pathToClear)
+    sessionStorage.removeItem(keyToRemove)
+  } catch (err) {
+    console.error('BaseGrid: 清除页面状态失败', err)
+  }
+}
 
 // ==================== 工具函数 ====================
 /**
@@ -1242,12 +1553,7 @@ defineExpose({
 </script>
 
 <template>
-  <StatusStoragePlus
-    ref="statusStoragePlusRef"
-    :stores="stateStores"
-    storage-prefix="BASE_GRID_STATE_"
-  >
-    <div class="base-grid-wrapper" v-show="pageReady">
+  <div class="base-grid-wrapper" v-show="pageReady">
     <!-- 查询条件区域 -->
     <QueryBar 
       v-if="props.searchConditions && props.searchConditions.length > 0"
@@ -1269,7 +1575,6 @@ defineExpose({
           class="base-grid-quick-query-menu"
           shadow="never"
           :default-active="activeQuickQueryIndex"
-          :key="`menu-${activeQuickQueryIndex}`"
           @select="handleQuickQuerySelect"
         >
           <ElMenuItem
@@ -1361,7 +1666,6 @@ defineExpose({
     </template>
   </Table>
   </div>
-  </StatusStoragePlus>
 </template>
 
 <style scoped>
