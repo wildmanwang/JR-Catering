@@ -2,12 +2,13 @@
 import { unref, ref, reactive, watch, onMounted, onBeforeUnmount, nextTick, toRaw, watchEffect, computed } from 'vue'
 import { useTable } from '@/hooks/web/useTable'
 import { Table, TableColumn } from '@/components/Table'
-import { ElImage, ElCard, ElMenu, ElMenuItem } from 'element-plus'
+import { ElCard, ElMenu, ElMenuItem } from 'element-plus'
 import { BaseButton } from '@/components/Button'
 import { ButtonPlus } from '@/components/ButtonPlus'
 import { PrompInfo } from '@/components/PrompInfo'
 import { QueryBar, type QueryCondition } from '@/components/QueryBar'
 import { StatusStoragePlus, type StatusStoreItem } from '@/components/StatusStoragePlus'
+import { ImageSingle } from '@/components/ImageSingle'
 
 defineOptions({
   name: 'BaseGrid'
@@ -69,9 +70,8 @@ interface GridColumn {
   showConfig?: boolean // 是否可配置显示/隐藏：true=可在右上角配置显示/隐藏，false=不可配置，固定显示。默认值为 true（可配置）
   formatter?: (row: any) => any // 格式化函数
   // 图片列专用配置
-  imageField?: string // 图片字段名，默认使用 field
-  imageListField?: string // 图片列表字段名，用于预览
-  imageHeight?: string // 图片显示高度
+  imageField?: string // 图片字段名，默认使用 field（可以是 url 字符串或 url 数组）
+  imageSize?: 'normal' | 'small' // 图片尺寸：normal（100px*100px）或 small（60px*60px），默认 normal
   // 状态列专用配置
   statusOptions?: Array<{ label: string; value: any }> | (() => Array<{ label: string; value: any }>) // 状态映射选项
   // 操作列专用配置
@@ -1014,7 +1014,7 @@ const convertColumns = (columns: GridColumn[]): TableColumn[] => {
         }
 
       case 'image':
-        // 图片列：支持单张图片或图片列表，支持预览
+        // 图片列：使用 ImageSingle 组件
         return {
           ...baseColumn,
           // 使用 baseColumn.show，已正确处理 col.show !== false
@@ -1022,69 +1022,41 @@ const convertColumns = (columns: GridColumn[]): TableColumn[] => {
             default: (data: any) => {
               const row = data.row
               const imageField = col.imageField || col.field // 图片字段名
-              const imageListField = col.imageListField || imageField // 图片列表字段名
-              const imageHeight = col.imageHeight || '60px' // 图片显示高度
-
-              /**
-               * 标准化图片 URL，添加 OSS 处理参数
-               * @param url 原始图片 URL
-               * @returns 处理后的图片 URL
-               */
-              const normalizeImageUrl = (url: string) => {
-                if (!url) return DEFAULT_IMAGE
-                const [path] = url.split('?')
-                return path ? `${path}?x-oss-process=image/resize,m_fixed,h_100` : DEFAULT_IMAGE
-              }
-
-              let imageUrl = DEFAULT_IMAGE
-              let previewList: string[] = []
-
-              // 处理图片列表
-              if (Array.isArray(row[imageListField]) && row[imageListField].length > 0) {
-                imageUrl = normalizeImageUrl(row[imageListField][0])
-                // 生成预览列表（移除 OSS 参数）
-                previewList = row[imageListField]
-                  .map((img: string) => {
-                    if (typeof img === 'string' && img.includes('?')) {
-                      const [path] = img.split('?')
-                      return path || img
-                    }
-                    return img
-                  })
-                  .filter(Boolean)
-              } else if (row[imageField]) {
-                // 处理单张图片
-                imageUrl = normalizeImageUrl(row[imageField])
-                previewList = [imageUrl]
-              }
-
-              const hasImage = imageUrl !== DEFAULT_IMAGE && previewList.length > 0
-
-              /**
-               * 图片加载失败处理：替换为默认图片
-               */
-              const handleError = (e: Event) => {
-                const img = e.target as HTMLImageElement
-                if (img && img.src !== DEFAULT_IMAGE) {
-                  img.src = DEFAULT_IMAGE
+              const imageSize = col.imageSize || 'normal' // 图片尺寸，默认 normal
+              
+              // 获取图片数据：优先使用 imageField，如果取不到值，则从 row 中查找任何数组类型的值
+              let imageValue: any = null
+              
+              // 首先尝试使用配置的字段名
+              if (imageField && row[imageField] !== undefined) {
+                imageValue = row[imageField]
+              } else {
+                // 如果配置的字段取不到值，查找 row 中所有数组类型的值
+                // 通常图片字段都是数组格式
+                const arrayFields = Object.keys(row).filter(key => {
+                  const value = row[key]
+                  return Array.isArray(value) && value.length > 0
+                })
+                
+                // 如果有数组字段，使用第一个数组字段的值
+                if (arrayFields.length > 0) {
+                  imageValue = row[arrayFields[0]]
                 }
+              }
+              
+              // 如果获取到的值是数组，确保它不为空
+              if (Array.isArray(imageValue) && imageValue.length === 0) {
+                imageValue = null
               }
 
               return (
                 <div class="resource-image-name flex items-center">
-                  <div>
-                    <ElImage
-                      src={imageUrl}
-                      onError={handleError}
-                      zoom-rate={1.2}
-                      preview-src-list={hasImage ? previewList : []}
-                      preview-teleported={true}
-                      hide-on-click-modal={true}
-                      initial-index={data.$index}
-                      style={`height: ${imageHeight}; display: block`}
-                      fit="cover"
-                    />
-                  </div>
+                  <ImageSingle
+                    modelValue={imageValue}
+                    disabled={true}
+                    size={imageSize}
+                    defaultImage={DEFAULT_IMAGE}
+                  />
                 </div>
               )
             }

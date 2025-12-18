@@ -87,12 +87,11 @@
       type: 'selection' as const
     },
     {
-      field: 'dish_image',
+      field: 'dish_images',
       label: '图片',
       type: 'image' as const,
       width: '110px',
-      imageListField: 'dish_images',
-      imageHeight: '60px'
+      imageSize: 'small' as const
     },
     {
       field: 'id',
