@@ -6,13 +6,14 @@
 -->
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
-import { useRouter, onBeforeRouteLeave } from 'vue-router'
+import { useRouter } from 'vue-router'
 import { useTagsViewStoreWithOut } from '@/store/modules/tagsView'
 import { ElMessageBox } from 'element-plus'
 import TablePlus from '@/components/TablePlus'
 import type { TablePlusColumn } from '@/components/TablePlus'
 import { ButtonPlus } from '@/components/ButtonPlus'
 import { PrompInfo } from '@/components/PrompInfo'
+import { StatusStoragePlus, type StatusStoreItem } from '@/components/StatusStoragePlus'
 
 /**
  * 列配置接口（扩展 TablePlusColumn）
@@ -176,16 +177,69 @@ const getDefaultRow = (): any => {
 const router = useRouter()
 const tagsViewStore = useTagsViewStoreWithOut()
 
-const PAGE_STATE_KEY = computed(() => `IMPORT_GRID_STATE_${router.currentRoute.value.fullPath}`)
-
 const pageReady = ref(false)
 const isRestoring = ref(false)
-let saveStateTimer: NodeJS.Timeout | null = null
-let mountedRoutePath: string | null = null
-let mountedRouteFullPath: string | null = null
 
 const dataList = ref<any[]>([])
 const originalData = ref<any[]>([])
+
+// StatusStoragePlus 组件引用
+const statusStoragePlusRef = ref<InstanceType<typeof StatusStoragePlus>>()
+
+// 深拷贝数据
+const deepCloneData = (data: any[]): any[] => {
+  return JSON.parse(JSON.stringify(data))
+}
+
+// 标记是否已经恢复了状态（用于在 onMounted 中判断是否需要显示空表）
+const hasRestoredState = ref(false)
+
+// 配置状态存储（StatusStoragePlus 组件使用）
+const stateStores = computed<StatusStoreItem[]>(() => [
+  {
+    name: 'importGrid',
+    getState: () => ({
+      data: deepCloneData(dataList.value),
+      originalData: deepCloneData(originalData.value)
+    }),
+    setState: async (state: any) => {
+      isRestoring.value = true
+      hasRestoredState.value = true
+      
+      // 恢复数据
+      if (state.data) {
+        dataList.value = deepCloneData(state.data)
+      }
+      // 恢复 originalData（保存状态时已经保存了原始数据）
+      if (state.originalData) {
+        originalData.value = deepCloneData(state.originalData)
+      }
+      
+      // 等待 ImagePlus 等子组件完成数据初始化
+      // 使用双重 nextTick 确保所有子组件（包括 ImagePlus）都已完成数据更新
+      await nextTick()
+      await nextTick()
+      
+      // 注意：这里不能重新设置 originalData，因为我们要保持恢复的原始数据
+      // 这样才能正确检测到用户修改的数据
+      // 如果子组件（如 ImagePlus）对数据进行了规范化，我们需要同步更新 originalData 中对应的格式
+      // 但是只同步格式变化，不改变数据的值，以确保能正确检测到未保存的修改
+      
+      // 同步 originalData 和 dataList 的长度（处理删除行的情况）
+      if (originalData.value.length > dataList.value.length) {
+        originalData.value = originalData.value.slice(0, dataList.value.length)
+      }
+      
+      isRestoring.value = false
+      
+      // 触发数据加载事件
+      emit('dataLoaded', dataList.value)
+      if (prompInfoRef.value) {
+        prompInfoRef.value.info('已恢复上次编辑的数据')
+      }
+    }
+  }
+])
 const currentRowIndex = ref<number | null>(null)
 const prompInfoRef = ref<InstanceType<typeof PrompInfo>>()
 const saveLoading = ref(false)
@@ -224,64 +278,21 @@ const beforeCloseHandler = async (): Promise<boolean> => {
   }
 }
 
-/**
- * 路由守卫：离开页面前检查未保存的修改（仅用于路由跳转，不用于页签关闭）
- * 注意：页签关闭由页签守卫处理，这里只处理路由跳转的情况
- */
-onBeforeRouteLeave((_to, _from, next) => {
-  // 如果没有配置 saveConfig，不需要检查
-  if (!props.saveConfig) {
-    next()
-    return
-  }
-  
-  // 检查是否是关闭页签的操作
-  // 如果当前路由不在已访问的页签列表中，说明页签被删除了，这是关闭页签的操作
-  // 页签关闭由页签守卫处理，这里直接允许
-  const isClosing = !tagsViewStore.getVisitedViews.some(
-    view => view.fullPath === _from.fullPath || view.path === _from.path
-  )
-  
-  if (isClosing) {
-    // 页签关闭由页签守卫处理，这里直接允许
-    next()
-    return
-  }
-  
-  // 路由跳转（切换窗口），检查是否有未保存的修改
-  if (!hasUnsavedChanges()) {
-    // 没有未保存的修改，允许跳转
-    next()
-    return
-  }
-  
-  // 有未保存的修改，弹出确认对话框
-  ElMessageBox.confirm('数据未保存，确定要退出吗？', '提示', {
-    confirmButtonText: '确定',
-    cancelButtonText: '取消',
-    type: 'warning'
-  })
-    .then(() => {
-      // 用户确认退出，允许跳转
-      next()
-    })
-    .catch(() => {
-      // 用户取消退出，阻止跳转
-      next(false)
-    })
-})
 
-/**
- * 浏览器标签页关闭前检查未保存的修改
- */
-const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-  if (props.saveConfig && hasUnsavedChanges()) {
-    // 现代浏览器会忽略自定义消息，只显示默认消息
-    event.preventDefault()
-    event.returnValue = '' // Chrome 需要设置 returnValue
-    return '' // 其他浏览器
-  }
-}
+// 注意：已移除 handleBeforeUnload 监听
+// 原因：
+// 1. 页面刷新时，状态已由 StatusStoragePlus 自动保存到 localStorage，刷新后可以恢复
+// 2. 关闭浏览器标签页时，状态会在组件卸载时自动保存，下次打开可以恢复
+// 3. 应用内的页签关闭已由 beforeCloseHandler 处理，有友好的自定义提示
+// 4. 浏览器系统对话框体验较差，且现代浏览器不允许自定义消息内容
+// 如果需要阻止刷新/关闭标签页，可以取消下面的注释，但建议保留当前实现
+// const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+//   if (props.saveConfig && hasUnsavedChanges()) {
+//     event.preventDefault()
+//     event.returnValue = ''
+//     return ''
+//   }
+// }
 
 // ==================== 数据修改检测 ====================
 /**
@@ -857,8 +868,8 @@ const handleRefresh = async (): Promise<void> => {
       .map(row => row.id)
     
     if (savedIds.length === 0) {
-      // 没有已保存的数据，显示空表
-      await setEmptyTable('没有已保存的数据')
+      // 没有已保存的数据，清空数据列表（不插入空行，与 F5 刷新行为一致）
+      clearDataList('没有已保存的数据')
       return
     }
     
@@ -882,8 +893,8 @@ const handleRefresh = async (): Promise<void> => {
     }
     
     if (rawDataArray.length === 0) {
-      // 没有获取到数据，显示空表
-      await setEmptyTable('没有获取到数据')
+      // 没有获取到数据，清空数据列表（不插入空行，与 F5 刷新行为一致）
+      clearDataList('没有获取到数据')
       return
     }
     
@@ -946,73 +957,7 @@ const handleRowAdd = (defaultRow: any) => {
 }
 
 // ==================== 数据持久化 ====================
-/**
- * 保存页面状态到 localStorage
- */
-const savePageState = async () => {
-  if (!pageReady.value || isRestoring.value) return
-  
-  try {
-    const state = {
-      data: JSON.parse(JSON.stringify(dataList.value)),
-      originalData: JSON.parse(JSON.stringify(originalData.value)),
-      timestamp: Date.now(),
-      fullPath: router.currentRoute.value.fullPath
-    }
-    localStorage.setItem(PAGE_STATE_KEY.value, JSON.stringify(state))
-  } catch (err) {
-    console.error('保存页面状态失败：', err)
-  }
-}
-
-/**
- * 从 localStorage 恢复页面状态
- */
-const restorePageState = () => {
-  try {
-    const savedState = localStorage.getItem(PAGE_STATE_KEY.value)
-    if (savedState) {
-      const state = JSON.parse(savedState)
-      
-      const now = Date.now()
-      const elapsed = now - state.timestamp
-      const maxAge = 24 * 60 * 60 * 1000 // 24小时
-      
-      if (elapsed < maxAge) {
-        isRestoring.value = true
-        dataList.value = state.data
-        originalData.value = state.originalData
-        isRestoring.value = false
-        return true
-      } else {
-        localStorage.removeItem(PAGE_STATE_KEY.value)
-      }
-    }
-  } catch (err) {
-    console.error('恢复页面状态失败：', err)
-  }
-  return false
-}
-
-/**
- * 清空页面状态
- */
-const clearPageState = (stateKey?: string, fullPath?: string) => {
-  const keyToRemove = stateKey || PAGE_STATE_KEY.value
-  const pathToCheck = fullPath || router.currentRoute.value.fullPath
-  
-  try {
-    const savedState = localStorage.getItem(keyToRemove)
-    if (savedState) {
-      const state = JSON.parse(savedState)
-      if (state.fullPath === pathToCheck) {
-        localStorage.removeItem(keyToRemove)
-      }
-    }
-  } catch (err) {
-    console.error('清空页面状态失败：', err)
-  }
-}
+// 状态保存和恢复功能已由 StatusStoragePlus 组件处理
 
 /**
  * 处理图片数组，去掉数字前缀（服务器用于排序的数字）
@@ -1088,7 +1033,19 @@ const setDataAndWaitForInit = async (newData: any[], infoMessage?: string): Prom
 }
 
 /**
- * 设置空表（公共逻辑）
+ * 清空数据列表（不插入空行，用于刷新时无数据的情况）
+ * @param infoMessage 可选的提示信息
+ */
+const clearDataList = (infoMessage?: string): void => {
+  dataList.value = []
+  originalData.value = []
+  if (infoMessage && prompInfoRef.value) {
+    prompInfoRef.value.info(infoMessage)
+  }
+}
+
+/**
+ * 设置空表（插入一个空行，用于首次打开需要默认行的情况）
  * @param infoMessage 可选的提示信息
  */
 const setEmptyTable = async (infoMessage?: string): Promise<void> => {
@@ -1147,24 +1104,13 @@ watch(
   () => dataList.value,
   (newData) => {
     emit('dataChanged', newData)
-    
-    if (pageReady.value && !isRestoring.value) {
-      if (saveStateTimer) {
-        clearTimeout(saveStateTimer)
-      }
-      saveStateTimer = setTimeout(async () => {
-        await savePageState()
-      }, 500)
-    }
+    // 状态保存由 StatusStoragePlus 组件自动处理
   },
   { deep: true, flush: 'post' }
 )
 
 // ==================== 生命周期 ====================
 onMounted(async () => {
-  mountedRoutePath = router.currentRoute.value.path
-  mountedRouteFullPath = router.currentRoute.value.fullPath
-  
   // 检查是否有手选数据（sessionStorage）
   const hasManualSelection = sessionStorage.getItem(props.storageKey) !== null
   
@@ -1174,7 +1120,7 @@ onMounted(async () => {
     const loaded = await loadDataFromStorage()
     if (loaded) {
       // 清除状态数据，因为使用了新的手选数据
-      clearPageState()
+      statusStoragePlusRef.value?.clearState()
     } else {
       // 手选数据格式错误，显示空表
       await setEmptyTable()
@@ -1183,18 +1129,18 @@ onMounted(async () => {
       }
     }
   } else {
-    // 情况2：页面恢复（从其他页面切换回来），或首次打开
-    // 使用状态数据，不检查手选数据
-    const restored = restorePageState()
+    // 情况2：页面恢复（从其他页面切换回来），或首次打开，或刷新页面
+    // 状态恢复由 StatusStoragePlus 组件自动处理（只有切换回来时才恢复，首次打开/刷新不恢复）
+    // StatusStoragePlus 会在 onMounted 时检查恢复标记，如果是切换回来会自动调用 setState
+    // 我们需要等待一下，让 StatusStoragePlus 有机会恢复状态
+    await nextTick()
+    await nextTick() // 等待 StatusStoragePlus 的 onMounted 执行
     
-    if (restored) {
-      emit('dataLoaded', dataList.value)
-      if (prompInfoRef.value) {
-        prompInfoRef.value.info('已恢复上次编辑的数据')
-      }
-    } else {
-      // 没有状态数据，显示空表
-      await setEmptyTable()
+    // 如果没有恢复状态（首次打开、刷新页面或没有保存的状态），不自动插入空行
+    // 让 dataList 保持为空数组，用户需要手动添加数据
+    if (!hasRestoredState.value && dataList.value.length === 0) {
+      // 不调用 setEmptyTable()，保持空数组，避免刷新后自动插入空行导致提示保存
+      // 如果用户需要添加数据，可以通过工具栏的"新增"按钮添加
       if (prompInfoRef.value) {
         prompInfoRef.value.ready()
       }
@@ -1207,48 +1153,23 @@ onMounted(async () => {
   if (props.saveConfig) {
     const currentRoute = router.currentRoute.value
     tagsViewStore.registerBeforeCloseHandler(currentRoute.fullPath, beforeCloseHandler)
-    // 监听浏览器标签页关闭事件
-    window.addEventListener('beforeunload', handleBeforeUnload)
+    // 注意：不再监听 beforeunload 事件
+    // 原因：状态已由 StatusStoragePlus 自动保存，刷新/关闭标签页时不会丢失数据
+    // 如果需要浏览器级别的提示，可以取消下面的注释
+    // window.addEventListener('beforeunload', handleBeforeUnload)
   }
 })
 
 onBeforeUnmount(() => {
-  if (saveStateTimer) {
-    clearTimeout(saveStateTimer)
-    saveStateTimer = null
-  }
-  
-  // 注销页签关闭前检查函数并移除浏览器标签页关闭事件监听
+  // 注销页签关闭前检查函数
   if (props.saveConfig) {
     const currentRoute = router.currentRoute.value
     tagsViewStore.unregisterBeforeCloseHandler(currentRoute.fullPath)
-    window.removeEventListener('beforeunload', handleBeforeUnload)
+    // 注意：不再移除 beforeunload 监听（因为已经不再添加）
+    // window.removeEventListener('beforeunload', handleBeforeUnload)
   }
   
-  const checkAndClear = () => {
-    const fullPathToCheck = mountedRouteFullPath || router.currentRoute.value.fullPath
-    const visitedViews = tagsViewStore.getVisitedViews
-    const pathToCheck = mountedRoutePath || router.currentRoute.value.path
-    const isStillOpen = visitedViews.some(view => view.path === pathToCheck)
-    
-    if (!isStillOpen) {
-      const stateKey = `IMPORT_GRID_STATE_${fullPathToCheck}`
-      clearPageState(stateKey, fullPathToCheck)
-      return true
-    } else {
-      return false
-    }
-  }
-  
-  nextTick(() => {
-    setTimeout(() => {
-      if (checkAndClear()) return
-      
-      setTimeout(() => {
-        checkAndClear()
-      }, 150)
-    }, 50)
-  })
+  // 状态清空由 StatusStoragePlus 组件自动处理
 })
 
 // ==================== 暴露方法 ====================
@@ -1268,10 +1189,15 @@ defineExpose({
 </script>
 
 <template>
-  <div class="import-grid-container">
-    <!-- 工具栏 -->
-    <div v-if="props.showToolbar" class="import-grid-toolbar">
-      <div class="toolbar-left">
+  <StatusStoragePlus
+    ref="statusStoragePlusRef"
+    :stores="stateStores"
+    storage-prefix="IMPORT_GRID_STATE_"
+  >
+    <div class="import-grid-container">
+      <!-- 工具栏 -->
+      <div v-if="props.showToolbar" class="import-grid-toolbar">
+        <div class="toolbar-left">
         <template v-for="(btn, index) in toolbarButtons" :key="index">
           <ButtonPlus
             v-if="btn.type === 'add'"
@@ -1315,10 +1241,10 @@ defineExpose({
             {{ btn.label }}
           </ButtonPlus>
         </template>
+        </div>
       </div>
-    </div>
     
-    <!-- 表格 -->
+      <!-- 表格 -->
     <div class="table-wrapper">
       <TablePlus
         ref="tablePlusRef"
@@ -1330,8 +1256,9 @@ defineExpose({
         @row-delete="handleRowDelete"
         @row-add="handleRowAdd"
       />
+      </div>
     </div>
-  </div>
+  </StatusStoragePlus>
 </template>
 
 <style lang="less" scoped>

@@ -16,6 +16,8 @@ export interface TagsViewState {
   beforeCloseHandlers: Map<string, () => Promise<boolean>>
 }
 
+const VISITED_VIEWS_STORAGE_KEY = 'TAGS_VIEW_VISITED_VIEWS'
+
 export const useTagsViewStore = defineStore('tagsView', {
   state: (): TagsViewState => ({
     visitedViews: [],
@@ -51,11 +53,24 @@ export const useTagsViewStore = defineStore('tagsView', {
     addVisitedView(view: RouteLocationNormalizedLoaded) {
       if (this.visitedViews.some((v) => v.path === view.path)) return
       if (view.meta?.noTagsView) return
+      
+      // 如果是刷新后首次添加标签，尝试从 sessionStorage 恢复 visitedViews
+      if (this.visitedViews.length === 0) {
+        this.restoreVisitedViewsFromStorage()
+      }
+      
+      // 检查是否已存在（可能在恢复时已添加）
+      if (this.visitedViews.some((v) => v.path === view.path)) return
+      
       this.visitedViews.push(
         Object.assign({}, view, {
           title: view.meta?.title || 'no-name'
         })
       )
+      
+      // 保存 visitedViews 到 sessionStorage
+      this.saveVisitedViewsToStorage()
+      
       // 自动从 sessionStorage 恢复页面状态（页面刷新场景）
       this.restorePageStateFromStorage(view.fullPath)
     },
@@ -105,6 +120,8 @@ export const useTagsViewStore = defineStore('tagsView', {
           } catch (err) {
             // 静默处理清理失败的情况
           }
+          // 保存 visitedViews 到 sessionStorage
+          this.saveVisitedViewsToStorage()
           break
         }
       }
@@ -140,6 +157,8 @@ export const useTagsViewStore = defineStore('tagsView', {
       this.visitedViews = authStore.getUser
         ? this.visitedViews.filter((tag) => tag?.meta?.affix)
         : []
+      // 保存 visitedViews 到 sessionStorage
+      this.saveVisitedViewsToStorage()
     },
     /**
      * 删除其他访问视图（保留当前视图和固定标签）
@@ -163,6 +182,8 @@ export const useTagsViewStore = defineStore('tagsView', {
       this.visitedViews = this.visitedViews.filter((v) => {
         return v?.meta?.affix || v.path === view.path
       })
+      // 保存 visitedViews 到 sessionStorage
+      this.saveVisitedViewsToStorage()
     },
     /**
      * 删除左侧访问视图（保留当前视图及右侧视图和固定标签）
@@ -184,6 +205,8 @@ export const useTagsViewStore = defineStore('tagsView', {
           return v?.meta?.affix || v.path === view.path || i > index
         })
         this.addCachedView()
+        // 保存 visitedViews 到 sessionStorage
+        this.saveVisitedViewsToStorage()
       }
     },
     /**
@@ -206,6 +229,8 @@ export const useTagsViewStore = defineStore('tagsView', {
           return v?.meta?.affix || v.path === view.path || i < index
         })
         this.addCachedView()
+        // 保存 visitedViews 到 sessionStorage
+        this.saveVisitedViewsToStorage()
       }
     },
     /**
@@ -216,6 +241,8 @@ export const useTagsViewStore = defineStore('tagsView', {
       for (let v of this.visitedViews) {
         if (v.path === view.path) {
           v = Object.assign(v, view)
+          // 保存 visitedViews 到 sessionStorage
+          this.saveVisitedViewsToStorage()
           break
         }
       }
@@ -344,6 +371,46 @@ export const useTagsViewStore = defineStore('tagsView', {
       }
       // 如果没有注册检查函数，默认允许关闭
       return true
+    },
+    /**
+     * 保存 visitedViews 到 sessionStorage
+     */
+    saveVisitedViewsToStorage() {
+      try {
+        // 只保存必要的字段，避免序列化问题
+        const viewsToSave = this.visitedViews.map((v) => ({
+          path: v.path,
+          fullPath: v.fullPath,
+          name: v.name,
+          meta: v.meta,
+          params: v.params,
+          query: v.query,
+          hash: v.hash,
+          title: v.meta?.title || 'no-name'
+        }))
+        sessionStorage.setItem(VISITED_VIEWS_STORAGE_KEY, JSON.stringify(viewsToSave))
+      } catch (err) {
+        console.error('保存 visitedViews 到 sessionStorage 失败：', err)
+      }
+    },
+    /**
+     * 从 sessionStorage 恢复 visitedViews（页面刷新场景）
+     */
+    restoreVisitedViewsFromStorage() {
+      try {
+        const savedViews = sessionStorage.getItem(VISITED_VIEWS_STORAGE_KEY)
+        if (savedViews) {
+          const views = JSON.parse(savedViews)
+          if (Array.isArray(views) && views.length > 0) {
+            // 恢复 visitedViews（但不触发自动保存，避免循环）
+            this.visitedViews = views as RouteLocationNormalizedLoaded[]
+            // 恢复后更新缓存
+            this.addCachedView()
+          }
+        }
+      } catch (err) {
+        console.error('从 sessionStorage 恢复 visitedViews 失败：', err)
+      }
     }
   },
   persist: false
