@@ -1814,10 +1814,6 @@ defineExpose({
   flex-shrink: 0;
 }
 
-/* 移除 ButtonPlus 按钮的默认 margin，确保间距由 gap 控制 */
-.base-grid-toolbar-left :deep(.my-button) {
-  margin: 0;
-}
 
 /* 工具栏中间信息显示区域 */
 .base-grid-toolbar-info {

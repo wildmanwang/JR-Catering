@@ -1297,12 +1297,9 @@ defineExpose({
   gap: 10px;
   flex-shrink: 0;
   
-  :deep(.my-button),
-  :deep(.el-button) {
-    margin: 0 !important;
-  }
-  
-  > * {
+  // ButtonPlus 组件已内置 margin-left: 0，无需额外设置
+  // 仅保留对原生 ElButton 的样式覆盖（如果有使用）
+  :deep(.el-button:not(.my-button)) {
     margin: 0 !important;
   }
 }

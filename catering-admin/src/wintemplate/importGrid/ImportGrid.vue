@@ -26,8 +26,8 @@ export interface ImportGridColumn extends TablePlusColumn {
  * 工具栏按钮配置接口
  */
 export interface ToolbarButton {
-  /** 按钮类型：'add' | 'save' | 'custom' */
-  type: 'add' | 'save' | 'custom'
+  /** 按钮类型：'add' | 'save' | 'refresh' | 'custom' */
+  type: 'add' | 'save' | 'refresh' | 'custom'
   /** 按钮文本（custom 类型时必填） */
   label?: string
   /** 按钮样式类型（custom 类型时使用） */
@@ -36,6 +36,8 @@ export interface ToolbarButton {
   onClick?: () => void | Promise<void>
   /** 是否显示 loading 状态 */
   loading?: boolean
+  /** 是否右对齐（custom 类型时使用） */
+  alignRight?: boolean
   /** 其他 ButtonPlus 属性 */
   [key: string]: any
 }
@@ -187,6 +189,7 @@ const originalData = ref<any[]>([])
 const currentRowIndex = ref<number | null>(null)
 const prompInfoRef = ref<InstanceType<typeof PrompInfo>>()
 const saveLoading = ref(false)
+const refreshLoading = ref(false)
 const tablePlusRef = ref<InstanceType<typeof TablePlus>>()
 
 // ==================== 窗口关闭提醒（页签守卫） ====================
@@ -709,10 +712,13 @@ const addRow = (): { row: any; index: number } => {
  * 计算工具栏按钮配置
  */
 const toolbarButtons = computed<ToolbarButton[]>(() => {
+  const mappedButtons: ToolbarButton[] = []
+  
   if (props.toolbarButtons && props.toolbarButtons.length > 0) {
-    return props.toolbarButtons.map(btn => {
+    // 映射用户自定义的按钮
+    props.toolbarButtons.forEach(btn => {
       if (btn.type === 'add') {
-        return {
+        mappedButtons.push({
           ...btn,
           stype: 'new',
           onClick: async () => {
@@ -721,9 +727,9 @@ const toolbarButtons = computed<ToolbarButton[]>(() => {
               await btn.onClick()
             }
           }
-        }
+        })
       } else if (btn.type === 'save') {
-        return {
+        mappedButtons.push({
           ...btn,
           stype: 'save',
           loading: saveLoading.value,
@@ -733,24 +739,64 @@ const toolbarButtons = computed<ToolbarButton[]>(() => {
               await btn.onClick()
             }
           }
-        }
+        })
+      } else if (btn.type === 'refresh') {
+        mappedButtons.push({
+          ...btn,
+          stype: 'refresh',
+          loading: refreshLoading.value,
+          alignRight: true,
+          onClick: async () => {
+            await handleRefresh()
+            if (btn.onClick) {
+              await btn.onClick()
+            }
+          }
+        })
+      } else {
+        mappedButtons.push(btn)
       }
-      return btn
     })
+  } else {
+    // 没有自定义按钮，使用默认按钮
+    if (props.saveConfig) {
+      mappedButtons.push({
+        type: 'save',
+        stype: 'save',
+        loading: saveLoading.value,
+        onClick: handleSave
+      })
+    }
   }
   
-  const buttons: ToolbarButton[] = []
-  
+  // 如果配置了 saveConfig，自动在保存按钮右边添加刷新按钮（如果还没有的话）
   if (props.saveConfig) {
-    buttons.push({
-      type: 'save',
-      stype: 'save',
-      loading: saveLoading.value,
-      onClick: handleSave
-    })
+    const hasRefreshButton = mappedButtons.some(btn => btn.type === 'refresh')
+    if (!hasRefreshButton) {
+      // 找到保存按钮的位置，在它后面插入刷新按钮
+      const saveIndex = mappedButtons.findIndex(btn => btn.type === 'save')
+      if (saveIndex >= 0) {
+        mappedButtons.splice(saveIndex + 1, 0, {
+          type: 'refresh',
+          stype: 'refresh',
+          loading: refreshLoading.value,
+          alignRight: true,
+          onClick: handleRefresh
+        })
+      } else {
+        // 如果没有保存按钮，直接添加刷新按钮
+        mappedButtons.push({
+          type: 'refresh',
+          stype: 'refresh',
+          loading: refreshLoading.value,
+          alignRight: true,
+          onClick: handleRefresh
+        })
+      }
+    }
   }
   
-  return buttons
+  return mappedButtons
 })
 
 /**
@@ -776,6 +822,85 @@ const handleSave = async (): Promise<void> => {
     }
   } finally {
     saveLoading.value = false
+  }
+}
+
+/**
+ * 处理刷新操作
+ */
+const handleRefresh = async (): Promise<void> => {
+  if (!props.saveConfig) {
+    console.warn('saveConfig is required to use refresh functionality')
+    return
+  }
+  
+  // 检查是否有未保存的修改
+  if (hasUnsavedChanges()) {
+    // 有未保存的修改，弹出确认对话框
+    try {
+      await ElMessageBox.confirm('要放弃已修改的数据吗？', '提示', {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning'
+      })
+    } catch {
+      // 用户取消，不执行刷新
+      return
+    }
+  }
+  
+  refreshLoading.value = true
+  try {
+    // 从当前数据中提取已保存的记录的 ID（排除新增的行）
+    const savedIds = dataList.value
+      .filter(row => row.id && row.id > 0)
+      .map(row => row.id)
+    
+    if (savedIds.length === 0) {
+      // 没有已保存的数据，显示空表
+      await setEmptyTable('没有已保存的数据')
+      return
+    }
+    
+    // 使用 getDetailApi 批量获取详情
+    const config = props.saveConfig
+    if (!config.getDetailApi) {
+      throw new Error('getDetailApi is required for refresh functionality')
+    }
+    
+    // 批量获取详情
+    const detailPromises = savedIds.map(id => config.getDetailApi!(id))
+    const detailResults = await Promise.all(detailPromises)
+    
+    // 处理获取到的数据
+    const rawDataArray: any[] = []
+    for (let i = 0; i < detailResults.length; i++) {
+      const res = detailResults[i]
+      if (res.code === 200 && res.data) {
+        rawDataArray.push(res.data)
+      }
+    }
+    
+    if (rawDataArray.length === 0) {
+      // 没有获取到数据，显示空表
+      await setEmptyTable('没有获取到数据')
+      return
+    }
+    
+    // 映射和合并数据，然后设置并等待初始化
+    const refreshedData = mapAndMergeRowData(rawDataArray)
+    await setDataAndWaitForInit(refreshedData, `已刷新 ${refreshedData.length} 条数据`)
+  } catch (err) {
+    console.error('刷新失败：', err)
+    const errorMessage = err instanceof Error ? err.message : '刷新失败，请稍后重试'
+    if (prompInfoRef.value) {
+      prompInfoRef.value.err(errorMessage)
+    }
+    if (props.saveConfig?.onError) {
+      props.saveConfig.onError(errorMessage)
+    }
+  } finally {
+    refreshLoading.value = false
   }
 }
 
@@ -890,6 +1015,87 @@ const clearPageState = (stateKey?: string, fullPath?: string) => {
 }
 
 /**
+ * 处理图片数组，去掉数字前缀（服务器用于排序的数字）
+ * 图片地址格式可能是 "1http://example.com/image.jpg"，需要去掉开头的数字
+ * @param imageArray 图片数组
+ * @returns 处理后的图片数组
+ */
+const processImageArray = (imageArray: any[]): any[] => {
+  if (!Array.isArray(imageArray)) return []
+  
+  return imageArray.map((item: any) => {
+    if (typeof item === 'string') {
+      // 去掉开头的数字前缀（用于排序的数字）
+      // 匹配格式：数字 + http/https 开头的 URL
+      // 例如："1http://example.com/image.jpg" -> "http://example.com/image.jpg"
+      return item.replace(/^\d+(?=https?:\/\/)/, '')
+    }
+    return item
+  })
+}
+
+/**
+ * 映射和合并行数据（公共逻辑）
+ * @param rawData 原始数据
+ * @returns 合并后的行数据数组
+ */
+const mapAndMergeRowData = (rawDataArray: any[]): any[] => {
+  return rawDataArray.map((item: any) => {
+    const defaultRow = getDefaultRow() // 每行独立创建
+    const mappedRow = props.mapRowData ? props.mapRowData(item) : item
+    // 对mappedRow做完全深拷贝，避免任何引用共享
+    const deepClonedMappedRow = JSON.parse(JSON.stringify(mappedRow))
+    
+    // 处理图片字段：去掉数字前缀（服务器用于排序的数字）
+    const imageColumns = props.columns.filter(col => col.type === 'image')
+    imageColumns.forEach(column => {
+      if (Array.isArray(deepClonedMappedRow[column.field])) {
+        deepClonedMappedRow[column.field] = processImageArray(deepClonedMappedRow[column.field])
+      }
+    })
+    
+    const mergedRow = {
+      ...defaultRow,
+      ...deepClonedMappedRow
+    }
+    return mergedRow
+  })
+}
+
+/**
+ * 设置数据并等待组件初始化完成（公共逻辑）
+ * @param newData 新的数据数组
+ * @param infoMessage 可选的提示信息
+ */
+const setDataAndWaitForInit = async (newData: any[], infoMessage?: string): Promise<void> => {
+  // 更新数据
+  dataList.value = newData
+  
+  // 等待 ImagePlus 组件完成数据初始化（如果有图片列）
+  // 使用双重 nextTick 确保所有子组件（包括 ImagePlus）都已完成数据更新
+  await nextTick()
+  await nextTick()
+  
+  // 在 ImagePlus 组件完成数据初始化后再设置 originalData
+  // 这样可以确保 dataList 和 originalData 的一致性，避免误报未保存修改
+  originalData.value = JSON.parse(JSON.stringify(dataList.value))
+  
+  emit('dataLoaded', dataList.value)
+  
+  if (infoMessage && prompInfoRef.value) {
+    prompInfoRef.value.info(infoMessage)
+  }
+}
+
+/**
+ * 设置空表（公共逻辑）
+ * @param infoMessage 可选的提示信息
+ */
+const setEmptyTable = async (infoMessage?: string): Promise<void> => {
+  await setDataAndWaitForInit([getDefaultRow()], infoMessage)
+}
+
+/**
  * 从 sessionStorage 加载导入数据
  * @returns {Promise<boolean>} 是否成功加载了数据
  */
@@ -914,26 +1120,8 @@ const loadDataFromStorage = async (): Promise<boolean> => {
       
       if (dataArray.length > 0) {
         // 有数据，加载数据
-        // 合并默认行数据和传入数据
-        // 每行都需要创建独立的 defaultRow 以避免引用共享
-        dataList.value = dataArray.map((item: any) => {
-          const defaultRow = getDefaultRow() // 每行独立创建
-          const mappedRow = props.mapRowData(item)
-          // 对mappedRow做完全深拷贝，避免任何引用共享
-          const deepClonedMappedRow = JSON.parse(JSON.stringify(mappedRow))
-          const mergedRow = {
-            ...defaultRow,
-            ...deepClonedMappedRow
-          }
-          return mergedRow
-        })
-        // 初始化原始数据
-        originalData.value = JSON.parse(JSON.stringify(dataList.value))
-        emit('dataLoaded', dataList.value)
-        
-        if (prompInfoRef.value) {
-          prompInfoRef.value.info(`已导入 ${dataList.value.length} 条数据`)
-        }
+        const mergedData = mapAndMergeRowData(dataArray)
+        await setDataAndWaitForInit(mergedData, `已导入 ${mergedData.length} 条数据`)
         
         // 清除 sessionStorage，避免重复加载
         sessionStorage.removeItem(props.storageKey)
@@ -989,9 +1177,7 @@ onMounted(async () => {
       clearPageState()
     } else {
       // 手选数据格式错误，显示空表
-      dataList.value = [getDefaultRow()]
-      originalData.value = JSON.parse(JSON.stringify(dataList.value))
-      emit('dataLoaded', dataList.value)
+      await setEmptyTable()
       if (prompInfoRef.value) {
         prompInfoRef.value.ready()
       }
@@ -1008,9 +1194,7 @@ onMounted(async () => {
       }
     } else {
       // 没有状态数据，显示空表
-      dataList.value = [getDefaultRow()]
-      originalData.value = JSON.parse(JSON.stringify(dataList.value))
-      emit('dataLoaded', dataList.value)
+      await setEmptyTable()
       if (prompInfoRef.value) {
         prompInfoRef.value.ready()
       }
@@ -1117,6 +1301,12 @@ defineExpose({
             @click="btn.onClick"
           />
           <ButtonPlus
+            v-else-if="btn.type === 'refresh'"
+            :stype="btn.stype"
+            :loading="btn.loading"
+            @click="btn.onClick"
+          />
+          <ButtonPlus
             v-else-if="btn.type === 'custom' && btn.alignRight"
             :stype="btn.stype"
             :loading="btn.loading"
@@ -1182,5 +1372,30 @@ defineExpose({
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+// 确保在 ContentWrap 容器中正确显示
+// 这些样式确保 ImportGrid 能够填充整个 ContentWrap 容器的高度
+:deep(.content-wrap),
+:deep(.content-wrap .el-card),
+:deep(.content-wrap .el-card__body) {
+  height: 100% !important;
+  display: flex !important;
+  flex-direction: column !important;
+  padding: 0 !important;
+}
+
+:deep(.content-wrap .el-card__body) {
+  flex: 1 !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+
+:deep(.content-wrap > div) {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
 }
 </style>

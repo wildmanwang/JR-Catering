@@ -173,28 +173,3 @@ onMounted(async () => {
   </ContentWrap>
 </template>
 
-<style lang="less" scoped>
-:deep(.content-wrap),
-:deep(.content-wrap .el-card),
-:deep(.content-wrap .el-card__body) {
-  height: 100% !important;
-  display: flex !important;
-  flex-direction: column !important;
-  padding: 0 !important;
-}
-
-:deep(.content-wrap .el-card__body) {
-  flex: 1 !important;
-  min-height: 0 !important;
-  overflow: hidden !important;
-}
-
-:deep(.content-wrap > div) {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  height: 100%;
-}
-</style>
-

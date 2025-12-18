@@ -133,6 +133,8 @@
     .my-button {
       padding: 1rem 1.2rem 1rem 0.8rem;
       align-items: center;
+      /* 覆盖 Element Plus 的默认相邻按钮 margin-left，由父容器使用 gap 控制间距 */
+      margin-left: 0 !important;
     }
     .my-img {
       width: 1.1rem;

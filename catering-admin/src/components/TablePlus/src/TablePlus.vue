@@ -124,9 +124,14 @@ watch(
 /** ImagePlus 组件引用映射 */
 const imagePlusRefsMap = new Map<string, InstanceType<typeof ImagePlus>>()
 
-/** 设置 ImagePlus 组件引用 */
+/**
+ * 设置 ImagePlus 组件引用
+ * @param rowIndex 行索引
+ * @param field 字段名
+ * @param el 组件实例
+ */
 const setImagePlusRef = (rowIndex: number, field: string, el: any) => {
-  setTimeout(() => {
+  delayExecute(() => {
     const refKey = `${rowIndex}-${field}`
     el ? imagePlusRefsMap.set(refKey, el) : imagePlusRefsMap.delete(refKey)
   }, 0)
@@ -152,6 +157,8 @@ const CURRENT_ROW_COLOR = '#409EFF'
 // ==================== 工具函数 ====================
 /**
  * 深拷贝对象
+ * @param obj 要拷贝的对象
+ * @returns 深拷贝后的新对象
  */
 const deepCloneObject = (obj: any): any => {
   if (obj === null || typeof obj !== 'object') return obj
@@ -166,6 +173,169 @@ const deepCloneObject = (obj: any): any => {
     }
   }
   return cloned
+}
+
+/**
+ * 延迟执行函数（用于 DOM 更新后的操作）
+ * @param callback 要执行的函数
+ * @param delay 延迟时间（毫秒），默认 10ms
+ */
+const delayExecute = (callback: () => void, delay: number = 10) => {
+  setTimeout(callback, delay)
+}
+
+/**
+ * 更新指定单元格的数据
+ * @param rowIndex 行索引
+ * @param field 字段名
+ * @param value 新值
+ */
+const updateCellData = (rowIndex: number, field: string, value: any) => {
+  const newData = props.data.map((row, idx) => {
+    if (idx === rowIndex) {
+      return { ...row, [field]: value }
+    }
+    return row
+  })
+  emit('update:data', newData)
+  
+  const col = props.columns.find(c => c.field === field)
+  if (col?.type === 'image') {
+    emit('image-update', rowIndex, field, value)
+  } else {
+    emit('cell-update', rowIndex, field, value)
+  }
+}
+
+/**
+ * 处理普通文本粘贴（兼容外部复制）
+ * @param pasteData 粘贴的文本数据
+ * @param rowIndex 行索引
+ * @param field 字段名
+ * @param column 列配置
+ */
+const handlePlainTextPaste = (pasteData: string, rowIndex: number, field: string, column: TablePlusColumn) => {
+  if (!pasteData) return
+  
+  if (column.type === 'number') {
+    const num = Number(pasteData)
+    if (!isNaN(num)) {
+      handleInputUpdate(rowIndex, field, num)
+    }
+  } else if (column.type === 'select' && column.options) {
+    // 对于 select 类型，尝试通过 label 或 value 匹配
+    const option = column.options.find(opt => opt.label === pasteData || String(opt.value) === pasteData)
+    if (option) {
+      handleInputUpdate(rowIndex, field, option.value)
+    } else {
+      // 如果没有匹配的选项，直接使用粘贴的值
+      handleInputUpdate(rowIndex, field, pasteData)
+    }
+  } else if (column.type === 'image') {
+    // 图片类型不支持从普通文本粘贴，忽略
+  } else {
+    handleInputUpdate(rowIndex, field, pasteData)
+  }
+}
+
+/**
+ * 打开 Select 下拉框（用于双击 select 列时自动展开）
+ * @param rowIndex 行索引
+ * @param field 字段名
+ * @param refKey ref 键值
+ */
+const openSelectDropdown = (rowIndex: number, field: string, refKey: string) => {
+  const cellKey = `${rowIndex}-${field}`
+  const currentInputElement = document.querySelector(`[data-cell-key="${cellKey}"]`) as HTMLElement
+  if (!currentInputElement) {
+    return
+  }
+  
+  // 方法1：通过 ref 访问组件实例，尝试调用内部方法
+  const selectRef = inputRefsMap.get(refKey)
+  if (selectRef) {
+    // Element Plus ElSelect 可能有 handleFocus 或 toggleMenu 方法
+    if (typeof (selectRef as any).handleFocus === 'function') {
+      (selectRef as any).handleFocus()
+      // 再触发点击事件
+      delayExecute(() => {
+        const wrapper = currentInputElement.querySelector('.el-select__wrapper') as HTMLElement
+        if (wrapper) {
+          wrapper.click()
+        }
+      }, 20)
+      return
+    }
+    // 尝试调用 focus
+    if (typeof selectRef.focus === 'function') {
+      selectRef.focus()
+    }
+  }
+  
+  // 方法2：点击整个 select wrapper 区域（最可靠的方法）
+  const selectWrapper = currentInputElement.querySelector('.el-select__wrapper') as HTMLElement
+  if (selectWrapper) {
+    // 创建并触发鼠标点击事件
+    const clickEvent = new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      view: window
+    })
+    selectWrapper.dispatchEvent(clickEvent)
+    // 同时也调用 click 方法
+    selectWrapper.click()
+    return
+  }
+  
+  // 方法3：点击下拉箭头
+  const caret = currentInputElement.querySelector('.el-select__caret') as HTMLElement
+  if (caret) {
+    const clickEvent = new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      view: window
+    })
+    caret.dispatchEvent(clickEvent)
+    caret.click()
+    return
+  }
+  
+  // 方法4：点击整个 select 元素
+  const selectEl = currentInputElement.querySelector('.el-select') as HTMLElement
+  if (selectEl) {
+    selectEl.click()
+  }
+}
+
+/**
+ * 处理自定义格式的粘贴数据
+ * @param cellData 自定义格式的单元格数据
+ * @param rowIndex 行索引
+ * @param field 字段名
+ * @param column 列配置
+ * @returns 是否成功处理
+ */
+const handleCustomDataPaste = (cellData: any, rowIndex: number, field: string, column: TablePlusColumn): boolean => {
+  if (cellData.type !== column.type) {
+    // 类型不匹配，忽略粘贴
+    return false
+  }
+  
+  if (column.type === 'image') {
+    // 图片类型：特殊处理数组
+    // 1. 先标记原图片为删除
+    const deletedImages = markOriginalImagesAsDeleted(props.data[rowIndex]?.[field] || [])
+    // 2. 处理要粘贴的新图片
+    const newImages = processImageArrayForPaste(cellData.value)
+    // 3. 合并删除标记的原图片和新图片
+    const mergedImages = [...deletedImages, ...newImages]
+    updateCellData(rowIndex, field, mergedImages)
+  } else {
+    // 非图片类型
+    updateCellData(rowIndex, field, cellData.value)
+  }
+  
+  return true
 }
 
 /**
@@ -236,7 +406,7 @@ const startEdit = (rowIndex: number, field: string, options?: { isKeyboardInput?
               componentRef.focus()
               
               // 等待焦点设置完成后再设置光标位置
-              setTimeout(() => {
+              delayExecute(() => {
                 const cellKey = `${rowIndex}-${field}`
                 const inputElement = document.querySelector(`[data-cell-key="${cellKey}"]`) as HTMLElement
                 if (inputElement) {
@@ -245,7 +415,7 @@ const startEdit = (rowIndex: number, field: string, options?: { isKeyboardInput?
                     setCursorPosition(actualInput, col, options)
                   }
                 }
-              }, 10)
+              })
               return
             }
             
@@ -270,69 +440,8 @@ const startEdit = (rowIndex: number, field: string, options?: { isKeyboardInput?
           // 对于 select 列，需要特殊处理：打开下拉框
           if (col.type === 'select') {
             // 等待 DOM 完全渲染后再打开下拉框
-            setTimeout(() => {
-              // 重新查询 inputElement，确保获取到最新的 DOM
-              const cellKey = `${rowIndex}-${field}`
-              const currentInputElement = document.querySelector(`[data-cell-key="${cellKey}"]`) as HTMLElement
-              if (!currentInputElement) {
-                return
-              }
-              
-              // 方法1：通过 ref 访问组件实例，尝试调用内部方法
-              const selectRef = inputRefsMap.get(refKey)
-              if (selectRef) {
-                // Element Plus ElSelect 可能有 handleFocus 或 toggleMenu 方法
-                if (typeof (selectRef as any).handleFocus === 'function') {
-                  (selectRef as any).handleFocus()
-                  // 再触发点击事件
-                  setTimeout(() => {
-                    const wrapper = currentInputElement.querySelector('.el-select__wrapper') as HTMLElement
-                    if (wrapper) {
-                      wrapper.click()
-                    }
-                  }, 20)
-                  return
-                }
-                // 尝试调用 focus
-                if (typeof selectRef.focus === 'function') {
-                  selectRef.focus()
-                }
-              }
-              
-              // 方法2：点击整个 select wrapper 区域（最可靠的方法）
-              const selectWrapper = currentInputElement.querySelector('.el-select__wrapper') as HTMLElement
-              if (selectWrapper) {
-                // 创建并触发鼠标点击事件
-                const clickEvent = new MouseEvent('click', {
-                  bubbles: true,
-                  cancelable: true,
-                  view: window
-                })
-                selectWrapper.dispatchEvent(clickEvent)
-                // 同时也调用 click 方法
-                selectWrapper.click()
-                return
-              }
-              
-              // 方法3：点击下拉箭头
-              const caret = currentInputElement.querySelector('.el-select__caret') as HTMLElement
-              if (caret) {
-                const clickEvent = new MouseEvent('click', {
-                  bubbles: true,
-                  cancelable: true,
-                  view: window
-                })
-                caret.dispatchEvent(clickEvent)
-                caret.click()
-                return
-              }
-              
-              // 方法4：点击整个 select 元素
-              const selectEl = currentInputElement.querySelector('.el-select') as HTMLElement
-              if (selectEl) {
-                selectEl.click()
-                return
-              }
+            delayExecute(() => {
+              openSelectDropdown(rowIndex, field, refKey)
             }, 100)
             return
           }
@@ -373,7 +482,7 @@ const startEdit = (rowIndex: number, field: string, options?: { isKeyboardInput?
               setCursorPosition(actualInput, col, options)
             }
           }
-        }, 10) // 10ms 延迟确保浏览器完成渲染
+        }) // 延迟确保浏览器完成渲染
       })
     })
   })
@@ -604,7 +713,6 @@ const selectRow = (targetRowIndex: number, selectType: 'single' | 'ctrl' | 'shif
           lastSelectedRowIndex.value = null
           selectedRowIndex.value = null
           emit('update:currentRowIndex', null)
-          updateSelectedRowIndex()
         } else {
           // 更新 lastSelectedRowIndex 为最后一个选中的行
           lastSelectedRowIndex.value = selectedWholeRowIndices.value[selectedWholeRowIndices.value.length - 1]
@@ -672,13 +780,11 @@ const selectRow = (targetRowIndex: number, selectType: 'single' | 'ctrl' | 'shif
   if (selectType !== 'ctrl') {
     selectedRowIndex.value = targetRowIndex
     emit('update:currentRowIndex', targetRowIndex)
-    updateSelectedRowIndex()
   } else {
     // ctrl 模式下，如果目标行被选中，设置为当前行
     if (rowsToSelect.length > 0 && rowsToSelect.includes(targetRowIndex)) {
       selectedRowIndex.value = targetRowIndex
       emit('update:currentRowIndex', targetRowIndex)
-      updateSelectedRowIndex()
     }
   }
   
@@ -862,9 +968,15 @@ const handleInputFocus = (rowIndex: number, field: string) => {
   }
 }
 
+/**
+ * 处理输入框失焦事件
+ * @param event 焦点事件
+ * @param rowIndex 行索引
+ * @param field 字段名
+ */
 const handleInputBlur = (event: FocusEvent, rowIndex: number, field: string) => {
   // 延迟执行，以便其他事件（如点击另一个单元格）先执行
-  setTimeout(() => {
+  delayExecute(() => {
     // 如果焦点移到了另一个单元格的输入框，不退出编辑模式
     const activeElement = document.activeElement
     if (activeElement && activeElement.closest('.excel-edit-input, .excel-edit-select, .excel-input-number-left, .excel-edit-textarea')) {
@@ -1005,7 +1117,6 @@ const navigateToCell = (
         // 3.5 设置目标单元格所在行为当前行
         selectedRowIndex.value = actualRowIndex
         emit('update:currentRowIndex', actualRowIndex)
-        updateSelectedRowIndex()
       }
     })
   } else {
@@ -1013,10 +1124,8 @@ const navigateToCell = (
     // 3.5 设置目标单元格所在行为当前行
     selectedRowIndex.value = targetRowIndex
     emit('update:currentRowIndex', targetRowIndex)
-    updateSelectedRowIndex()
   }
   
-  updateSelectedRowIndex()
   return true
 }
 
@@ -1071,6 +1180,7 @@ const selectCell = (rowIndex: number, field?: string) => {
 
 /**
  * 更新选中行索引（基于当前选中的单元格）
+ * 注意：此函数主要用于从 DOM 状态同步到内部状态，通常不需要手动调用
  */
 const updateSelectedRowIndex = () => {
   nextTick(() => {
@@ -1674,266 +1784,148 @@ const processImageArrayForPaste = (imageArray: any[]): any[] => {
 }
 
 /**
+ * 准备复制数据（提取公共逻辑）
+ * @param value 单元格值
+ * @param column 列配置
+ * @returns 包含 copyValue 和 copyData 的对象
+ */
+const prepareCopyData = (value: any, column: TablePlusColumn | null): { copyValue: string; copyData: any } => {
+  let copyValue = ''
+  let copyData = value
+  
+  if (value !== undefined && value !== null) {
+    if (column?.type === 'image') {
+      // 图片类型：只复制字符串格式的图片 URL，过滤掉对象（内存预览）
+      const imageArray = Array.isArray(value) ? value : []
+      const stringImages = imageArray.filter((item: any) => typeof item === 'string')
+      copyData = stringImages
+      copyValue = `${stringImages.length} image(s)`
+    } else {
+      copyValue = String(value)
+    }
+  }
+  
+  return { copyValue, copyData }
+}
+
+/**
  * 处理复制（Ctrl+C）
+ * 支持编辑模式和非编辑模式，统一处理逻辑
  */
 const handleCopy = (event: ClipboardEvent) => {
-  // 优先处理编辑模式
+  // 确定源单元格：优先使用编辑模式，否则使用选中的单元格
+  let rowIndex: number | null = null
+  let field: string | null = null
+  let column: TablePlusColumn | null = null
+  
   if (editingCell.value) {
-    const { rowIndex, field } = editingCell.value
-    const col = props.columns.find(c => c.field === field)
-    const value = props.data[rowIndex]?.[field]
-    
-    if (value !== undefined && value !== null) {
-      event.preventDefault()
-      let copyValue = ''
-      let copyData = value
-      
-      // 根据列类型处理显示值和复制数据
-      if (col?.type === 'image') {
-        // 图片类型：只复制字符串格式的图片 URL，过滤掉对象（内存预览）
-        const imageArray = Array.isArray(value) ? value : []
-        const stringImages = imageArray.filter((item: any) => typeof item === 'string')
-        copyData = stringImages
-        copyValue = `${stringImages.length} image(s)`
-      } else {
-        copyValue = String(value)
-      }
-      
-      // 使用 clipboardData 设置剪贴板
-      if (event.clipboardData) {
-        // text/plain: 用户可见的文本
-        event.clipboardData.setData('text/plain', copyValue)
-        // 自定义格式：包含类型和值的元数据
-        const cellData = {
-          type: col?.type || 'text',
-          value: copyData,
-          field: field
-        }
-        event.clipboardData.setData('application/x-importgrid-cell', JSON.stringify(cellData))
-      }
+    // 编辑模式：使用当前编辑的单元格
+    rowIndex = editingCell.value.rowIndex
+    field = editingCell.value.field
+    column = props.columns.find(c => c.field === field) || null
+  } else {
+    // 非编辑模式：使用选中的单元格
+    const cellInfo = getSelectedCellInfo()
+    if (cellInfo) {
+      rowIndex = cellInfo.rowIndex
+      field = cellInfo.field
+      column = cellInfo.column
     }
+  }
+  
+  // 如果没有有效的源单元格，忽略复制
+  if (rowIndex === null || !field || !column) {
     return
   }
   
-  // 非编辑模式：从选中的单元格复制
-  const cellInfo = getSelectedCellInfo()
-  if (cellInfo) {
-    event.preventDefault()
-    const { rowIndex, field, column } = cellInfo
-    const value = props.data[rowIndex]?.[field]
-    
-    let copyValue = ''
-    let copyData = value
-    
-    if (value !== undefined && value !== null) {
-      // 根据列类型处理显示值和复制数据
-      if (column.type === 'image') {
-        // 图片类型：只复制字符串格式的图片 URL，过滤掉对象（内存预览）
-        const imageArray = Array.isArray(value) ? value : []
-        const stringImages = imageArray.filter((item: any) => typeof item === 'string')
-        copyData = stringImages
-        copyValue = `${stringImages.length} image(s)`
-      } else {
-        // 其他类型：拷贝原始值（字符串形式）
-        copyValue = String(value)
-      }
+  const value = props.data[rowIndex]?.[field]
+  if (value === undefined || value === null) {
+    return
+  }
+  
+  event.preventDefault()
+  
+  // 准备复制数据
+  const { copyValue, copyData } = prepareCopyData(value, column)
+  
+  // 设置剪贴板数据
+  if (event.clipboardData) {
+    // text/plain: 用户可见的文本
+    event.clipboardData.setData('text/plain', copyValue)
+    // 自定义格式：包含类型和值的元数据
+    const cellData = {
+      type: column.type || 'text',
+      value: copyData,
+      field: field
     }
-    
-    // 使用 clipboardData 设置剪贴板
-    if (event.clipboardData) {
-      // text/plain: 用户可见的文本
-      event.clipboardData.setData('text/plain', copyValue)
-      // 自定义格式：包含类型和值的元数据
-      const cellData = {
-        type: column.type || 'text',
-        value: copyData,
-        field: field
-      }
-      event.clipboardData.setData('application/x-importgrid-cell', JSON.stringify(cellData))
-    }
+    event.clipboardData.setData('application/x-importgrid-cell', JSON.stringify(cellData))
   }
 }
 
 /**
  * 处理粘贴（Ctrl+V）
+ * 支持编辑模式和非编辑模式，统一处理逻辑
  */
 const handlePaste = (event: ClipboardEvent) => {
-  // 优先处理编辑模式
+  // 确定目标单元格：优先使用编辑模式，否则使用选中的单元格
+  let rowIndex: number | null = null
+  let field: string | null = null
+  let column: TablePlusColumn | null = null
+  
   if (editingCell.value) {
-    event.preventDefault()
-    const { rowIndex, field } = editingCell.value
-    const targetCol = props.columns.find(c => c.field === field)
-    
-    if (!targetCol || targetCol.editable === false) {
-      return
+    // 编辑模式：使用当前编辑的单元格
+    rowIndex = editingCell.value.rowIndex
+    field = editingCell.value.field
+    column = props.columns.find(c => c.field === field) || null
+  } else {
+    // 非编辑模式：使用选中的单元格
+    const cellInfo = getSelectedCellInfo()
+    if (cellInfo) {
+      rowIndex = cellInfo.rowIndex
+      field = cellInfo.field
+      column = cellInfo.column
     }
-    
-    // 尝试获取自定义格式的数据
-    const customData = event.clipboardData?.getData('application/x-importgrid-cell')
-    let cellData: any = null
-    
-    if (customData) {
-      try {
-        cellData = JSON.parse(customData)
-      } catch (e) {
-        // 解析失败，使用普通文本
-      }
-    }
-    
-    // 如果有自定义数据且类型匹配
-    if (cellData && cellData.type === targetCol.type) {
-      // 类型匹配，直接复制值
-      if (targetCol.type === 'image') {
-        // 图片类型：特殊处理数组
-        // 1. 先标记原图片为删除
-        const deletedImages = markOriginalImagesAsDeleted(props.data[rowIndex][field])
-        // 2. 处理要粘贴的新图片（确保深拷贝）
-        const newImages = processImageArrayForPaste(cellData.value)
-        // 3. 合并删除标记的原图片和新图片（创建全新数组）
-        const mergedImages = [...deletedImages, ...newImages]
-        
-        // 4. 更新行数据（创建新行对象以避免引用共享）
-        const newData = props.data.map((row, idx) => {
-          if (idx === rowIndex) {
-            return { ...row, [field]: mergedImages }
-          }
-          return row
-        })
-        emit('update:data', newData)
-        emit('image-update', rowIndex, field, mergedImages)
-      } else {
-        // 非图片类型，也创建新行对象
-        const newData = props.data.map((row, idx) => {
-          if (idx === rowIndex) {
-            return { ...row, [field]: cellData.value }
-          }
-          return row
-        })
-        emit('update:data', newData)
-        emit('cell-update', rowIndex, field, cellData.value)
-      }
-    } else if (cellData && cellData.type !== targetCol.type) {
-      // 类型不匹配，忽略粘贴
-      console.log('类型不匹配，忽略粘贴操作')
-      return
-    } else {
-      // 没有自定义数据，使用普通文本粘贴（兼容外部复制）
-      const pasteData = event.clipboardData?.getData('text/plain') || ''
-      if (pasteData) {
-        if (targetCol.type === 'number') {
-          const num = Number(pasteData)
-          if (!isNaN(num)) {
-            handleInputUpdate(rowIndex, field, num)
-          }
-        } else if (targetCol.type === 'image') {
-          // 图片类型不支持从普通文本粘贴
-          console.log('图片列不支持从文本粘贴')
-        } else {
-          handleInputUpdate(rowIndex, field, pasteData)
-        }
-      }
-    }
+  }
+  
+  // 如果没有有效的目标单元格，忽略粘贴
+  if (rowIndex === null || !field || !column || column.editable === false) {
     return
   }
   
-  // 非编辑模式：粘贴到选中的单元格
-  const cellInfo = getSelectedCellInfo()
-  if (cellInfo) {
-    event.preventDefault()
-    const { rowIndex, field, column } = cellInfo
-    
-    // 检查列是否可编辑
-    if (column.editable === false) {
-      return
+  event.preventDefault()
+  
+  // 尝试获取自定义格式的数据
+  const customData = event.clipboardData?.getData('application/x-importgrid-cell')
+  let cellData: any = null
+  
+  if (customData) {
+    try {
+      cellData = JSON.parse(customData)
+    } catch (e) {
+      // 解析失败，忽略自定义数据，使用普通文本
     }
-    
-    // 尝试获取自定义格式的数据
-    const customData = event.clipboardData?.getData('application/x-importgrid-cell')
-    let cellData: any = null
-    
-    if (customData) {
-      try {
-        cellData = JSON.parse(customData)
-      } catch (e) {
-        // 解析失败，使用普通文本
-      }
-    }
-    
-    // 如果有自定义数据且类型匹配
-    if (cellData && cellData.type === column.type) {
-      // 类型匹配，直接复制值
-      if (column.type === 'image') {
-        // 图片类型：特殊处理数组
-        // 1. 先标记原图片为删除
-        const deletedImages = markOriginalImagesAsDeleted(props.data[rowIndex][field])
-        // 2. 处理要粘贴的新图片
-        const newImages = processImageArrayForPaste(cellData.value)
-        // 3. 合并删除标记的原图片和新图片
-        const mergedImages = [...deletedImages, ...newImages]
-        
-        const newData = props.data.map((row, idx) => {
-          if (idx === rowIndex) {
-            return { ...row, [field]: mergedImages }
-          }
-          return row
-        })
-        emit('update:data', newData)
-        emit('image-update', rowIndex, field, mergedImages)
-      } else {
-        // 非图片类型
-        const newData = props.data.map((row, idx) => {
-          if (idx === rowIndex) {
-            return { ...row, [field]: cellData.value }
-          }
-          return row
-        })
-        emit('update:data', newData)
-        emit('cell-update', rowIndex, field, cellData.value)
-      }
-    } else if (cellData && cellData.type !== column.type) {
+  }
+  
+  // 处理粘贴数据
+  if (cellData) {
+    // 有自定义数据：尝试使用自定义格式处理
+    if (!handleCustomDataPaste(cellData, rowIndex, field, column)) {
       // 类型不匹配，忽略粘贴
-      console.log('类型不匹配，忽略粘贴操作')
       return
+    }
+  } else {
+    // 没有自定义数据：使用普通文本粘贴（兼容外部复制）
+    const pasteData = event.clipboardData?.getData('text/plain') || ''
+    if (pasteData) {
+      handlePlainTextPaste(pasteData, rowIndex, field, column)
     } else {
-      // 没有自定义数据，使用普通文本粘贴（兼容外部复制）
-      const pasteData = event.clipboardData?.getData('text/plain') || ''
-      if (pasteData !== undefined && pasteData !== null && pasteData !== '') {
-        if (column.type === 'number') {
-          const num = Number(pasteData)
-          if (!isNaN(num)) {
-            handleInputUpdate(rowIndex, field, num)
-          }
-        } else if (column.type === 'select' && column.options) {
-          // 对于 select 类型，尝试通过 label 或 value 匹配
-          const option = column.options.find(opt => opt.label === pasteData || String(opt.value) === pasteData)
-          if (option) {
-            handleInputUpdate(rowIndex, field, option.value)
-          } else {
-            // 如果没有匹配的选项，直接使用粘贴的值
-            handleInputUpdate(rowIndex, field, pasteData)
-          }
-        } else if (column.type === 'image') {
-          // 图片类型不支持从普通文本粘贴
-          console.log('图片列不支持从文本粘贴')
-        } else {
-          handleInputUpdate(rowIndex, field, pasteData)
-        }
+      // 如果粘贴数据为空，清空单元格
+      if (column.type === 'image') {
+        updateCellData(rowIndex, field, [])
+      } else if (column.type === 'number') {
+        handleInputUpdate(rowIndex, field, null)
       } else {
-        // 如果粘贴数据为空，清空单元格
-        if (column.type === 'image') {
-          const newData = props.data.map((row, idx) => {
-            if (idx === rowIndex) {
-              return { ...row, [field]: [] }
-            }
-            return row
-          })
-          emit('update:data', newData)
-          emit('image-update', rowIndex, field, [])
-        } else if (column.type === 'number') {
-          handleInputUpdate(rowIndex, field, null)
-        } else {
-          handleInputUpdate(rowIndex, field, '')
-        }
+        handleInputUpdate(rowIndex, field, '')
       }
     }
   }

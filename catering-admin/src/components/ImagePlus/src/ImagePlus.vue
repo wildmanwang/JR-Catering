@@ -65,35 +65,51 @@ const imageDisplayData = ref<any[]>([])
  * 1. 如果是数组格式（新上传的图片），使用预览 URL
  * 2. 如果是字符串格式，移除操作标记（?original、?add 等），只保留路径用于显示
  * 3. 标记为 ?delete 的图片不显示（已删除）
+ * 
+ * 返回格式：{ display: string, key: string, originalIndex: number }
+ * - display: 用于显示的图片 URL
+ * - key: 用于 Vue key 的唯一标识符（稳定的，不会因为删除而变化）
+ * - originalIndex: 在 imageData 中的原始索引
  */
-const generateDisplayData = (imageData: any[]): any[] => {
+const generateDisplayData = (imageData: any[]): Array<{ display: string; key: string; originalIndex: number }> => {
   if (!imageData || !Array.isArray(imageData)) {
     return []
   }
 
-  return imageData
-    .filter((item: any) => {
-      // 过滤掉标记为删除的图片
-      if (typeof item === 'string' && item.includes('?delete')) {
-        return false
-      }
-      return true
-    })
-    .map((item: any) => {
-      // 如果是数组格式（新上传的图片），使用预览 URL（第一个元素）
-      if (Array.isArray(item) && item.length > 0) {
-        return item[0]
-      }
+  const result: Array<{ display: string; key: string; originalIndex: number }> = []
+  
+  imageData.forEach((item: any, originalIndex: number) => {
+    // 过滤掉标记为删除的图片
+    if (typeof item === 'string' && item.includes('?delete')) {
+      return
+    }
+    
+    let display: string
+    let key: string
+    
+    // 如果是数组格式（新上传的图片），使用预览 URL（第一个元素）
+    if (Array.isArray(item) && item.length > 0) {
+      display = item[0]
+      // 使用文件对象的 name 或预览 URL 作为 key（更稳定）
+      key = item[2] || item[0] || `new-${originalIndex}`
+    } else if (typeof item === 'string') {
       // 如果是字符串格式，移除操作标记，只保留路径
-      if (typeof item === 'string') {
-        // 移除操作标记（?original、?add 等），但保留 ?delete 标记用于过滤
-        if (item.includes('?')) {
-          return item.split('?')[0]
-        }
-        return item
+      if (item.includes('?')) {
+        display = item.split('?')[0]
+      } else {
+        display = item
       }
-      return item
-    })
+      // 使用图片路径（去掉标记）作为 key，这样删除其他图片时不会影响当前图片的 key
+      key = display
+    } else {
+      display = item
+      key = `item-${originalIndex}`
+    }
+    
+    result.push({ display, key, originalIndex })
+  })
+  
+  return result
 }
 
 /**
@@ -273,28 +289,15 @@ const handleFileChange: UploadProps['onChange'] = (file) => {
  * @returns imageData 的索引，如果找不到则返回 -1
  */
 const getImageDataIndex = (displayIndex: number): number => {
-  if (displayIndex < 0 || !imageData.value || !Array.isArray(imageData.value)) {
+  if (displayIndex < 0 || !imageDisplayData.value || !Array.isArray(imageDisplayData.value)) {
     return -1
   }
-
-  let displayCount = 0
-
-  for (let i = 0; i < imageData.value.length; i++) {
-    const item = imageData.value[i]
-
-    // 跳过标记为删除的图片（这些图片不在 imageDisplayData 中）
-    if (typeof item === 'string' && item.includes('?delete')) {
-      continue
-    }
-
-    // 如果当前项对应 displayIndex，返回 imageData 的索引
-    if (displayCount === displayIndex) {
-      return i
-    }
-
-    displayCount++
+  
+  const displayItem = imageDisplayData.value[displayIndex]
+  if (displayItem && typeof displayItem === 'object' && 'originalIndex' in displayItem) {
+    return displayItem.originalIndex
   }
-
+  
   return -1
 }
 
@@ -419,6 +422,14 @@ const generatePreviewList = (): string[] => {
     return []
   }
   return imageDisplayData.value
+    .map((item: any) => {
+      // 如果是新格式（对象），使用 display 属性
+      if (typeof item === 'object' && item !== null && 'display' in item) {
+        return item.display
+      }
+      // 兼容旧格式（字符串）
+      return typeof item === 'string' ? item : ''
+    })
     .filter((img: string) => img && !img.endsWith('?delete'))
     .map((img: string) => {
       // 移除 OSS 参数，使用原始图片进行预览
@@ -443,7 +454,8 @@ const handleError = (e: Event) => {
 
 // ==================== 计算上传组件是否显示 ====================
 const showUploader = computed(() => {
-  return !disabled.value && (!imageDisplayData.value || imageDisplayData.value.length < limit.value)
+  const displayLength = imageDisplayData.value ? imageDisplayData.value.length : 0
+  return !disabled.value && displayLength < limit.value
 })
 
 // ==================== 合并请求头 ====================
@@ -603,9 +615,9 @@ defineExpose({
 
 <template>
   <div :class="['image-container', `image-container-${size}`]">
-    <template v-for="(image, index) in imageDisplayData" :key="`${index}-${image}`">
+    <template v-for="(item, index) in imageDisplayData" :key="item.key">
       <div
-        v-if="image && !image.endsWith('?delete')"
+        v-if="item.display && !item.display.endsWith('?delete')"
         :class="[
           `image-group-${size}`,
           !disabled && dragIndex === index ? 'dragging' : '',
@@ -620,7 +632,7 @@ defineExpose({
         @dragend="handleDragEnd"
       >
         <ElImage
-          :src="image"
+          :src="item.display"
           :class="`image-item-${size}`"
           @error="handleError"
           :zoom-rate="1.2"
