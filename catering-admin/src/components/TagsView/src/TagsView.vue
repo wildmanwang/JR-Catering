@@ -66,8 +66,8 @@ const addTags = () => {
 }
 
 // 关闭选中的tag
-const closeSelectedTag = (view: RouteLocationNormalizedLoaded) => {
-  closeCurrent(view, () => {
+const closeSelectedTag = async (view: RouteLocationNormalizedLoaded) => {
+  await closeCurrent(view, () => {
     if (isActive(view)) {
       toLastView()
     }

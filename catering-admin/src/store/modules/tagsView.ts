@@ -12,6 +12,8 @@ export interface TagsViewState {
   selectedTag?: RouteLocationNormalizedLoaded
   /** 页面状态数据映射，key 为 fullPath，value 为页面状态数据 */
   pageStates: Map<string, any>
+  /** 页签关闭前检查函数映射，key 为 fullPath，value 为检查函数，返回 Promise<boolean>，true 表示允许关闭，false 表示阻止关闭 */
+  beforeCloseHandlers: Map<string, () => Promise<boolean>>
 }
 
 export const useTagsViewStore = defineStore('tagsView', {
@@ -19,7 +21,8 @@ export const useTagsViewStore = defineStore('tagsView', {
     visitedViews: [],
     cachedViews: new Set(),
     selectedTag: undefined,
-    pageStates: new Map()
+    pageStates: new Map(),
+    beforeCloseHandlers: new Map()
   }),
   getters: {
     getVisitedViews(): RouteLocationNormalizedLoaded[] {
@@ -313,6 +316,34 @@ export const useTagsViewStore = defineStore('tagsView', {
           // 静默处理恢复失败的情况，继续尝试下一个前缀
         }
       }
+    },
+    /**
+     * 注册页签关闭前检查函数
+     * @param fullPath - 路由的完整路径（包含 query 参数）
+     * @param handler - 检查函数，返回 Promise<boolean>，true 表示允许关闭，false 表示阻止关闭
+     */
+    registerBeforeCloseHandler(fullPath: string, handler: () => Promise<boolean>) {
+      this.beforeCloseHandlers.set(fullPath, handler)
+    },
+    /**
+     * 注销页签关闭前检查函数
+     * @param fullPath - 路由的完整路径（包含 query 参数）
+     */
+    unregisterBeforeCloseHandler(fullPath: string) {
+      this.beforeCloseHandlers.delete(fullPath)
+    },
+    /**
+     * 执行页签关闭前检查
+     * @param fullPath - 路由的完整路径（包含 query 参数）
+     * @returns Promise<boolean>，true 表示允许关闭，false 表示阻止关闭
+     */
+    async executeBeforeCloseHandler(fullPath: string): Promise<boolean> {
+      const handler = this.beforeCloseHandlers.get(fullPath)
+      if (handler) {
+        return await handler()
+      }
+      // 如果没有注册检查函数，默认允许关闭
+      return true
     }
   },
   persist: false

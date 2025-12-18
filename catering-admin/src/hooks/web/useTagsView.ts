@@ -29,9 +29,19 @@ export const useTagsView = () => {
     callback?.()
   }
 
-  const closeCurrent = (view?: RouteLocationNormalizedLoaded, callback?: Fn) => {
-    if (view?.meta?.affix) return
-    tagsViewStore.delView(view || unref(currentRoute))
+  const closeCurrent = async (view?: RouteLocationNormalizedLoaded, callback?: Fn) => {
+    const targetView = view || unref(currentRoute)
+    if (targetView?.meta?.affix) return
+    
+    // 执行页签关闭前检查
+    const canClose = await tagsViewStore.executeBeforeCloseHandler(targetView.fullPath)
+    if (!canClose) {
+      // 检查失败，阻止关闭
+      return
+    }
+    
+    // 检查通过，关闭页签
+    tagsViewStore.delView(targetView)
 
     callback?.()
   }

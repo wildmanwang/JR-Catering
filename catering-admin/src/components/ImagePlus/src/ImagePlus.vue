@@ -316,13 +316,19 @@ const handleRemoveImage = (index: number) => {
     // 自动更新显示数据
     imageDisplayData.value = generateDisplayData(newImageData)
   } else {
-    // 如果是已存在的图片（字符串格式），标记为删除
+    // 如果是已存在的图片（字符串格式）
     const newImageData = [...imageData.value]
     const currentItem = newImageData[imageDataIndex]
     if (typeof currentItem === 'string') {
-      // 移除原有标记，添加删除标记
-      const path = currentItem.split('?')[0]
-      newImageData[imageDataIndex] = `${path}?delete`
+      // 检查图片标记
+      if (currentItem.includes('?add')) {
+        // 如果是 ?add 标记的图片（后台不存在），直接从数组中删除
+        newImageData.splice(imageDataIndex, 1)
+      } else {
+        // 如果是 ?original 标记的图片（后台已存在），标记为删除
+        const path = currentItem.split('?')[0]
+        newImageData[imageDataIndex] = `${path}?delete`
+      }
       isInternalUpdate.value = true
       imageData.value = newImageData
       // 自动更新显示数据（删除标记的图片会被过滤掉，不显示）
