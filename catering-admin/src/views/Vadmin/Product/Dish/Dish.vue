@@ -90,7 +90,7 @@
       field: 'dish_images',
       label: '图片',
       type: 'image' as const,
-      width: '110px',
+      width: '80px',
       imageSize: 'small' as const
     },
     {

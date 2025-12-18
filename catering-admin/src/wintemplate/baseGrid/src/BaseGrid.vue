@@ -67,10 +67,10 @@ interface GridColumn {
   align?: 'left' | 'center' | 'right' // 对齐方式
   fixed?: boolean | 'left' | 'right' // 固定列
   show?: boolean // 是否显示
-  showConfig?: boolean // 是否可配置显示/隐藏：true=可在右上角配置显示/隐藏，false=不可配置，固定显示。默认值为 true（可配置）
+  showConfig?: boolean // 是否可配置显示/隐藏（true=可在右上角配置显示/隐藏，false=不可配置固定显示），默认 true
   formatter?: (row: any) => any // 格式化函数
   // 图片列专用配置
-  imageField?: string // 图片字段名，默认使用 field（可以是 url 字符串或 url 数组）
+  imageField?: string // 图片字段名，默认使用 field（支持 url 字符串或 url 数组，ImageSingle 组件会自动处理）
   imageSize?: 'normal' | 'small' // 图片尺寸：normal（100px*100px）或 small（60px*60px），默认 normal
   // 状态列专用配置
   statusOptions?: Array<{ label: string; value: any }> | (() => Array<{ label: string; value: any }>) // 状态映射选项
@@ -109,7 +109,7 @@ interface Props {
   nodeKey?: string // 行键，用于多选，默认 'id'
   showAction?: boolean // 是否显示操作栏，默认 false
   reserveSelection?: boolean // 是否保留选择（分页后保留），默认 false
-  searchParams?: Record<string, any> // 搜索参数（已废弃，使用 searchConditions 替代）
+  searchParams?: Record<string, any> // 搜索参数（已废弃，请使用 searchConditions）
   toolbarButtons?: ToolbarButton[] // 工具栏按钮配置
   searchConditions?: SearchCondition[] // 查询条件配置
   quickQueryList?: QuickQueryList // 左侧快捷查询列表配置
@@ -269,9 +269,6 @@ const initQuickQueryList = async () => {
   setMenuMaxHeight()
 }
 
-/**
- * 处理快捷查询列表选择
- */
 /**
  * 恢复快捷查询选择（不触发查询，仅更新状态）
  */
@@ -998,8 +995,7 @@ const convertColumns = (columns: GridColumn[]): TableColumn[] => {
       minWidth: col.minWidth,
       align: col.align,
       fixed: col.fixed,
-      // showConfig 属性：true=可在右上角配置显示/隐藏，false=不可配置，固定显示
-      // 默认值为 true（可配置）
+      // showConfig：是否可配置显示/隐藏，默认 true
       showConfig: col.showConfig !== undefined ? col.showConfig : true
     }
 
@@ -1009,45 +1005,23 @@ const convertColumns = (columns: GridColumn[]): TableColumn[] => {
         return {
           ...baseColumn,
           type: 'selection',
-          // selection 列默认显示，但尊重用户设置的 show 值
           show: col.show !== false
         }
 
       case 'image':
-        // 图片列：使用 ImageSingle 组件
+        // 图片列：使用 ImageSingle 组件自动处理图片数据（支持字符串或数组格式）
         return {
           ...baseColumn,
-          // 使用 baseColumn.show，已正确处理 col.show !== false
           slots: {
             default: (data: any) => {
               const row = data.row
-              const imageField = col.imageField || col.field // 图片字段名
-              const imageSize = col.imageSize || 'normal' // 图片尺寸，默认 normal
+              // 获取图片字段名（优先使用 imageField，否则使用 field）
+              const imageField = col.imageField || col.field
+              // 获取图片尺寸（normal 或 small，默认 normal）
+              const imageSize = col.imageSize || 'normal'
               
-              // 获取图片数据：优先使用 imageField，如果取不到值，则从 row 中查找任何数组类型的值
-              let imageValue: any = null
-              
-              // 首先尝试使用配置的字段名
-              if (imageField && row[imageField] !== undefined) {
-                imageValue = row[imageField]
-              } else {
-                // 如果配置的字段取不到值，查找 row 中所有数组类型的值
-                // 通常图片字段都是数组格式
-                const arrayFields = Object.keys(row).filter(key => {
-                  const value = row[key]
-                  return Array.isArray(value) && value.length > 0
-                })
-                
-                // 如果有数组字段，使用第一个数组字段的值
-                if (arrayFields.length > 0) {
-                  imageValue = row[arrayFields[0]]
-                }
-              }
-              
-              // 如果获取到的值是数组，确保它不为空
-              if (Array.isArray(imageValue) && imageValue.length === 0) {
-                imageValue = null
-              }
+              // 获取图片数据（ImageSingle 组件会自动处理数组格式）
+              const imageValue = row[imageField] ?? null
 
               return (
                 <div class="resource-image-name flex items-center">
@@ -1067,7 +1041,6 @@ const convertColumns = (columns: GridColumn[]): TableColumn[] => {
         // 状态列：根据状态值映射显示文字
         return {
           ...baseColumn,
-          // 使用 baseColumn.show，已正确处理 col.show !== false
           formatter: (row: any) => {
             // 优先使用自定义格式化函数
             if (col.formatter) {
@@ -1099,7 +1072,6 @@ const convertColumns = (columns: GridColumn[]): TableColumn[] => {
         // 操作列：渲染操作按钮（编辑、删除、自定义）
         return {
           ...baseColumn,
-          // 使用 baseColumn.show，已正确处理 col.show !== false
           align: col.align || 'center',
           fixed: col.fixed || 'right',
           slots: {
@@ -1143,7 +1115,7 @@ const convertColumns = (columns: GridColumn[]): TableColumn[] => {
 
 // ==================== 表格列配置 ====================
 /**
- * 转换列配置，过滤掉 show: false 的列（这些列不会显示，也不会出现在列配置选项中）
+ * 转换列配置，过滤掉 show: false 的列
  * @param columns 原始列配置
  * @param preserveShowState 保留现有列的 show 状态映射（用于列配置弹窗中的用户操作）
  * @returns 转换后的列配置数组（已过滤掉 show: false 的列）
@@ -1155,16 +1127,16 @@ const convertAndFilterColumns = (
   // 先转换所有列
   const converted = convertColumns(columns)
   
-  // 过滤掉 show: false 的列
+  // 过滤掉 show: false 的列，并保留用户的 show 状态设置
   return converted.filter((col) => {
-    // 如果原始配置中 show: false，完全过滤掉该列
     const originalCol = columns.find((c) => c.field === col.field)
+    
+    // 如果原始配置中 show: false，完全过滤掉该列
     if (originalCol && originalCol.show === false) {
       return false
     }
     
-    // 如果 preserveShowState 存在且包含该列，使用保留的 show 状态
-    // 这样可以保留用户在列配置弹窗中的操作
+    // 使用保留的 show 状态（用户在列配置弹窗中的操作）
     if (preserveShowState && preserveShowState.has(col.field)) {
       col.show = preserveShowState.get(col.field)!
     }
@@ -1173,34 +1145,32 @@ const convertAndFilterColumns = (
   })
 }
 
-/** 转换后的表格列配置（使用 reactive 确保响应式，与 Dish.vue 保持一致） */
+/** 转换后的表格列配置（使用 reactive 确保响应式） */
 const tableColumns = reactive<TableColumn[]>(convertAndFilterColumns(props.columns))
 
 /**
  * 监听 props.columns 变化，同步更新 tableColumns
- * 注意：
- * 1. show: false 的列会被完全过滤掉，不会出现在列配置选项中
- * 2. 保留用户对 show 属性的修改（列配置弹窗中的显示/隐藏设置）
+ * 注意：show: false 的列会被完全过滤掉，不会出现在列配置选项中
  */
 watch(
   () => props.columns,
-  (newColumns) => {
-    // 创建现有列的字段映射，用于保留 show 属性（用户通过列配置弹窗修改的）
-    const existingShowMap = new Map<string, boolean>()
-    tableColumns.forEach((col) => {
-      existingShowMap.set(col.field, col.show)
-    })
-    
-    // 转换并过滤列，保留用户的 show 设置
-    const newTableColumns = convertAndFilterColumns(newColumns, existingShowMap)
-    
-    // 清空并重新填充数组
-    tableColumns.length = 0
-    newTableColumns.forEach((newCol) => {
-      tableColumns.push(newCol)
-    })
-  },
-  { deep: false } // 只监听数组引用变化，不深度监听
+    (newColumns) => {
+      // 创建现有列的字段映射，用于保留 show 属性（用户通过列配置弹窗修改的）
+      const existingShowMap = new Map<string, boolean>()
+      tableColumns.forEach((col) => {
+        existingShowMap.set(col.field, col.show)
+      })
+      
+      // 转换并过滤列，保留用户的 show 设置
+      const newTableColumns = convertAndFilterColumns(newColumns, existingShowMap)
+      
+      // 清空并重新填充数组
+      tableColumns.length = 0
+      newTableColumns.forEach((newCol) => {
+        tableColumns.push(newCol)
+      })
+    },
+    { deep: false }
 )
 
 // ==================== 暴露方法 ====================
@@ -1373,17 +1343,16 @@ defineExpose({
   flex: 1;
   min-height: 0;
   height: 100%;
-  /* 确保填充父容器 */
 }
 
 /* 内容区域：左侧快捷查询列表 + 右侧表格 */
 .base-grid-content-area {
   display: flex;
   flex: 1;
-  min-height: 0; /* 允许 flex 子元素收缩 */
-  overflow: hidden; /* 防止产生纵向滚动 */
-  align-items: stretch; /* 确保子元素高度一致 */
-  height: 100%; /* 确保填充父容器 */
+  min-height: 0;
+  overflow: hidden;
+  align-items: stretch;
+  height: 100%;
 }
 
 /* 左侧快捷查询列表 */
@@ -1394,19 +1363,19 @@ defineExpose({
   display: flex !important;
   flex-direction: column !important;
   height: 100% !important;
-  min-height: 0; /* 允许 flex 子元素收缩 */
-  align-self: stretch; /* 确保高度填充 */
+  min-height: 0;
+  align-self: stretch;
 }
 
 .base-grid-quick-query-list :deep(.el-card) {
   height: 100% !important;
   display: flex !important;
   flex-direction: column !important;
-  padding: 0 !important; /* 移除所有 padding */
+  padding: 0 !important;
 }
 
 .base-grid-quick-query-list :deep(.el-card__header) {
-  padding: 15px 20px !important; /* 只保留 header 的 padding */
+  padding: 15px 20px !important;
   margin-bottom: 0 !important;
 }
 
@@ -1416,11 +1385,9 @@ defineExpose({
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 0 !important; /* 移除所有 padding */
-  padding-bottom: 0 !important; /* 确保底部没有额外的 padding */
+  padding: 0 !important;
+  padding-bottom: 0 !important;
   overflow: hidden;
-  /* 使用 flex: 1 自动填充，而不是固定 height: 100% */
-  /* 确保 Card body 填充 ElCard 的剩余高度（总高度 - header 高度） */
 }
 
 /* 菜单包装器 */
@@ -1430,19 +1397,15 @@ defineExpose({
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  margin-bottom: 10px !important; /* 与底部版权信息保持 10px 间距 */
-  /* 确保 wrapper 填充父容器高度 */
+  margin-bottom: 10px !important;
   height: 100%;
   box-sizing: border-box;
 }
 
-/* ElMenu - 高度通过 JavaScript 动态设置，确保固定最大化高度 */
-/* menuElement 本身就是 ul.el-menu，所以直接设置 */
+/* ElMenu - 高度通过 JavaScript 动态设置 */
 .base-grid-quick-query-menu {
   width: 100% !important;
   box-sizing: border-box !important;
-  /* 高度通过 JavaScript 动态设置，使用内联样式优先级最高 */
-  /* 不设置 height，让 JavaScript 完全控制 */
 }
 
 /* 右侧表格 */
@@ -1451,7 +1414,7 @@ defineExpose({
   overflow-x: auto;
 }
 
-/* 图片列样式 */
+/* 图片列容器样式 */
 .resource-image-name {
   display: flex;
   align-items: center;
@@ -1470,7 +1433,7 @@ defineExpose({
   align-items: center;
   width: 100%;
   gap: 10px;
-  margin-right: 10px; /* 与右侧刷新按钮保持 10px 间距 */
+  margin-right: 10px;
   min-width: 0;
 }
 
@@ -1478,14 +1441,13 @@ defineExpose({
 .base-grid-toolbar-left {
   display: flex;
   align-items: center;
-  gap: 10px; /* 按钮之间间距 10px */
+  gap: 10px;
   flex-shrink: 0;
 }
 
-
 /* 工具栏中间信息显示区域 */
 .base-grid-toolbar-info {
-  flex: 1; /* 占据剩余空间 */
+  flex: 1;
   display: flex;
   align-items: center;
   min-width: 0;

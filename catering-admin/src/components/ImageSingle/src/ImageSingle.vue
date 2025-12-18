@@ -56,35 +56,24 @@ const { disabled, action, data, size, defaultImage } = toRefs(props)
  * 2. "数字http://..." 格式（如 "1http://..."）-> 移除数字前缀
  */
 const extractImagePath = (url: string): string => {
-  if (!url) {
-    console.log('[ImageSingle] extractImagePath: url is empty', url)
-    return url
-  }
-
-  console.log('[ImageSingle] extractImagePath: input url =', url)
+  if (!url) return url
 
   // 处理 "数字-路径" 格式（如 "10-/media/system/image.png"）
   // 匹配模式：开头的数字 + 连字符 + 路径
   if (/^\d+-/.test(url)) {
     // 分割后取第一个 '-' 后面的所有内容（路径可能包含 '-'）
     const parts = url.split('-')
-    console.log('[ImageSingle] extractImagePath: parts =', parts)
     if (parts.length > 1) {
       // 从第二个元素开始重新组合（因为路径可能包含 '-'）
-      const result = parts.slice(1).join('-')
-      console.log('[ImageSingle] extractImagePath: extracted path =', result)
-      return result
+      return parts.slice(1).join('-')
     }
   }
 
   // 处理 "数字http://..." 格式（如 "1http://..."）
   if (/^\d+(https?:\/\/)/.test(url)) {
-    const result = url.replace(/^\d+(?=https?:\/\/)/, '')
-    console.log('[ImageSingle] extractImagePath: removed number prefix =', result)
-    return result
+    return url.replace(/^\d+(?=https?:\/\/)/, '')
   }
 
-  console.log('[ImageSingle] extractImagePath: return original url =', url)
   return url
 }
 
@@ -93,57 +82,41 @@ const extractImagePath = (url: string): string => {
  * 处理数组和字符串，过滤无效值，统一返回字符串或 null
  */
 const preprocessImageValue = (value: any): string | null => {
-  console.log('[ImageSingle] preprocessImageValue: input value =', value, 'type =', typeof value)
-  
-  if (!value) {
-    console.log('[ImageSingle] preprocessImageValue: value is empty')
-    return null
-  }
+  if (!value) return null
 
   let processedValue: any = value
 
   // 如果是数组，过滤、排序并取第一个有效值
   if (Array.isArray(value)) {
-    console.log('[ImageSingle] preprocessImageValue: is array, length =', value.length)
     // 过滤掉空值、null、undefined、空字符串和非字符串类型
     let validValues = value
       .filter((item) => typeof item === 'string' && item.trim() !== '')
       .map((item) => String(item).trim())
     
-    console.log('[ImageSingle] preprocessImageValue: validValues =', validValues)
-    
     if (validValues.length === 0) {
-      console.log('[ImageSingle] preprocessImageValue: no valid values')
       return null
     }
     
     // 如果是 "数字-路径" 格式，先排序（按字符串排序）
     if (validValues.length > 0 && /^\d+-/.test(validValues[0])) {
-      console.log('[ImageSingle] preprocessImageValue: sorting array...')
       validValues = validValues.sort((a, b) => a.localeCompare(b))
-      console.log('[ImageSingle] preprocessImageValue: sorted values =', validValues)
     }
     
     // 取第一个有效值
     processedValue = validValues[0]
-    console.log('[ImageSingle] preprocessImageValue: selected first value =', processedValue)
   } else if (typeof value !== 'string') {
     // 非字符串、非数组类型，返回 null
-    console.log('[ImageSingle] preprocessImageValue: not string or array, returning null')
     return null
   } else {
     // 字符串类型，去除首尾空格
     processedValue = value.trim()
-    console.log('[ImageSingle] preprocessImageValue: is string, trimmed =', processedValue)
     if (processedValue === '') {
-      console.log('[ImageSingle] preprocessImageValue: empty string after trim')
       return null
     }
   }
 
   // 提取图片路径（处理 "数字-路径" 和 "数字http://..." 格式）
   processedValue = extractImagePath(processedValue)
-  console.log('[ImageSingle] preprocessImageValue: final processedValue =', processedValue)
 
   return processedValue || null
 }
@@ -156,24 +129,16 @@ const preprocessImageValue = (value: any): string | null => {
  */
 const imageUrl = computed({
   get: () => {
-    console.log('[ImageSingle] imageUrl getter: props.modelValue =', props.modelValue)
     const processedValue = preprocessImageValue(props.modelValue)
-    console.log('[ImageSingle] imageUrl getter: processedValue =', processedValue)
-    
-    if (!processedValue) {
-      console.log('[ImageSingle] imageUrl getter: no processedValue, returning null')
-      return null
-    }
+    if (!processedValue) return null
 
     let url: string = processedValue
 
     // 移除查询参数
     if (url.includes('?')) {
       url = url.split('?')[0]
-      console.log('[ImageSingle] imageUrl getter: removed query params, url =', url)
     }
 
-    console.log('[ImageSingle] imageUrl getter: final url =', url)
     return url || null
   },
   set: (val) => {
@@ -185,18 +150,14 @@ const imageUrl = computed({
  * 当前显示的图片 URL（如果有图则使用，无图则使用默认图）
  */
 const displayImageUrl = computed(() => {
-  const result = imageUrl.value || defaultImage.value
-  console.log('[ImageSingle] displayImageUrl: imageUrl.value =', imageUrl.value, 'defaultImage =', defaultImage.value, 'result =', result)
-  return result
+  return imageUrl.value || defaultImage.value
 })
 
 /**
  * 是否有图片
  */
 const hasImage = computed(() => {
-  const result = !!imageUrl.value
-  console.log('[ImageSingle] hasImage: imageUrl.value =', imageUrl.value, 'result =', result)
-  return result
+  return !!imageUrl.value
 })
 
 /**
