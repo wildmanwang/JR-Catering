@@ -1024,58 +1024,98 @@ onMounted(async () => {
   
   // 等待 StatusStoragePlus 恢复状态（如果有）
   // StatusStoragePlus 会在 onMounted 时自动检查并恢复状态
+  // 状态恢复完成后，会调用 handleRestoreComplete 回调
+  // 在回调中会调用 getList() 加载数据
+  // 如果是首次打开（没有保存的状态），也需要调用 getList()
   await nextTick()
-  await nextTick() // 等待状态恢复完成
   
-  // 标记状态恢复完成，允许 watch 正常工作
-  isRestoringState.value = false
+  // 检查是否有保存的状态（通过 StatusStoragePlus 的 waitForRestore 方法）
+  // 如果没有保存的状态，说明是首次打开，需要立即调用 getList()
+  const hasSavedState = await statusStoragePlusRef.value?.waitForRestore()
   
-  // 调用查询（如果状态已恢复，会根据恢复的查询条件和分页进行查询）
-  getList().then(async () => {
+  if (!hasSavedState) {
+    // 首次打开，没有保存的状态，立即调用 getList()
+    isRestoringState.value = false
+    await getList()
+    
     // 恢复表格选择状态（必须在数据加载完成后）
     if (savedSelectedIds.value && savedSelectedIds.value.length > 0) {
       await nextTick()
       restoreTableSelection(savedSelectedIds.value)
-      savedSelectedIds.value = [] // 清除已恢复的选中ID
+      savedSelectedIds.value = []
     }
     
     // 显示页面
     pageReady.value = true
     
-    // 页面显示后，检查并恢复快捷查询菜单状态（如果之前没有恢复成功）
+    // 页面显示后，检查并恢复快捷查询菜单状态
     if (props.quickQueryList && quickQueryMenuRef.value && quickQueryData.value.length > 0) {
       await nextTick()
-      
-      // 如果菜单选中状态还是初始值 '0'，但 executedSearchParams 中有对应的字段值，尝试恢复
-      if (activeQuickQueryIndex.value === '0' && internalSearchParams.value) {
-        const config = props.quickQueryList
-        const field = config.field
-        const fieldValue = internalSearchParams.value[field]
-        
-        if (fieldValue !== undefined && fieldValue !== null && fieldValue !== '') {
-          // 在 quickQueryData 中查找匹配的项
-          const foundIndex = quickQueryData.value.findIndex((item) => {
-            return item.id === fieldValue || String(item.id) === String(fieldValue)
-          })
-          
-          if (foundIndex !== -1) {
-            const targetIndex = String(foundIndex)
-            // 使用 restoreQuickQuerySelect 恢复状态，不触发查询
-            restoreQuickQuerySelect(targetIndex)
-            await nextTick()
-          }
-        }
-      }
-      
       setMenuMaxHeight()
     }
-  })
+  }
+  // 如果有保存的状态，handleRestoreComplete 会在状态恢复完成后被调用
   
   // 监听窗口大小变化，重新计算高度（如果快捷查询列表存在）
   if (props.quickQueryList) {
     window.addEventListener('resize', debouncedSetMenuMaxHeight)
   }
 })
+
+/**
+ * 处理状态恢复完成回调
+ * 当 StatusStoragePlus 完成状态恢复后，调用此函数
+ * 此时查询条件和分页已经恢复，可以安全地调用 getList()
+ */
+const handleRestoreComplete = async (_restored: boolean) => {
+  // 如果状态已恢复，查询条件和分页已经设置好
+  // 如果状态未恢复（首次打开），使用默认值
+  // 无论哪种情况，都需要调用 getList() 加载数据
+  
+  // 确保 isRestoringState 已设置为 false，允许 watch 正常工作
+  isRestoringState.value = false
+  
+  // 调用查询（如果状态已恢复，会根据恢复的查询条件和分页进行查询）
+  await getList()
+  
+  // 恢复表格选择状态（必须在数据加载完成后）
+  if (savedSelectedIds.value && savedSelectedIds.value.length > 0) {
+    await nextTick()
+    restoreTableSelection(savedSelectedIds.value)
+    savedSelectedIds.value = [] // 清除已恢复的选中ID
+  }
+  
+  // 显示页面
+  pageReady.value = true
+  
+  // 页面显示后，检查并恢复快捷查询菜单状态（如果之前没有恢复成功）
+  if (props.quickQueryList && quickQueryMenuRef.value && quickQueryData.value.length > 0) {
+    await nextTick()
+    
+    // 如果菜单选中状态还是初始值 '0'，但 executedSearchParams 中有对应的字段值，尝试恢复
+    if (activeQuickQueryIndex.value === '0' && internalSearchParams.value) {
+      const config = props.quickQueryList
+      const field = config.field
+      const fieldValue = internalSearchParams.value[field]
+      
+      if (fieldValue !== undefined && fieldValue !== null && fieldValue !== '') {
+        // 在 quickQueryData 中查找匹配的项
+        const foundIndex = quickQueryData.value.findIndex((item) => {
+          return item.id === fieldValue || String(item.id) === String(fieldValue)
+        })
+        
+        if (foundIndex !== -1) {
+          const targetIndex = String(foundIndex)
+          // 使用 restoreQuickQuerySelect 恢复状态，不触发查询
+          restoreQuickQuerySelect(targetIndex)
+          await nextTick()
+        }
+      }
+    }
+    
+    setMenuMaxHeight()
+  }
+}
 
 // 组件卸载前处理
 onBeforeUnmount(() => {
@@ -1146,6 +1186,14 @@ const handleRefresh = () => {
 const { tableRegister, tableState, tableMethods } = useTable({
   immediate: false, // 禁用自动初始化查询，改为手动控制，避免在查询条件恢复之前执行查询
   fetchDataApi: async () => {
+    // 如果正在恢复状态，不执行查询（状态恢复完成后会手动调用 getList）
+    if (isRestoringState.value) {
+      return {
+        list: [],
+        total: 0
+      }
+    }
+    
     const { pageSize, currentPage } = tableState
     try {
       const res = await props.fetchDataApi({
@@ -1404,6 +1452,8 @@ const stateStores = computed<StatusStoreItem[]>(() => {
       },
       setState: async (state: any) => {
         isRestoring.value = true
+        // 设置 isRestoringState，防止 useTable 的 watch 触发查询
+        isRestoringState.value = true
         
         try {
           // 恢复查询条件
@@ -1421,6 +1471,7 @@ const stateStores = computed<StatusStoreItem[]>(() => {
           }
           
           // 恢复分页（需要特殊处理，避免触发多次 getList）
+          // 注意：此时 isRestoringState = true，useTable 的 watch 虽然会触发，但不会执行查询
           if (state.pageSize !== undefined) {
             const targetPageSize = typeof state.pageSize === 'number' && state.pageSize > 0 ? state.pageSize : 10
             const targetCurrentPage = typeof state.currentPage === 'number' && state.currentPage > 0 ? state.currentPage : 1
@@ -1465,6 +1516,8 @@ const stateStores = computed<StatusStoreItem[]>(() => {
           await nextTick()
         } finally {
           isRestoring.value = false
+          // 注意：isRestoringState 在 handleRestoreComplete 中设置为 false
+          // 这样可以确保状态恢复完成后才允许查询
         }
       },
       componentRef: {
@@ -1927,6 +1980,7 @@ defineExpose({
     ref="statusStoragePlusRef"
     :stores="stateStores"
     :storage-prefix="props.windowId || 'BASE_GRID_STATE_'"
+    :on-restore-complete="handleRestoreComplete"
   >
     <div class="base-grid-wrapper" v-show="pageReady">
     <!-- 查询条件区域 -->
@@ -2055,7 +2109,6 @@ defineExpose({
     :current-row="currentRow"
     :submit-api="submitApi"
     :tabs="props.tabs"
-    :field-options="mergedFieldOptions"
     @success="handleSuccess"
     @cancel="handleCancel"
   />

@@ -717,7 +717,7 @@ defineExpose({
 .image-group-uploader-normal :deep(.el-upload) {
   border: 2px dashed #c0c4cc;
   width: 100% !important;
-  height: 96px !important;
+  height: 100px !important;
   margin: 0 !important;
   padding: 0 !important;
   border-radius: 6px;
@@ -1085,7 +1085,7 @@ defineExpose({
 .image-group-uploader :deep(.el-upload) {
   border: 2px dashed #c0c4cc;
   width: 100% !important;
-  height: 96px !important;
+  height: 100px !important;
   margin: 0 !important;
   border-radius: 6px;
 }

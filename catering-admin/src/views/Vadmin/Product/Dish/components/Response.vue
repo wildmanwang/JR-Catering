@@ -2,6 +2,8 @@
   import { reactive } from 'vue'
   import { useValidator } from '@/hooks/web/useValidator'
   import type { FreeFormField } from '@/wintemplate/baseFree'
+  import { getKitchenListApi } from '@/api/vadmin/product/kitchen'
+  import { getDishStatusOptionsApi } from '@/api/vadmin/product/dish'
   
   const { required } = useValidator()
   
@@ -48,8 +50,10 @@
           value: 'id'
         }
       },
-      newCopy: true
-      // 选项数据从主窗口传入，无需在此定义 optionApi
+      newCopy: true,
+      optionsApi: () => getKitchenListApi({ is_active: true }),
+      optionsIdField: 'id',
+      optionsLabelFormat: [['field', 'name_unique']]
     },
     {
       field: 'spec',
@@ -110,8 +114,10 @@
       componentProps: {
         disabled: true
       },
-      value: 0
-      // 选项数据从主窗口传入（dishStatusOptions），无需在此硬编码
+      value: 0,
+      optionsApi: getDishStatusOptionsApi,
+      optionsIdField: 'value',
+      optionsLabelFormat: [['field', 'label']]
     },
     {
       field: 'dish_images',

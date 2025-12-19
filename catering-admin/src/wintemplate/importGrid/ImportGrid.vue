@@ -1233,22 +1233,29 @@ onMounted(async () => {
     // 情况2：页面恢复（从其他页面切换回来），或首次打开，或刷新页面
     // 状态恢复由 StatusStoragePlus 组件自动处理（只有切换回来时才恢复，首次打开/刷新不恢复）
     // StatusStoragePlus 会在 onMounted 时检查恢复标记，如果是切换回来会自动调用 setState
-    // 我们需要等待一下，让 StatusStoragePlus 有机会恢复状态
+    // 状态恢复完成后会调用 handleRestoreComplete 回调
+    // 如果是首次打开（没有保存的状态），handleRestoreComplete 也会被调用（restored = false）
+    // 等待状态恢复完成（通过 handleRestoreComplete 回调处理）
     await nextTick()
-    await nextTick() // 等待 StatusStoragePlus 的 onMounted 执行
     
-    // 如果没有恢复状态（首次打开、刷新页面或没有保存的状态），不自动插入空行
-    // 让 dataList 保持为空数组，用户需要手动添加数据
-    if (!hasRestoredState.value && dataList.value.length === 0) {
-      // 不调用 setEmptyTable()，保持空数组，避免刷新后自动插入空行导致提示保存
-      // 如果用户需要添加数据，可以通过工具栏的"新增"按钮添加
-      if (prompInfoRef.value) {
-        prompInfoRef.value.ready()
+    // 检查是否有保存的状态（通过 StatusStoragePlus 的 waitForRestore 方法）
+    const hasSavedState = await statusStoragePlusRef.value?.waitForRestore()
+    
+    if (!hasSavedState) {
+      // 首次打开，没有保存的状态，不自动插入空行
+      // 让 dataList 保持为空数组，用户需要手动添加数据
+      if (!hasRestoredState.value && dataList.value.length === 0) {
+        // 不调用 setEmptyTable()，保持空数组，避免刷新后自动插入空行导致提示保存
+        // 如果用户需要添加数据，可以通过工具栏的"新增"按钮添加
+        if (prompInfoRef.value) {
+          prompInfoRef.value.ready()
+        }
       }
+      // 设置 pageReady，显示页面
+      pageReady.value = true
     }
+    // 如果有保存的状态，handleRestoreComplete 会在状态恢复完成后被调用，并设置 pageReady
   }
-  
-  pageReady.value = true
   
   // 注册页签关闭前检查函数（仅在配置了 saveConfig 时）
   if (props.saveConfig) {
@@ -1273,6 +1280,25 @@ onBeforeUnmount(() => {
   // 状态清空由 StatusStoragePlus 组件自动处理
 })
 
+/**
+ * 处理状态恢复完成回调
+ * 当 StatusStoragePlus 完成状态恢复后，调用此函数
+ */
+const handleRestoreComplete = async (_restored: boolean) => {
+  // 状态恢复已完成（无论是否成功恢复）
+  // 如果没有恢复状态（首次打开、刷新页面或没有保存的状态），不自动插入空行
+  if (!hasRestoredState.value && dataList.value.length === 0) {
+    // 不调用 setEmptyTable()，保持空数组，避免刷新后自动插入空行导致提示保存
+    // 如果用户需要添加数据，可以通过工具栏的"新增"按钮添加
+    if (prompInfoRef.value) {
+      prompInfoRef.value.ready()
+    }
+  }
+  
+  // 显示页面
+  pageReady.value = true
+}
+
 // ==================== 暴露方法 ====================
 defineExpose({
   getData: () => dataList.value,
@@ -1294,6 +1320,7 @@ defineExpose({
     ref="statusStoragePlusRef"
     :stores="stateStores"
     :storage-prefix="props.windowId || 'IMPORT_GRID_STATE_'"
+    :on-restore-complete="handleRestoreComplete"
   >
     <div class="import-grid-container">
       <!-- 工具栏 -->

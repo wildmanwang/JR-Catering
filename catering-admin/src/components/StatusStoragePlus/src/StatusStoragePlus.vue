@@ -242,6 +242,23 @@ export interface StatusStoragePlusProps {
    * 可以通过 provideStorageAdapter 提供自定义适配器。
    */
   storageAdapter?: StorageAdapter
+  /** 
+   * 状态恢复完成后的回调函数（可选）
+   * 
+   * 当状态恢复完成时（无论是否成功），会调用此回调。
+   * 可以用于在状态恢复完成后执行数据查询等操作。
+   * 
+   * 示例：
+   * ```ts
+   * onRestoreComplete: (restored: boolean) => {
+   *   if (restored) {
+   *     // 状态已恢复，可以开始查询数据
+   *     getList()
+   *   }
+   * }
+   * ```
+   */
+  onRestoreComplete?: (restored: boolean) => void | Promise<void>
 }
 
 const props = withDefaults(defineProps<StatusStoragePlusProps>(), {
@@ -491,8 +508,18 @@ onMounted(async () => {
   pageReady.value = true
   
   // 只有切换回来时才恢复状态，首次打开不恢复
+  let restored = false
   if (shouldRestore) {
-    await restorePageState()
+    restored = await restorePageState()
+  }
+  
+  // 调用恢复完成回调（无论是否恢复，都通知调用方）
+  if (props.onRestoreComplete) {
+    try {
+      await props.onRestoreComplete(restored)
+    } catch (err) {
+      console.error('[StatusStoragePlus] 恢复完成回调执行失败：', err)
+    }
   }
 })
 
@@ -539,7 +566,30 @@ defineExpose({
   /** 手动清空状态 */
   clearState: () => clearPageState(),
   /** 获取当前是否正在恢复状态 */
-  isRestoring: () => isRestoring.value
+  isRestoring: () => isRestoring.value,
+  /** 获取状态恢复完成的 Promise（用于等待状态恢复完成） */
+  waitForRestore: async (): Promise<boolean> => {
+    // 如果已经在恢复中，等待恢复完成
+    if (isRestoring.value) {
+      // 轮询等待恢复完成
+      return new Promise((resolve) => {
+        const checkInterval = setInterval(() => {
+          if (!isRestoring.value) {
+            clearInterval(checkInterval)
+            resolve(true)
+          }
+        }, 10)
+        // 超时保护（最多等待 5 秒）
+        setTimeout(() => {
+          clearInterval(checkInterval)
+          resolve(false)
+        }, 5000)
+      })
+    }
+    // 如果不在恢复中，检查是否有保存的状态
+    const savedState = storage.value.getItem(PAGE_STATE_KEY.value)
+    return !!savedState
+  }
 })
 </script>
 

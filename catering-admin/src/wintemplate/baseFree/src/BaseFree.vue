@@ -7,6 +7,7 @@ import { Form, FormSchema } from '@/components/Form'
 import { useForm } from '@/hooks/web/useForm'
 import { ImagePlus } from '@/components/ImagePlus'
 import { processImageFields, ImageQuerySuffix, getImageUrlWithSuffix } from '@/utils/imageList'
+import { formatDataItem } from '@/utils/dsOptions'
 
 defineOptions({
   name: 'BaseFree'
@@ -60,6 +61,21 @@ export interface FreeFormField extends FormSchema {
    * }
    */
   customConvert?: (field: FreeFormField, data: any, mode: 'add' | 'edit' | 'view') => FormSchema | null
+  /** 
+   * 选项数据获取接口（用于自动获取该字段的选项数据）
+   * 如果提供，BaseFree 会自动调用此接口获取选项数据
+   */
+  optionsApi?: () => Promise<any>
+  /** 
+   * 选项数据的 id 字段名（用于简化配置）
+   * 例如：'id' 或 'value'
+   */
+  optionsIdField?: string
+  /** 
+   * 选项数据的 label 格式配置（用于简化配置，使用 dsOptions.ts 的格式）
+   * 例如：[['field', 'label']] 或 [['field', 'name_unique']]
+   */
+  optionsLabelFormat?: Array<['field' | 'value', string]>
 }
 
 /** Tab 配置 */
@@ -93,7 +109,8 @@ interface Props {
   afterInit?: (data: any) => void // 初始化后的钩子
   customFieldConvert?: (field: FreeFormField, data: any) => FormSchema | null // 全局字段转换函数
   // 选项数据映射（字段名 -> 选项数组），用于从主窗口传递下拉框选项，避免重复请求
-  fieldOptions?: Record<string, any[] | (() => any[])> // 字段选项数据映射
+  // 注意：已废弃，请使用 formSchema 中的 optionsApi 配置
+  fieldOptions?: Record<string, any[] | (() => any[])> // 字段选项数据映射（已废弃）
 }
 
 // ==================== Props 定义 ====================
@@ -108,7 +125,8 @@ const props = withDefaults(defineProps<Props>(), {
   tabs: () => [
     { label: '基础信息', name: 'basic' },
     { label: '操作日志', name: 'log' }
-  ]
+  ],
+  fieldOptions: () => ({})
 })
 
 // ==================== Emits 定义 ====================
@@ -121,6 +139,115 @@ const emit = defineEmits<{
 
 // ==================== Store ====================
 // ImagePlus 组件内部会处理 token，这里不需要单独获取 token
+
+// ==================== 选项数据管理 ====================
+/** 存储各字段的选项数据（字段名 -> 选项数组） */
+const fieldOptionsData = ref<Record<string, any[]>>({})
+
+/**
+ * 根据格式配置生成 label 文本（使用 dsOptions.ts）
+ * @param dataSet - 数据集
+ * @param uniqueId - 唯一标识
+ * @param format - 格式配置
+ * @returns 拼接后的 label 文本
+ */
+const generateLabelByFormat = (dataSet: any[], uniqueId: number | string, format: Array<['field' | 'value', string]>): string => {
+  return formatDataItem(dataSet, uniqueId, format)
+}
+
+/**
+ * 根据字段配置转换选项数据
+ * @param field - 字段配置
+ * @param rawOptions - 原始选项数据
+ * @returns 转换后的选项数据
+ */
+const transformOptionsByConfig = (field: FreeFormField, rawOptions: any[]): any[] => {
+  if (!rawOptions || rawOptions.length === 0) return []
+  
+  // 如果配置了 optionsLabelFormat，使用 dsOptions.ts 格式转换
+  if (field.optionsIdField && field.optionsLabelFormat && field.optionsLabelFormat.length > 0) {
+    return rawOptions.map((item: any) => {
+      const id = item[field.optionsIdField!]
+      const label = generateLabelByFormat(rawOptions, id, field.optionsLabelFormat!)
+      return {
+        label,
+        value: id,
+        ...item // 保留原始数据
+      }
+    })
+  }
+  
+  // 默认转换：尝试自动识别格式
+  if (rawOptions.length > 0) {
+    if (rawOptions[0].hasOwnProperty('label') && rawOptions[0].hasOwnProperty('value')) {
+      // 已经是标准格式
+      return rawOptions
+    } else if (rawOptions[0].hasOwnProperty('id') && rawOptions[0].hasOwnProperty('name_unique')) {
+      // 常见格式：{ id, name_unique, ... }
+      return rawOptions.map((item: any) => ({
+        label: item.name_unique,
+        value: item.id,
+        ...item
+      }))
+    } else {
+      // 尝试其他格式
+      return rawOptions.map((item: any) => ({
+        label: item.label || item.name_unique || item.name || String(item.id || item.value),
+        value: item.value !== undefined ? item.value : item.id,
+        ...item
+      }))
+    }
+  }
+  
+  return rawOptions
+}
+
+/**
+ * 初始化选项数据（从表单字段配置中收集 optionsApi 并获取数据）
+ */
+const initFieldOptions = async () => {
+  // 收集所有需要获取选项数据的字段
+  const optionsApiMap = new Map<string, { api: () => Promise<any>; field: FreeFormField }>()
+  
+  props.formSchema.forEach((field) => {
+    if (field.optionsApi && field.field) {
+      optionsApiMap.set(field.field, {
+        api: field.optionsApi,
+        field
+      })
+    }
+  })
+  
+  // 并行获取所有选项数据
+  const promises = Array.from(optionsApiMap.entries()).map(async ([fieldName, { api, field }]) => {
+    try {
+      const res = await api()
+      let rawOptions: any[] = []
+      
+      // 处理响应数据
+      if (Array.isArray(res)) {
+        // 如果直接返回数组
+        rawOptions = res
+      } else if (res?.data && Array.isArray(res.data)) {
+        // 如果返回 { data: [...] } 格式
+        rawOptions = res.data
+      } else {
+        console.warn(`字段 ${fieldName} 的选项数据格式不正确：`, res)
+        rawOptions = []
+      }
+      
+      // 根据字段配置转换数据
+      const transformedOptions = transformOptionsByConfig(field, rawOptions)
+      
+      fieldOptionsData.value[fieldName] = transformedOptions
+    } catch (err) {
+      console.error(`获取字段 ${fieldName} 的选项数据失败：`, err)
+      fieldOptionsData.value[fieldName] = []
+    }
+  })
+  
+  await Promise.all(promises)
+}
 
 // ==================== 计算属性 ====================
 /** 抽屉显示状态 */
@@ -334,9 +461,19 @@ const convertFormSchema = (schema: FreeFormField[]): FormSchema[] => {
       }
     }
     
-    // ==================== 选项数据处理：优先使用主窗口传入的选项数据 ====================
-    // 如果主窗口提供了该字段的选项数据，优先使用主窗口的数据，避免重复请求
-    if (props.fieldOptions && props.fieldOptions[field.field]) {
+    // ==================== 选项数据处理：优先使用字段配置中的 optionsApi ====================
+    // 如果字段配置了 optionsApi，使用自动获取的数据
+    if (fieldOptionsData.value[field.field] && fieldOptionsData.value[field.field].length > 0) {
+      baseField = {
+        ...baseField,
+        componentProps: {
+          ...baseField.componentProps,
+          options: fieldOptionsData.value[field.field]
+        },
+        optionApi: undefined // 移除 optionApi，避免重复请求
+      }
+    } else if (props.fieldOptions && props.fieldOptions[field.field]) {
+      // 兼容旧的方式：如果主窗口提供了该字段的选项数据，使用主窗口的数据（已废弃）
       const optionsData = props.fieldOptions[field.field]
       const options = typeof optionsData === 'function' ? optionsData() : optionsData
       baseField = {
@@ -486,15 +623,17 @@ watch(() => props.currentRow, () => {
   }
 }, { deep: true })
 
-// 监听 drawerVisible 变化，关闭时清空表单
+// 监听 drawerVisible 变化，关闭时清空表单，打开时初始化选项数据
 watch(() => drawerVisible.value, async (val) => {
-  if (!val) {
-    // 抽屉关闭时，重置状态
+  if (val) {
+    // 窗口打开时，初始化选项数据
+    await initFieldOptions()
+    // 抽屉打开时，重置注册状态，等待表单注册
     isFormRegistered.value = false
     isFormModified.value = false
     initialFormData.value = null
   } else {
-    // 抽屉打开时，重置注册状态，等待表单注册
+    // 抽屉关闭时，重置状态
     isFormRegistered.value = false
     isFormModified.value = false
     initialFormData.value = null
