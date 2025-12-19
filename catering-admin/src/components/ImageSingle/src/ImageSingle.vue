@@ -3,10 +3,11 @@ import { computed, watch, toRefs } from 'vue'
 import { ElUpload, UploadProps, ElIcon, ElImage, ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/store/modules/auth'
-
-defineOptions({
-  name: 'ImageSingle'
-})
+import {
+  processImageList,
+  removeSortPrefix,
+  removeQueryParams
+} from '@/utils/imageList'
 
 // ==================== Props 定义 ====================
 interface Props {
@@ -58,23 +59,16 @@ const { disabled, action, data, size, defaultImage } = toRefs(props)
 const extractImagePath = (url: string): string => {
   if (!url) return url
 
-  // 处理 "数字-路径" 格式（如 "10-/media/system/image.png"）
-  // 匹配模式：开头的数字 + 连字符 + 路径
-  if (/^\d+-/.test(url)) {
-    // 分割后取第一个 '-' 后面的所有内容（路径可能包含 '-'）
-    const parts = url.split('-')
-    if (parts.length > 1) {
-      // 从第二个元素开始重新组合（因为路径可能包含 '-'）
-      return parts.slice(1).join('-')
-    }
-  }
+  // 使用 removeSortPrefix 处理 "数字-路径" 格式
+  let processedUrl = removeSortPrefix(url)
 
   // 处理 "数字http://..." 格式（如 "1http://..."）
-  if (/^\d+(https?:\/\/)/.test(url)) {
-    return url.replace(/^\d+(?=https?:\/\/)/, '')
+  // 注意：这种格式 removeSortPrefix 可能无法处理，需要额外处理
+  if (/^\d+(https?:\/\/)/.test(processedUrl)) {
+    processedUrl = processedUrl.replace(/^\d+(?=https?:\/\/)/, '')
   }
 
-  return url
+  return processedUrl
 }
 
 /**
@@ -97,9 +91,9 @@ const preprocessImageValue = (value: any): string | null => {
       return null
     }
     
-    // 如果是 "数字-路径" 格式，先排序（按字符串排序）
+    // 如果是 "数字-路径" 格式，使用 processImageList 处理排序和前缀
     if (validValues.length > 0 && /^\d+-/.test(validValues[0])) {
-      validValues = validValues.sort((a, b) => a.localeCompare(b))
+      validValues = processImageList(validValues)
     }
     
     // 取第一个有效值
@@ -135,9 +129,7 @@ const imageUrl = computed({
     let url: string = processedValue
 
     // 移除查询参数
-    if (url.includes('?')) {
-      url = url.split('?')[0]
-    }
+    url = removeQueryParams(url)
 
     return url || null
   },
@@ -173,31 +165,30 @@ const previewList = computed(() => {
   const value = props.modelValue
   if (!value) return []
 
-  // 如果是数组，返回所有有效的图片 URL
-  if (Array.isArray(value)) {
-    // 过滤并排序（如果是 "数字-路径" 格式）
-    let validValues = value
-      .filter((item) => typeof item === 'string' && item.trim() !== '')
-      .map((item) => String(item).trim())
-    
-    if (validValues.length > 0 && /^\d+-/.test(validValues[0])) {
-      validValues = validValues.sort((a, b) => a.localeCompare(b))
+    // 如果是数组，返回所有有效的图片 URL
+    if (Array.isArray(value)) {
+      // 过滤并排序（如果是 "数字-路径" 格式）
+      let validValues = value
+        .filter((item) => typeof item === 'string' && item.trim() !== '')
+        .map((item) => String(item).trim())
+      
+      // 使用 processImageList 处理排序和前缀
+      if (validValues.length > 0 && /^\d+-/.test(validValues[0])) {
+        validValues = processImageList(validValues)
+      }
+      
+      // 提取路径并移除查询参数
+      const validUrls = validValues
+        .map((item) => {
+          let url = extractImagePath(item)
+          // 移除查询参数
+          url = removeQueryParams(url)
+          return url
+        })
+        .filter((url) => url && url !== '')
+      
+      return validUrls.length > 0 ? validUrls : (imageUrl.value ? [imageUrl.value] : [])
     }
-    
-    // 提取路径并移除查询参数
-    const validUrls = validValues
-      .map((item) => {
-        let url = extractImagePath(item)
-        // 移除查询参数
-        if (url.includes('?')) {
-          url = url.split('?')[0]
-        }
-        return url
-      })
-      .filter((url) => url && url !== '')
-    
-    return validUrls.length > 0 ? validUrls : (imageUrl.value ? [imageUrl.value] : [])
-  }
 
   // 如果是字符串，返回单个 URL
   return imageUrl.value ? [imageUrl.value] : []

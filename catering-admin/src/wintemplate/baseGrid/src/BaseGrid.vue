@@ -1,18 +1,29 @@
 <script setup lang="tsx">
 import { unref, ref, reactive, watch, onMounted, onBeforeUnmount, nextTick, toRaw, watchEffect, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { useTable } from '@/hooks/web/useTable'
 import { Table, TableColumn } from '@/components/Table'
-import { ElCard, ElMenu, ElMenuItem } from 'element-plus'
+import { ElCard, ElMenu, ElMenuItem, ElMessage } from 'element-plus'
 import { BaseButton } from '@/components/Button'
 import { ButtonPlus } from '@/components/ButtonPlus'
 import { PrompInfo } from '@/components/PrompInfo'
 import { QueryBar, type QueryCondition } from '@/components/QueryBar'
 import { StatusStoragePlus, type StatusStoreItem } from '@/components/StatusStoragePlus'
 import { ImageSingle } from '@/components/ImageSingle'
+import { BaseFree, type FreeFormField, type FreeTab } from '@/wintemplate/baseFree'
+import { formatDataItem } from '@/utils/dsOptions'
 
-defineOptions({
-  name: 'BaseGrid'
-})
+/**
+ * 根据格式配置生成 label 文本（使用 dsOptions.ts 的 formatDataItem）
+ * @param dataSet - 数据集
+ * @param uniqueId - 唯一标识
+ * @param format - 格式配置
+ * @returns 生成的 label 文本
+ */
+const generateLabelByFormat = (dataSet: any[], uniqueId: number | string, format: Array<['field' | 'value', string]>): string => {
+  return formatDataItem(dataSet, uniqueId, format)
+}
+import { processImageFields, normalizeImageUrl, ImageQuerySuffix, getImageUrlWithSuffix } from '@/utils/imageList'
 
 // ==================== 常量定义 ====================
 /** 默认图片路径 */
@@ -64,7 +75,8 @@ interface GridColumn {
   type?: 'selection' | 'image' | 'text' | 'status' | 'action' // 列类型
   width?: string | number // 列宽度
   minWidth?: string | number // 最小宽度
-  align?: 'left' | 'center' | 'right' // 对齐方式
+  align?: 'left' | 'center' | 'right' // 单元格内容对齐方式
+  headerAlign?: 'left' | 'center' | 'right' // 表头对齐方式，默认 center
   fixed?: boolean | 'left' | 'right' // 固定列
   show?: boolean // 是否显示
   showConfig?: boolean // 是否可配置显示/隐藏（true=可在右上角配置显示/隐藏，false=不可配置固定显示），默认 true
@@ -74,6 +86,16 @@ interface GridColumn {
   imageSize?: 'normal' | 'small' // 图片尺寸：normal（100px*100px）或 small（60px*60px），默认 normal
   // 状态列专用配置
   statusOptions?: Array<{ label: string; value: any }> | (() => Array<{ label: string; value: any }>) // 状态映射选项
+  /** 选项数据获取接口（用于自动获取该字段的选项数据，供 statusOptions、fieldOptions、searchConditions 使用） */
+  optionsApi?: () => Promise<{ data?: any[]; code?: number; [key: string]: any }> // 返回格式：{ data: [...], code: 200 } 或直接返回数组
+  /** 选项数据转换函数（将 API 返回的数据转换为标准格式，如果不提供则使用默认转换） */
+  optionsTransform?: (data: any) => Array<{ label: string; value: any }> // 默认：假设返回的是 { data: [...] } 格式
+  /** 选项数据的 id 字段名（用于简化配置，如果不提供 optionsTransform，将使用此字段作为唯一标识） */
+  optionsIdField?: string // 例如：'id'
+  /** 选项数据的 label 字段配置（用于简化配置，如果不提供 optionsTransform，将使用此配置生成 label） */
+  optionsLabelFields?: Array<string> // 例如：['name_unique'] 或 ['固定字符串', 'name_unique']，数组中的项目可以是固定字符串或字段名（已废弃，请使用 optionsLabelFormat）
+  /** 选项数据的 label 格式配置（用于简化配置，使用 dsOptions.ts 的格式） */
+  optionsLabelFormat?: Array<['field' | 'value', string]> // 例如：[['field', 'name_unique'], ['value', '-'], ['field', 'status']]
   // 操作列专用配置
   actionSlots?: (data: any) => JSX.Element | JSX.Element[] | null // 自定义操作插槽
   actionOptions?: ActionOption[] // 操作按钮配置
@@ -94,18 +116,25 @@ interface QuickQueryItem {
 /** 快捷查询列表配置 */
 interface QuickQueryList {
   title: string // 列表标题
-  data: QuickQueryItem[] | (() => Promise<QuickQueryItem[]>) // 数据数组或异步获取函数
+  data?: QuickQueryItem[] | (() => Promise<QuickQueryItem[]>) // 数据数组或异步获取函数（已废弃，请使用 dataApi）
+  dataApi?: () => Promise<{ data?: any[]; code?: number; [key: string]: any }> // 数据获取接口（返回格式：{ data: [...] } 或直接返回数组）
   field: string // 查询字段名（用于更新查询参数）
   showAllOption?: boolean // 是否显示"（全部）"选项，默认 true
   allOptionLabel?: string // "（全部）"选项的显示文字，默认 "（全部）"
   allOptionValue?: number | string | null // "（全部）"选项的值，默认 null
+  /** id 字段名（用于简化配置，如果不提供 data，将使用此字段作为唯一标识） */
+  idField?: string // 例如：'id'
+  /** label 字段配置（用于简化配置，如果不提供 data，将使用此配置生成 label） */
+  labelFields?: Array<string> // 例如：['name_unique'] 或 ['固定字符串', 'name_unique']（已废弃，请使用 labelFormat）
+  /** label 格式配置（用于简化配置，使用 dsOptions.ts 的格式） */
+  labelFormat?: Array<['field' | 'value', string]> // 例如：[['field', 'name_unique'], ['value', '-'], ['field', 'status']]
 }
 
 /** 组件 Props */
 interface Props {
   columns: GridColumn[] // 列配置数组
   fetchDataApi: (params: { page: number; limit: number; [key: string]: any }) => Promise<{ data: any[]; count: number }> // 数据获取接口
-  fetchDelApi?: (ids: string[] | number[] | number | string) => Promise<boolean> // 删除接口（可选）
+  fetchDelApi?: (ids: string[] | number[] | number | string) => Promise<boolean | { code?: number; [key: string]: any }> // 删除接口（可选），支持返回 boolean 或响应对象（会自动检查 code === 200）
   nodeKey?: string // 行键，用于多选，默认 'id'
   showAction?: boolean // 是否显示操作栏，默认 false
   reserveSelection?: boolean // 是否保留选择（分页后保留），默认 false
@@ -113,6 +142,46 @@ interface Props {
   toolbarButtons?: ToolbarButton[] // 工具栏按钮配置
   searchConditions?: SearchCondition[] // 查询条件配置
   quickQueryList?: QuickQueryList // 左侧快捷查询列表配置
+  /** 窗口标识（用于 StatusStoragePlus 的唯一标识，使用方需要赋值） */
+  windowId?: string
+  // ==================== 弹窗相关配置 ====================
+  /** 页面标题（用于弹窗标题） */
+  pageTitle?: string
+  /** 表单字段配置（用于新增/编辑/查看弹窗） */
+  formSchema?: FreeFormField[]
+  /** 表单验证规则 */
+  rules?: Record<string, any>
+  /** Tab 配置 */
+  tabs?: FreeTab[]
+  /** 字段选项数据映射（字段名 -> 选项数组或函数），用于从主窗口传递下拉框选项，避免重复请求 */
+  fieldOptions?: Record<string, any[] | (() => any[])>
+  /** 新增接口 */
+  addApi?: (data: any) => Promise<any>
+  /** 编辑接口 */
+  editApi?: (data: any) => Promise<any>
+  /** 提交接口（如果提供，将优先使用此接口，会根据 mode 自动调用 addApi 或 editApi） */
+  submitApi?: (data: any, mode?: 'add' | 'edit') => Promise<any>
+  /** 保存成功回调 */
+  onSuccess?: () => void
+  /** 取消回调 */
+  onCancel?: () => void
+  /** 是否启用查看功能，默认 true */
+  enableView?: boolean
+  /** 是否启用新增功能，默认 true */
+  enableAdd?: boolean
+  /** 是否启用编辑功能，默认 true */
+  enableEdit?: boolean
+  /** 是否启用删除功能，默认 true */
+  enableDelete?: boolean
+  // ==================== 导入相关配置 ====================
+  /** 导入页面路由路径（如果配置，将启用导入功能） */
+  importRoute?: string
+  /** 导入数据存储的 sessionStorage key（如果不提供，将使用默认格式：IMPORT_${windowId}_PAYLOAD） */
+  importStorageKey?: string
+  /** 行数据转换为导入格式的函数（如果不提供，将使用标准转换：自动处理图片、数字等） */
+  importTransform?: (row: any) => any
+  /** 导入按钮的标签（用于提示信息） */
+  importLabel?: string
 }
 
 // ==================== Props 定义 ====================
@@ -121,7 +190,18 @@ const props = withDefaults(defineProps<Props>(), {
   showAction: false,
   reserveSelection: false,
   searchParams: () => ({}),
-  searchConditions: () => []
+  searchConditions: () => [],
+  windowId: '',
+  rules: () => ({}),
+  tabs: () => [
+    { label: '基础信息', name: 'basic' },
+    { label: '操作日志', name: 'log' }
+  ],
+  fieldOptions: () => ({}),
+  enableView: true,
+  enableAdd: true,
+  enableEdit: true,
+  enableDelete: true
 })
 
 // ==================== 页面状态管理 ====================
@@ -130,6 +210,344 @@ const pageReady = ref(false)
 
 /** 防止恢复状态时重复调用 getList() 的标志 */
 const isRestoringState = ref(false)
+
+// ==================== 选项数据管理 ====================
+/** 存储各字段的选项数据（字段名 -> 选项数组） */
+const fieldOptionsData = ref<Record<string, any[]>>({})
+
+/**
+ * 根据配置生成 label 文本
+ * @param item - 数据项
+ * @param labelFields - label 字段配置数组
+ * @returns 拼接后的 label 文本
+ */
+const generateLabel = (item: any, labelFields: string[]): string => {
+  return labelFields
+    .map((field) => {
+      // 如果字段名在数据项中存在，使用字段值；否则作为固定字符串使用
+      return item.hasOwnProperty(field) ? String(item[field] || '') : field
+    })
+    .filter(Boolean) // 过滤空值
+    .join('') // 拼接
+}
+
+/**
+ * 根据列配置转换选项数据
+ * @param col - 列配置
+ * @param rawData - 原始数据数组
+ * @returns 转换后的选项数据数组
+ */
+const transformOptionsByConfig = (col: GridColumn, rawData: any[]): Array<{ label: string; value: any; [key: string]: any }> => {
+  if (!rawData || rawData.length === 0) {
+    return []
+  }
+  
+  // 如果提供了自定义转换函数，优先使用
+  if (col.optionsTransform && typeof col.optionsTransform === 'function') {
+    return col.optionsTransform(rawData)
+  }
+  
+  // 如果配置了 optionsLabelFormat，使用 dsOptions.ts 格式
+  if (col.optionsIdField && col.optionsLabelFormat && col.optionsLabelFormat.length > 0) {
+    return rawData.map((item: any) => {
+      const id = item[col.optionsIdField!]
+      const label = generateLabelByFormat(rawData, id, col.optionsLabelFormat!)
+      
+      // 返回标准格式，同时保留原始数据
+      return {
+        id,
+        label,
+        value: id, // 为了兼容，同时提供 value
+        ...item // 保留原始数据，供表单下拉框使用
+      }
+    })
+  }
+  
+  // 如果配置了 optionsIdField 和 optionsLabelFields（旧格式，向后兼容）
+  if (col.optionsIdField && col.optionsLabelFields && col.optionsLabelFields.length > 0) {
+    return rawData.map((item: any) => {
+      const id = item[col.optionsIdField!]
+      const label = generateLabel(item, col.optionsLabelFields!)
+      
+      // 返回标准格式，同时保留原始数据
+      return {
+        id,
+        label,
+        value: id, // 为了兼容，同时提供 value
+        ...item // 保留原始数据，供表单下拉框使用
+      }
+    })
+  }
+  
+  // 默认转换：尝试自动识别常见格式
+  if (rawData.length > 0 && !rawData[0].hasOwnProperty('label') && !rawData[0].hasOwnProperty('value')) {
+    // 尝试自动转换常见格式
+    if (rawData[0].hasOwnProperty('id') && rawData[0].hasOwnProperty('name_unique')) {
+      // 厨部格式：{ id, name_unique, ... }
+      return rawData.map((item: any) => ({
+        id: item.id,
+        label: item.name_unique,
+        value: item.id,
+        ...item
+      }))
+    } else if (rawData[0].hasOwnProperty('value') || rawData[0].hasOwnProperty('label')) {
+      // 已经是标准格式或接近标准格式
+      return rawData.map((item: any) => ({
+        id: item.id,
+        label: item.label || item.name_unique || item.name || String(item.value || item.id),
+        value: item.value !== undefined ? item.value : item.id,
+        ...item
+      }))
+    }
+  }
+  
+  // 如果已经是标准格式，直接返回
+  return rawData
+}
+
+/**
+ * 初始化选项数据（从列配置中收集 optionsApi 并获取数据）
+ */
+const initFieldOptions = async () => {
+  // 收集所有需要获取选项数据的列
+  const optionsApiMap = new Map<string, { api: () => Promise<any>; col: GridColumn }>()
+  
+  props.columns.forEach((col) => {
+    if (col.optionsApi && col.field) {
+      optionsApiMap.set(col.field, {
+        api: col.optionsApi,
+        col
+      })
+    }
+  })
+  
+  // 并行获取所有选项数据
+  const promises = Array.from(optionsApiMap.entries()).map(async ([field, { api, col }]) => {
+    try {
+      const res = await api()
+      let rawOptions: any[] = []
+      
+      // 处理响应数据
+      if (Array.isArray(res)) {
+        // 如果直接返回数组
+        rawOptions = res
+      } else if (res?.data && Array.isArray(res.data)) {
+        // 如果返回 { data: [...] } 格式
+        rawOptions = res.data
+      } else {
+        console.warn(`字段 ${field} 的选项数据格式不正确：`, res)
+        rawOptions = []
+      }
+      
+      // 根据列配置转换数据
+      const transformedOptions = transformOptionsByConfig(col, rawOptions)
+      
+      fieldOptionsData.value[field] = transformedOptions
+    } catch (err) {
+      console.error(`获取字段 ${field} 的选项数据失败：`, err)
+      fieldOptionsData.value[field] = []
+    }
+  })
+  
+  await Promise.all(promises)
+}
+
+// ==================== 导入功能 ====================
+const router = useRouter()
+
+/**
+ * 安全数字转换函数
+ * @param value - 要转换的值
+ * @param fallback - 转换失败时的默认值，默认为 null
+ * @returns 转换后的数字或默认值
+ */
+const safeNumber = (value: any, fallback: any = null): any => {
+  if (value === null || value === undefined) return fallback
+  const num = Number(value)
+  return Number.isNaN(num) ? fallback : num
+}
+
+/**
+ * 规范化图片路径
+ * 移除查询参数，添加 ?original 后缀
+ * @param img - 图片路径字符串
+ * @returns 规范化后的图片路径
+ */
+const normalizeImage = (img: string): string => {
+  if (typeof img !== 'string' || !img.length) return ''
+  const [path] = img.split('?')
+  return path ? getImageUrlWithSuffix(path, ImageQuerySuffix.ORIGINAL) : ''
+}
+
+/**
+ * 检测字段是否为图片字段
+ * @param fieldName - 字段名
+ * @returns 是否为图片字段
+ */
+const isImageField = (fieldName: string): boolean => {
+  const imageFieldPatterns = [
+    /_images?$/i,      // 以 _images 或 _image 结尾
+    /^images?$/i,       // 直接是 images 或 image
+    /_image_/i,        // 包含 _image_
+    /_picture/i,        // 包含 _picture
+    /_photo/i,          // 包含 _photo
+    /_img/i             // 包含 _img
+  ]
+  return imageFieldPatterns.some(pattern => pattern.test(fieldName))
+}
+
+/**
+ * 标准数据转换函数
+ * 自动处理图片字段、数字字段等，将行数据转换为导入格式
+ * @param row - 行数据
+ * @returns 转换后的数据
+ */
+const standardImportTransform = (row: any): any => {
+  if (!row) return null
+  
+  const transformed: any = { ...row }
+  
+  // 遍历所有字段，进行标准处理
+  Object.keys(row).forEach((key) => {
+    const value = row[key]
+    
+    // 处理图片字段
+    if (isImageField(key)) {
+      if (Array.isArray(value)) {
+        // 数组格式的图片：过滤有效图片，规范化路径
+        const validImages = value.filter((img: any) => typeof img === 'string' && img)
+        // 创建两个版本：display（原始）和 normalized（规范化）
+        transformed[`${key}_display`] = [...validImages]
+        transformed[key] = validImages.map(normalizeImageUrl).filter(Boolean)
+      } else if (typeof value === 'string' && value) {
+        // 字符串格式的图片：规范化路径
+        transformed[key] = normalizeImageUrl(value)
+      }
+    }
+    
+    // 处理常见的数字字段（可选：如果需要，可以自动转换）
+    // 这里不自动转换，因为不同业务场景的数字字段处理方式可能不同
+    // 如果需要，可以通过 importTransform 自定义处理
+  })
+  
+  // 添加 action 字段（用于导入页面的操作标识）
+  if (transformed.action === undefined) {
+    transformed.action = null
+  }
+  
+  return transformed
+}
+
+/**
+ * 打开导入窗口
+ * 
+ * 工作流程：
+ * 1. 获取当前选中的记录
+ * 2. 将记录转换为导入格式（如果提供了 importTransform）
+ * 3. 保存到 sessionStorage
+ * 4. 导航到导入页面
+ * 
+ * 如果没有选中记录，会打开空白的批量维护页
+ */
+const openImport = async () => {
+  if (!props.importRoute) {
+    console.warn('未配置导入路由（importRoute），无法打开导入窗口')
+    return
+  }
+  
+  try {
+    // 获取选中的记录
+    const selections = await tableMethods.getSelections()
+    
+    // 确定存储 key
+    const storageKey = props.importStorageKey || `IMPORT_${props.windowId || 'BASE_GRID'}_PAYLOAD`
+    
+    if (!selections?.length) {
+      // 如果没有选中记录，打开空白导入页
+      sessionStorage.setItem(storageKey, JSON.stringify([]))
+      ElMessage.info(`未选择${props.importLabel || '数据'}，将打开空白批量维护页`)
+      router.push(props.importRoute)
+      return
+    }
+    
+    // 转换数据格式
+    let payload: any[] = []
+    if (props.importTransform && typeof props.importTransform === 'function') {
+      // 使用自定义转换函数
+      payload = selections
+        .map(props.importTransform)
+        .filter((item: any) => item !== null)
+    } else {
+      // 使用标准转换函数（自动处理图片、数字等）
+      payload = selections
+        .map(standardImportTransform)
+        .filter((item: any) => item !== null)
+    }
+    
+    if (!payload.length) {
+      ElMessage.warning(`所选${props.importLabel || '数据'}异常，已打开空白批量维护页`)
+      sessionStorage.setItem(storageKey, JSON.stringify([]))
+      router.push(props.importRoute)
+      return
+    }
+    
+    // 保存到 sessionStorage 并导航到导入页面
+    sessionStorage.setItem(storageKey, JSON.stringify(payload))
+    router.push(props.importRoute)
+  } catch (err) {
+    console.error('打开导入窗口失败：', err)
+    ElMessage.error('打开导入窗口失败，请稍后重试')
+  }
+}
+
+/**
+ * 合并后的字段选项（合并 props.fieldOptions 和自动获取的 fieldOptionsData）
+ */
+const mergedFieldOptions = computed(() => {
+  const merged: Record<string, any[] | (() => any[])> = { ...props.fieldOptions }
+  
+  // 将自动获取的选项数据添加到合并结果中
+  Object.keys(fieldOptionsData.value).forEach((field) => {
+    if (fieldOptionsData.value[field] && fieldOptionsData.value[field].length > 0) {
+      // 如果 props.fieldOptions 中已有该字段，不覆盖；否则使用自动获取的数据
+      if (!merged[field]) {
+        merged[field] = () => fieldOptionsData.value[field]
+      }
+    }
+  })
+  
+  return merged
+})
+
+/**
+ * 处理后的查询条件（自动填充选项数据）
+ */
+const processedSearchConditions = computed(() => {
+  if (!props.searchConditions || props.searchConditions.length === 0) {
+    return []
+  }
+  
+  return props.searchConditions.map((condition) => {
+    // 如果查询条件没有配置 options，但字段有自动获取的选项数据，则使用自动获取的数据
+    if (!condition.options && fieldOptionsData.value[condition.field] && fieldOptionsData.value[condition.field].length > 0) {
+      return {
+        ...condition,
+        options: () => fieldOptionsData.value[condition.field]
+      }
+    }
+    return condition
+  })
+})
+
+// ==================== 弹窗状态管理 ====================
+/** 弹窗显示状态 */
+const dialogVisible = ref(false)
+/** 弹窗模式：'add' | 'edit' | 'view' */
+const dialogMode = ref<'add' | 'edit' | 'view'>('add')
+/** 当前行数据（编辑/查看时使用） */
+const currentRow = ref<any>(null)
+/** 保存按钮加载状态 */
+const saveLoading = ref(false)
 
 /** StatusStoragePlus 组件引用 */
 const statusStoragePlusRef = ref<InstanceType<typeof StatusStoragePlus>>()
@@ -234,16 +652,100 @@ const initQuickQueryList = async () => {
   const config = props.quickQueryList
   let data: QuickQueryItem[] = []
 
-  // 获取数据
-  if (typeof config.data === 'function') {
+  // 获取数据（优先级：config.dataApi > config.data > 列定义中的 optionsApi）
+  if (config.dataApi && typeof config.dataApi === 'function') {
+    // 使用 dataApi 获取数据
+    try {
+      const res = await config.dataApi()
+      let rawData: any[] = []
+      
+      // 处理响应数据（支持多种格式）
+      if (Array.isArray(res)) {
+        // 格式1: 直接返回数组
+        rawData = res
+      } else if (res && typeof res === 'object') {
+        // 格式2: 返回对象，数据在 data 字段中
+        if (Array.isArray(res.data)) {
+          rawData = res.data
+        } else if (Array.isArray((res as any).list)) {
+          // 格式3: 数据在 list 字段中
+          rawData = (res as any).list
+        } else {
+          console.warn('快捷查询列表数据格式不正确，期望数组或包含 data/list 字段的对象：', res)
+          rawData = []
+        }
+      } else {
+        console.warn('快捷查询列表数据格式不正确：', res)
+        rawData = []
+      }
+      
+      // 根据配置转换数据
+      if (config.idField && config.labelFormat && config.labelFormat.length > 0) {
+        // 使用 dsOptions.ts 格式转换
+        data = rawData.map((item: any) => {
+          const id = item[config.idField!]
+          return {
+            id,
+            label: generateLabelByFormat(rawData, id, config.labelFormat!)
+          }
+        })
+      } else if (config.idField && config.labelFields && config.labelFields.length > 0) {
+        // 使用旧格式转换（向后兼容）
+        data = rawData.map((item: any) => ({
+          id: item[config.idField!],
+          label: generateLabel(item, config.labelFields!)
+        }))
+      } else {
+        // 默认转换：尝试自动识别格式
+        if (rawData.length > 0) {
+          if (rawData[0].hasOwnProperty('id') && rawData[0].hasOwnProperty('label')) {
+            // 已经是标准格式
+            data = rawData.map((item: any) => ({
+              id: item.id,
+              label: item.label
+            }))
+          } else if (rawData[0].hasOwnProperty('id') && rawData[0].hasOwnProperty('name_unique')) {
+            // 常见格式：{ id, name_unique, ... }
+            data = rawData.map((item: any) => ({
+              id: item.id,
+              label: item.name_unique
+            }))
+          } else {
+            // 尝试其他格式
+            data = rawData.map((item: any) => ({
+              id: item.id !== undefined ? item.id : item.value,
+              label: item.label || item.name_unique || item.name || String(item.id !== undefined ? item.id : item.value)
+            }))
+          }
+        }
+      }
+    } catch (err) {
+      console.error('获取快捷查询列表数据失败：', err)
+      data = []
+    }
+  } else if (typeof config.data === 'function') {
+    // 兼容旧的 data 函数方式
     try {
       data = await config.data()
     } catch (err) {
       console.error('获取快捷查询列表数据失败：', err)
       data = []
     }
+  } else if (config.data && Array.isArray(config.data)) {
+    // 兼容旧的 data 数组方式
+    data = config.data
   } else {
-    data = config.data || []
+    // 如果 quickQueryList 没有配置 data 或 dataApi，尝试从列定义中获取
+    const fieldColumn = props.columns.find((col) => col.field === config.field)
+    if (fieldColumn?.optionsApi && fieldOptionsData.value[config.field] && fieldOptionsData.value[config.field].length > 0) {
+      // 使用列定义中自动获取的数据
+      data = fieldOptionsData.value[config.field].map((item: any) => ({
+        id: item.id !== undefined ? item.id : item.value,
+        label: item.label || item.name_unique || String(item.id !== undefined ? item.id : item.value)
+      }))
+    } else {
+      data = []
+    }
   }
 
   // 添加"（全部）"选项
@@ -503,6 +1005,9 @@ onMounted(async () => {
   // 标记正在恢复状态，防止 watch 触发重复调用
   isRestoringState.value = true
   
+  // 初始化选项数据（从列配置中获取）
+  await initFieldOptions()
+  
   // 初始化快捷查询列表（如果存在）
   if (props.quickQueryList) {
     await initQuickQueryList()
@@ -642,18 +1147,65 @@ const { tableRegister, tableState, tableMethods } = useTable({
   immediate: false, // 禁用自动初始化查询，改为手动控制，避免在查询条件恢复之前执行查询
   fetchDataApi: async () => {
     const { pageSize, currentPage } = tableState
-    const res = await props.fetchDataApi({
-      page: unref(currentPage),
-      limit: unref(pageSize),
-      ...unref(internalSearchParams.value) // 使用查询条件参数
-    })
+    try {
+      const res = await props.fetchDataApi({
+        page: unref(currentPage),
+        limit: unref(pageSize),
+        ...unref(internalSearchParams.value) // 使用查询条件参数
+      })
 
-    return {
-      list: res.data || [],
-      total: res.count || 0
+      // 处理返回格式：支持多种 API 返回格式
+      // 格式1: { data: [...], count: number }
+      // 格式2: { data: [...], code: 200, count: number }
+      // 格式3: 直接返回数组（兼容处理）
+      let dataList: any[] = []
+      let totalCount: number = 0
+
+      if (Array.isArray(res)) {
+        // 如果直接返回数组
+        dataList = res
+        totalCount = res.length
+      } else if (res && typeof res === 'object') {
+        // 如果返回对象
+        dataList = (res as any).data || []
+        totalCount = (res as any).count || (res as any).total || 0
+      }
+
+      // 处理图片字段（排序并移除排序前缀）
+      // 从列配置中提取 type === 'image' 的字段名
+      const imageFields = props.columns
+        .filter((col) => col.type === 'image')
+        .map((col) => col.field)
+      
+      const processedData = dataList.map((row: any) => 
+        processImageFields(row, imageFields, {
+          processList: true,
+          cleanArray: false
+        })
+      )
+
+      return {
+        list: processedData,
+        total: totalCount
+      }
+    } catch (err: any) {
+      console.error('获取数据失败：', err.message || err)
+      return {
+        list: [],
+        total: 0
+      }
     }
   },
-  fetchDelApi: props.fetchDelApi
+  fetchDelApi: props.fetchDelApi ? async (ids: string[] | number[] | number | string) => {
+    // 调用删除接口
+    const res = await props.fetchDelApi!(ids)
+    // 如果返回的是响应对象，检查 code === 200；如果返回的是 boolean，直接返回
+    if (typeof res === 'boolean') {
+      return res
+    }
+    // 处理响应对象
+    return res?.code === 200
+  } : undefined
 })
 
 const { dataList, loading, total, pageSize, currentPage } = tableState
@@ -994,6 +1546,7 @@ const convertColumns = (columns: GridColumn[]): TableColumn[] => {
       width: col.width,
       minWidth: col.minWidth,
       align: col.align,
+      headerAlign: col.headerAlign || 'center', // 表头默认居中对齐
       fixed: col.fixed,
       // showConfig：是否可配置显示/隐藏，默认 true
       showConfig: col.showConfig !== undefined ? col.showConfig : true
@@ -1046,12 +1599,15 @@ const convertColumns = (columns: GridColumn[]): TableColumn[] => {
             if (col.formatter) {
               return col.formatter(row)
             }
-            // 获取状态选项（支持函数或数组）
+            // 获取状态选项（优先级：statusOptions > fieldOptionsData > 空数组）
             let statusOptions: Array<{ label: string; value: any }> | undefined
             if (col.statusOptions) {
               statusOptions = typeof col.statusOptions === 'function' 
                 ? col.statusOptions() 
                 : col.statusOptions
+            } else if (fieldOptionsData.value[col.field] && fieldOptionsData.value[col.field].length > 0) {
+              // 如果配置了 optionsApi，使用自动获取的数据
+              statusOptions = fieldOptionsData.value[col.field]
             }
             // 构建状态映射表并返回对应文字
             if (statusOptions && Array.isArray(statusOptions)) {
@@ -1069,11 +1625,14 @@ const convertColumns = (columns: GridColumn[]): TableColumn[] => {
         }
 
       case 'action':
-        // 操作列：渲染操作按钮（编辑、删除、自定义）
+        // 操作列：渲染操作按钮（默认显示修改、查看、删除三个按钮，支持自定义）
+        // 宽度处理：如果用户指定了 width，使用指定值；否则默认使用 160px
         return {
           ...baseColumn,
           align: col.align || 'center',
           fixed: col.fixed || 'right',
+          width: col.width || 160,
+          minWidth: col.minWidth,
           slots: {
             default: (data: any) => {
               // 优先使用自定义插槽
@@ -1082,20 +1641,47 @@ const convertColumns = (columns: GridColumn[]): TableColumn[] => {
               }
 
               const row = data.row
-              const options = col.actionOptions || []
+              const options = col.actionOptions
 
-              // 如果没有配置操作选项，使用默认的编辑和删除按钮
-              if (options.length === 0) {
+              // 如果没有配置操作选项（undefined 或空数组），使用默认的修改、查看和删除按钮
+              if (!options || options.length === 0) {
                 const defaultOptions: ActionOption[] = []
+                
+                // 1. 修改按钮
+                // 优先级：列配置的 onEdit 回调 > 集成的 editAction 函数
+                // 显示条件：enableEdit 不为 false（默认 true）
+                // 注意：修改功能需要配置 formSchema 才能正常工作
                 if (col.onEdit) {
                   defaultOptions.push({ type: 'edit', onClick: col.onEdit })
+                } else if (props.enableEdit !== false) {
+                  defaultOptions.push({ type: 'edit', onClick: (row: any) => editAction(row) })
                 }
-                if (col.onDelete || props.fetchDelApi) {
+                
+                // 2. 查看按钮
+                // 显示条件：enableView 不为 false（默认 true）
+                // 注意：查看功能需要配置 formSchema 才能正常工作
+                if (props.enableView !== false) {
+                  defaultOptions.push({ 
+                    type: 'other', 
+                    label: '查看', 
+                    onClick: (row: any) => viewAction(row) 
+                  })
+                }
+                
+                // 3. 删除按钮
+                // 优先级：列配置的 onDelete 回调 > 集成的 delData 函数
+                // 显示条件：enableDelete 不为 false（默认 true）
+                // 注意：删除功能需要配置 fetchDelApi 才能正常工作
+                if (col.onDelete) {
                   defaultOptions.push({ type: 'delete', onClick: col.onDelete })
+                } else if (props.enableDelete !== false) {
+                  defaultOptions.push({ type: 'delete', onClick: (row: any) => delData(row) })
                 }
+                
                 return renderActionButtons(defaultOptions, row, col)
               }
 
+              // 如果配置了自定义操作选项，使用自定义配置
               return renderActionButtons(options, row, col)
             }
           }
@@ -1173,13 +1759,166 @@ watch(
     { deep: false }
 )
 
+// ==================== 工具栏按钮处理 ====================
+/**
+ * 处理工具栏按钮点击事件
+ * 如果按钮没有提供 onClick，则根据按钮类型使用默认操作
+ */
+const handleToolbarButtonClick = (btn: ToolbarButton) => {
+  if (btn.onClick) {
+    // 如果提供了自定义 onClick，直接调用
+    btn.onClick()
+    return
+  }
+  
+  // 根据按钮类型使用默认操作
+  switch (btn.stype) {
+    case 'new':
+      // 新增按钮：使用集成的 addAction
+      if (props.enableAdd && props.formSchema) {
+        addAction()
+      }
+      break
+    case 'batch':
+      // 批量删除按钮：使用集成的 delData
+      if (props.enableDelete && props.fetchDelApi) {
+        delData()
+      }
+      break
+    case 'import':
+      // 导入按钮：使用集成的 openImport
+      if (props.importRoute) {
+        openImport()
+      } else {
+        console.warn('未配置导入路由（importRoute），无法执行导入操作')
+      }
+      break
+    default:
+      // 其他按钮类型，如果没有提供 onClick，则不执行任何操作
+      break
+  }
+}
+
+// ==================== 操作函数 ====================
+/**
+ * 新增操作
+ */
+const addAction = () => {
+  if (!props.enableAdd || !props.formSchema) {
+    return
+  }
+  dialogMode.value = 'add'
+  currentRow.value = null
+  dialogVisible.value = true
+}
+
+/**
+ * 编辑操作
+ */
+const editAction = (row: any) => {
+  if (!props.enableEdit || !props.formSchema) {
+    return
+  }
+  dialogMode.value = 'edit'
+  // 复制行数据，避免直接修改原数据
+  currentRow.value = { ...row }
+  dialogVisible.value = true
+}
+
+/**
+ * 查看操作
+ */
+const viewAction = (row: any) => {
+  if (!props.enableView || !props.formSchema) {
+    return
+  }
+  dialogMode.value = 'view'
+  currentRow.value = { ...row }
+  dialogVisible.value = true
+}
+
+/**
+ * 删除操作
+ */
+const delData = async (row?: any) => {
+  if (!props.enableDelete || !props.fetchDelApi) {
+    return
+  }
+  
+  if (row) {
+    // 删除单行
+    await tableMethods.delList(true, [row[props.nodeKey]])
+  } else {
+    // 批量删除
+    await tableMethods.delList(true)
+  }
+  // delList 方法会自动刷新列表并显示消息
+}
+
+/**
+ * 提交接口（新增或修改）
+ * @param data - 表单数据
+ * @param mode - 操作模式（'add' | 'edit'），如果提供则优先使用，否则使用 dialogMode
+ */
+const submitApi = async (data: any, mode?: 'add' | 'edit') => {
+  // 优先使用传入的 mode 参数（支持继续新增/拷贝新增时的模式切换）
+  // 如果没有传入 mode，则使用 dialogMode（向后兼容）
+  const operationMode = mode || dialogMode.value
+  
+  // 如果提供了 submitApi，优先使用
+  if (props.submitApi) {
+    return await props.submitApi(data, operationMode)
+  }
+  
+  // 否则根据模式调用对应的 API
+  if (operationMode === 'add') {
+    if (props.addApi) {
+      return await props.addApi(data)
+    }
+    throw new Error('未配置新增接口（addApi）')
+  } else {
+    if (props.editApi) {
+      return await props.editApi(data)
+    }
+    throw new Error('未配置编辑接口（editApi）')
+  }
+}
+
+/**
+ * 保存成功回调
+ */
+const handleSuccess = () => {
+  // 刷新列表
+  getList()
+  // 调用用户自定义回调
+  if (props.onSuccess) {
+    props.onSuccess()
+  }
+}
+
+/**
+ * 取消操作
+ */
+const handleCancel = () => {
+  dialogVisible.value = false
+  currentRow.value = null
+  // 调用用户自定义回调
+  if (props.onCancel) {
+    props.onCancel()
+  }
+}
+
 // ==================== 暴露方法 ====================
 defineExpose({
   getList, // 刷新列表
   getSelections, // 获取选中的行
   tableMethods, // 表格方法集合
   tableState, // 表格状态
-  showInfo // 显示信息提示
+  showInfo, // 显示信息提示
+  addAction, // 新增操作
+  editAction, // 编辑操作
+  viewAction, // 查看操作
+  delData // 删除操作
 })
 </script>
 
@@ -1187,14 +1926,14 @@ defineExpose({
   <StatusStoragePlus
     ref="statusStoragePlusRef"
     :stores="stateStores"
-    storage-prefix="BASE_GRID_STATE_"
+    :storage-prefix="props.windowId || 'BASE_GRID_STATE_'"
   >
     <div class="base-grid-wrapper" v-show="pageReady">
     <!-- 查询条件区域 -->
     <QueryBar 
-      v-if="props.searchConditions && props.searchConditions.length > 0"
+      v-if="processedSearchConditions && processedSearchConditions.length > 0"
       ref="queryBarRef"
-      :conditions="props.searchConditions"
+      :conditions="processedSearchConditions"
       @search="handleSearch"
       @reset="handleReset"
       @register="handleQueryBarRegister"
@@ -1247,7 +1986,7 @@ defineExpose({
             <div class="base-grid-toolbar-left">
               <template v-if="props.toolbarButtons && props.toolbarButtons.length > 0">
                 <template v-for="btn in props.toolbarButtons" :key="btn.stype">
-                  <ButtonPlus :stype="btn.stype" @click="btn.onClick">
+                  <ButtonPlus :stype="btn.stype" @click="() => handleToolbarButtonClick(btn)">
                     <template v-if="btn.label">{{ btn.label }}</template>
                   </ButtonPlus>
                 </template>
@@ -1287,7 +2026,7 @@ defineExpose({
         <div class="base-grid-toolbar-left">
           <template v-if="props.toolbarButtons && props.toolbarButtons.length > 0">
             <template v-for="btn in props.toolbarButtons" :key="btn.stype">
-              <ButtonPlus :stype="btn.stype" @click="btn.onClick">
+              <ButtonPlus :stype="btn.stype" @click="() => handleToolbarButtonClick(btn)">
                 <template v-if="btn.label">{{ btn.label }}</template>
               </ButtonPlus>
             </template>
@@ -1303,6 +2042,23 @@ defineExpose({
     </template>
   </Table>
   </div>
+  
+  <!-- 弹窗：新增/编辑/查看 -->
+  <BaseFree
+    v-if="props.formSchema && props.formSchema.length > 0"
+    v-model="dialogVisible"
+    :page-title="props.pageTitle"
+    :mode="dialogMode"
+    :save-loading="saveLoading"
+    :form-schema="props.formSchema"
+    :rules="props.rules"
+    :current-row="currentRow"
+    :submit-api="submitApi"
+    :tabs="props.tabs"
+    :field-options="mergedFieldOptions"
+    @success="handleSuccess"
+    @cancel="handleCancel"
+  />
   </StatusStoragePlus>
 </template>
 

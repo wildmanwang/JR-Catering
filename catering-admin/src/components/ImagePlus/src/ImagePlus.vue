@@ -3,10 +3,15 @@ import { computed, ref, toRefs, watch, nextTick } from 'vue'
 import { ElUpload, UploadProps, ElIcon, ElImage, ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/store/modules/auth'
-
-defineOptions({
-  name: 'ImagePlus'
-})
+import {
+  processImageList,
+  normalizeImageUrl,
+  isDeletedImage,
+  removeQueryParams,
+  cleanImageArray,
+  ImageQuerySuffix,
+  getImageUrlWithSuffix
+} from '@/utils/imageList'
 
 // ==================== Props 定义 ====================
 interface Props {
@@ -80,7 +85,7 @@ const generateDisplayData = (imageData: any[]): Array<{ display: string; key: st
   
   imageData.forEach((item: any, originalIndex: number) => {
     // 过滤掉标记为删除的图片
-    if (typeof item === 'string' && item.includes('?delete')) {
+    if (typeof item === 'string' && isDeletedImage(item)) {
       return
     }
     
@@ -94,11 +99,7 @@ const generateDisplayData = (imageData: any[]): Array<{ display: string; key: st
       key = item[2] || item[0] || `new-${originalIndex}`
     } else if (typeof item === 'string') {
       // 如果是字符串格式，移除操作标记，只保留路径
-      if (item.includes('?')) {
-        display = item.split('?')[0]
-      } else {
-        display = item
-      }
+      display = removeQueryParams(item)
       // 使用图片路径（去掉标记）作为 key，这样删除其他图片时不会影响当前图片的 key
       key = display
     } else {
@@ -155,39 +156,18 @@ const normalizeInputImageData = (imageData: any): any[] => {
     /^\d+-/.test(imageData[0])
 
   if (needsProcessing) {
-    // 先排序图片（此时数据格式是 "order-path"，排序后按 order_number 升序）
-    const sortedImages = [...imageData].sort((a: string, b: string) => a.localeCompare(b))
-    
-    // 提取图片路径（移除 order_number 前缀，如 "order-path" -> "path"）
-    const processedImages = sortedImages.map((item: string) => {
-      if (typeof item === 'string' && item.includes('-')) {
-        return item.split('-')[1]
-      }
-      return item
-    })
+    // 使用 processImageList 处理排序前缀并排序
+    const processedImages = processImageList(imageData as string[])
     
     // 标记为 original（如果还没有标记）
     return processedImages.map((item: string) => {
-      if (typeof item === 'string' && item.length) {
-        // 如果已经包含标记，保持不变
-        if (item.includes('?')) {
-          return item
-        }
-        // 否则添加 ?original 标记
-        return `${item}?original`
-      }
-      return item
+      return normalizeImageUrl(item)
     }).filter(Boolean)
   } else {
     // 数据已经处理过，只需要确保没有标记的项添加 ?original 标记
     return imageData.map((item: any) => {
       if (typeof item === 'string' && item.length) {
-        // 如果已经包含标记，保持不变
-        if (item.includes('?')) {
-          return item
-        }
-        // 否则添加 ?original 标记
-        return `${item}?original`
+        return normalizeImageUrl(item)
       }
       return item
     }).filter(Boolean)
@@ -324,13 +304,13 @@ const handleRemoveImage = (index: number) => {
     const currentItem = newImageData[imageDataIndex]
     if (typeof currentItem === 'string') {
       // 检查图片标记
-      if (currentItem.includes('?add')) {
+      if (currentItem.includes(`?${ImageQuerySuffix.ADD}`)) {
         // 如果是 ?add 标记的图片（后台不存在），直接从数组中删除
         newImageData.splice(imageDataIndex, 1)
       } else {
         // 如果是 ?original 标记的图片（后台已存在），标记为删除
-        const path = currentItem.split('?')[0]
-        newImageData[imageDataIndex] = `${path}?delete`
+        const path = removeQueryParams(currentItem)
+        newImageData[imageDataIndex] = getImageUrlWithSuffix(path, ImageQuerySuffix.DELETE)
       }
       isInternalUpdate.value = true
       imageData.value = newImageData
@@ -430,14 +410,10 @@ const generatePreviewList = (): string[] => {
       // 兼容旧格式（字符串）
       return typeof item === 'string' ? item : ''
     })
-    .filter((img: string) => img && !img.endsWith('?delete'))
+    .filter((img: string) => img && !isDeletedImage(img))
     .map((img: string) => {
       // 移除 OSS 参数，使用原始图片进行预览
-      if (typeof img === 'string' && img.includes('?')) {
-        const [path] = img.split('?')
-        return path || img
-      }
-      return img
+      return removeQueryParams(img)
     })
     .filter(Boolean)
 }
@@ -539,9 +515,9 @@ const uploadPendingImages = async (): Promise<void> => {
       }
 
       // 转换为字符串格式：路径 + 操作类型（add/update/delete）
-      const operationType = fileData[1] || 'add'
+      const operationType = (fileData[1] as ImageQuerySuffix) || ImageQuerySuffix.ADD
       const remotePath = res.data.data.remote_path
-      newImageData[index] = `${remotePath}?${operationType}`
+      newImageData[index] = getImageUrlWithSuffix(remotePath, operationType)
     }
   }
 
@@ -563,9 +539,7 @@ const uploadPendingImages = async (): Promise<void> => {
  * @returns 规范化后的图片路径
  */
 const normalizeImagePath = (img: string): string => {
-  if (typeof img !== 'string' || !img.length) return ''
-  const [path] = img.split('?')
-  return path ? `${path}?original` : ''
+  return normalizeImageUrl(img)
 }
 
 /**
@@ -584,26 +558,19 @@ const getNormalizedImages = (images?: any[]): string[] => {
     return []
   }
 
-  return targetImages
-    .filter((item: any) => {
-      // 过滤掉标记为删除的图片
-      if (typeof item === 'string' && item.includes('?delete')) {
-        return false
-      }
-      // 过滤掉数组格式的项（未上传的图片，应该先上传）
-      if (Array.isArray(item)) {
-        return false
-      }
-      return true
-    })
-    .map((item: any) => {
-      // 如果是字符串格式，规范化路径
-      if (typeof item === 'string') {
-        return normalizeImagePath(item)
-      }
-      return ''
-    })
-    .filter(Boolean)
+  // 先过滤掉数组格式的项（未上传的图片，应该先上传）
+  const stringItems = targetImages.filter((item: any) => {
+    return typeof item === 'string' && !Array.isArray(item)
+  }) as string[]
+  
+  // 使用 cleanImageArray 过滤删除标记并清理查询参数
+  const cleanedItems = cleanImageArray(stringItems, {
+    removeDeleted: true,
+    removeQueryParams: false // 先不移除查询参数，后面统一规范化
+  })
+  
+  // 规范化每个图片路径（添加 ?original）
+  return cleanedItems.map((item: string) => normalizeImagePath(item)).filter(Boolean)
 }
 
 // ==================== 暴露方法 ====================
@@ -617,7 +584,7 @@ defineExpose({
   <div :class="['image-container', `image-container-${size}`]">
     <template v-for="(item, index) in imageDisplayData" :key="item.key">
       <div
-        v-if="item.display && !item.display.endsWith('?delete')"
+        v-if="item.display && !isDeletedImage(item.display)"
         :class="[
           `image-group-${size}`,
           !disabled && dragIndex === index ? 'dragging' : '',
@@ -752,7 +719,10 @@ defineExpose({
   width: 100% !important;
   height: 96px !important;
   margin: 0 !important;
+  padding: 0 !important;
   border-radius: 6px;
+  box-sizing: border-box !important;
+  color: #606266; // 设置默认文字颜色
 }
 
 .image-group-uploader-normal :deep(.el-upload:hover) {
@@ -768,18 +738,75 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-direction: column;
+  padding: 0 !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
+}
+
+// 上传内容包装器：确保上传图标和文字居中显示
+.upload-content-wrapper-normal {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  overflow: visible;
+  position: relative;
+  gap: 0;
 }
 
 .el-icon--upload-normal {
   width: 54px;
   height: 54px;
-  margin-top: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  overflow: visible !important;
+  position: relative;
+}
+
+.el-icon--upload-normal :deep(svg) {
+  width: 54px !important;
+  height: 54px !important;
+  min-width: 54px !important;
+  min-height: 54px !important;
+  max-width: 54px !important;
+  max-height: 54px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  display: block !important;
+  box-sizing: border-box !important;
+  overflow: visible !important;
+  position: static !important;
+}
+
+// 覆盖 SVG 元素上可能存在的固定高度属性
+.el-icon--upload-normal :deep(svg[height]),
+.el-icon--upload-normal :deep(svg[height="67"]),
+.el-icon--upload-normal :deep(svg[height="67px"]) {
+  height: 54px !important;
+  max-height: 54px !important;
+  width: 54px !important;
+  max-width: 54px !important;
 }
 
 .upload-text-normal {
   font-size: 12px;
-  margin-top: -20px;
+  margin-top: 4px;
+  margin-bottom: 0;
   text-align: center;
+  line-height: 1.2;
+  padding: 0;
+  flex-shrink: 0;
 }
 
 // ==================== small 尺寸（60px*60px，参考 ImportGrid）====================

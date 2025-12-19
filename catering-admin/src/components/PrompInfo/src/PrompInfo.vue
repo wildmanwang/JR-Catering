@@ -3,10 +3,6 @@ import { computed, ref } from 'vue'
 import { useAppStore } from '@/store/modules/app'
 import { useI18n } from '@/hooks/web/useI18n'
 
-defineOptions({
-  name: 'PrompInfo'
-})
-
 type InfoType = 'info' | 'warn' | 'error'
 
 interface InfoDisplay {

@@ -14,6 +14,8 @@ import type { TablePlusColumn } from '@/components/TablePlus'
 import { ButtonPlus } from '@/components/ButtonPlus'
 import { PrompInfo } from '@/components/PrompInfo'
 import { StatusStoragePlus, type StatusStoreItem } from '@/components/StatusStoragePlus'
+import { formatDataItem } from '@/utils/dsOptions'
+import { processImageFields, cleanImageArray, ImageQuerySuffix } from '@/utils/imageList'
 
 /**
  * 列配置接口（扩展 TablePlusColumn）
@@ -21,6 +23,12 @@ import { StatusStoragePlus, type StatusStoreItem } from '@/components/StatusStor
 export interface ImportGridColumn extends TablePlusColumn {
   /** 字段初始值（用于新增行时） */
   value?: any
+  /** 选项数据获取接口（用于自动获取该字段的选项数据） */
+  optionsApi?: () => Promise<{ data?: any[]; code?: number; [key: string]: any }> // 返回格式：{ data: [...] } 或直接返回数组
+  /** 选项数据的 id 字段名（用于简化配置） */
+  optionsIdField?: string // 例如：'id' 或 'value'
+  /** 选项数据的 label 格式配置（用于简化配置，使用 dsOptions.ts 的格式） */
+  optionsLabelFormat?: Array<['field' | 'value', string]> // 例如：[['field', 'label']] 或 [['field', 'name_unique']]
 }
 
 /**
@@ -97,13 +105,16 @@ export interface ImportGridProps {
   onRowAdded?: (row: any, index: number) => void
   /** 新增行后的提示消息（默认：'已新增 1 行'） */
   addRowMessage?: string
+  /** 窗口标识（用于 StatusStoragePlus 的唯一标识，使用方需要赋值） */
+  windowId?: string
 }
 
 const props = withDefaults(defineProps<ImportGridProps>(), {
   createDefaultRow: () => ({}),
   mapRowData: (row: any) => row,
   showToolbar: true,
-  addRowMessage: '已新增 1 行'
+  addRowMessage: '已新增 1 行',
+  windowId: ''
 })
 
 const emit = defineEmits<{
@@ -143,15 +154,7 @@ const deepCloneObject = (obj: any): any => {
   return cloned
 }
 
-/**
- * 清理图片数组的状态标记
- */
-const cleanImageArray = (imageArray: any[]): any[] => {
-  if (!Array.isArray(imageArray)) return []
-  return imageArray
-    .filter((item: any) => typeof item === 'string' && !item.includes('?delete'))
-    .map((item: any) => typeof item === 'string' ? item.replace(/\?(original|add|delete)/, '') : item)
-}
+// 注意：cleanImageArray 已从 @/utils/imageList 导入
 
 /**
  * 获取默认行数据
@@ -185,6 +188,116 @@ const originalData = ref<any[]>([])
 
 // StatusStoragePlus 组件引用
 const statusStoragePlusRef = ref<InstanceType<typeof StatusStoragePlus>>()
+
+// ==================== 选项数据管理 ====================
+/** 存储各字段的选项数据（字段名 -> 选项数组） */
+const fieldOptionsData = ref<Record<string, any[]>>({})
+
+/**
+ * 根据格式配置生成 label 文本（使用 dsOptions.ts）
+ * @param dataSet - 数据集
+ * @param uniqueId - 唯一标识
+ * @param format - 格式配置
+ * @returns 拼接后的 label 文本
+ */
+const generateLabelByFormat = (dataSet: any[], uniqueId: number | string, format: Array<['field' | 'value', string]>): string => {
+  return formatDataItem(dataSet, uniqueId, format)
+}
+
+/**
+ * 初始化选项数据（从列配置中收集 optionsApi 并获取数据）
+ */
+const initFieldOptions = async () => {
+  // 收集所有需要获取选项数据的列
+  const optionsApiMap = new Map<string, { api: () => Promise<any>; col: ImportGridColumn }>()
+  
+  props.columns.forEach((col) => {
+    if (col.optionsApi && col.field) {
+      optionsApiMap.set(col.field, {
+        api: col.optionsApi,
+        col
+      })
+    }
+  })
+  
+  // 并行获取所有选项数据
+  const promises = Array.from(optionsApiMap.entries()).map(async ([field, { api, col }]) => {
+    try {
+      const res = await api()
+      let rawOptions: any[] = []
+      
+      // 处理响应数据
+      if (Array.isArray(res)) {
+        rawOptions = res
+      } else if (res?.data && Array.isArray(res.data)) {
+        rawOptions = res.data
+      } else {
+        console.warn(`字段 ${field} 的选项数据格式不正确：`, res)
+        rawOptions = []
+      }
+      
+      // 根据配置转换数据
+      let transformedOptions: any[] = []
+      if (col.optionsIdField && col.optionsLabelFormat && col.optionsLabelFormat.length > 0) {
+        // 使用 dsOptions.ts 格式转换
+        transformedOptions = rawOptions.map((item: any) => {
+          const id = item[col.optionsIdField!]
+          const label = generateLabelByFormat(rawOptions, id, col.optionsLabelFormat!)
+          return {
+            label,
+            value: id,
+            ...item // 保留原始数据
+          }
+        })
+      } else {
+        // 默认转换：尝试自动识别格式
+        if (rawOptions.length > 0) {
+          if (rawOptions[0].hasOwnProperty('label') && rawOptions[0].hasOwnProperty('value')) {
+            // 已经是标准格式
+            transformedOptions = rawOptions
+          } else if (rawOptions[0].hasOwnProperty('id') && rawOptions[0].hasOwnProperty('name_unique')) {
+            // 常见格式：{ id, name_unique, ... }
+            transformedOptions = rawOptions.map((item: any) => ({
+              label: item.name_unique,
+              value: item.id,
+              ...item
+            }))
+          } else {
+            // 尝试其他格式
+            transformedOptions = rawOptions.map((item: any) => ({
+              label: item.label || item.name_unique || item.name || String(item.id || item.value),
+              value: item.value !== undefined ? item.value : item.id,
+              ...item
+            }))
+          }
+        }
+      }
+      
+      fieldOptionsData.value[field] = transformedOptions
+    } catch (err) {
+      console.error(`获取字段 ${field} 的选项数据失败：`, err)
+      fieldOptionsData.value[field] = []
+    }
+  })
+  
+  await Promise.all(promises)
+}
+
+/**
+ * 处理后的列配置（自动填充选项数据）
+ */
+const processedColumns = computed(() => {
+  return props.columns.map((col) => {
+    // 如果列配置了 optionsApi，但没有配置 options，则使用自动获取的数据
+    if (col.optionsApi && !col.options && fieldOptionsData.value[col.field] && fieldOptionsData.value[col.field].length > 0) {
+      return {
+        ...col,
+        options: fieldOptionsData.value[col.field]
+      }
+    }
+    return col
+  })
+})
 
 // 深拷贝数据
 const deepCloneData = (data: any[]): any[] => {
@@ -358,10 +471,10 @@ const defaultIsDataModified = (currentRow: any, originalRow: any): boolean => {
       
       // 过滤掉删除标记的图片，只比较有效图片
       const currentValidImages = currentImages.filter((item: any) => 
-        typeof item === 'string' && !item.includes('?delete')
+        typeof item === 'string' && !item.includes(`?${ImageQuerySuffix.DELETE}`)
       )
       const originalValidImages = originalImages.filter((item: any) => 
-        typeof item === 'string' && !item.includes('?delete')
+        typeof item === 'string' && !item.includes(`?${ImageQuerySuffix.DELETE}`)
       )
       
       // 如果长度不同，肯定有变化
@@ -959,25 +1072,7 @@ const handleRowAdd = (defaultRow: any) => {
 // ==================== 数据持久化 ====================
 // 状态保存和恢复功能已由 StatusStoragePlus 组件处理
 
-/**
- * 处理图片数组，去掉数字前缀（服务器用于排序的数字）
- * 图片地址格式可能是 "1http://example.com/image.jpg"，需要去掉开头的数字
- * @param imageArray 图片数组
- * @returns 处理后的图片数组
- */
-const processImageArray = (imageArray: any[]): any[] => {
-  if (!Array.isArray(imageArray)) return []
-  
-  return imageArray.map((item: any) => {
-    if (typeof item === 'string') {
-      // 去掉开头的数字前缀（用于排序的数字）
-      // 匹配格式：数字 + http/https 开头的 URL
-      // 例如："1http://example.com/image.jpg" -> "http://example.com/image.jpg"
-      return item.replace(/^\d+(?=https?:\/\/)/, '')
-    }
-    return item
-  })
-}
+// 注意：图片处理已转移到 @/utils/imageList，使用 processImageFields 函数
 
 /**
  * 映射和合并行数据（公共逻辑）
@@ -991,17 +1086,20 @@ const mapAndMergeRowData = (rawDataArray: any[]): any[] => {
     // 对mappedRow做完全深拷贝，避免任何引用共享
     const deepClonedMappedRow = JSON.parse(JSON.stringify(mappedRow))
     
-    // 处理图片字段：去掉数字前缀（服务器用于排序的数字）
-    const imageColumns = props.columns.filter(col => col.type === 'image')
-    imageColumns.forEach(column => {
-      if (Array.isArray(deepClonedMappedRow[column.field])) {
-        deepClonedMappedRow[column.field] = processImageArray(deepClonedMappedRow[column.field])
-      }
+    // 处理图片字段（排序并移除排序前缀）
+    // 从列配置中提取 type === 'image' 的字段名
+    const imageFields = props.columns
+      .filter((col) => col.type === 'image')
+      .map((col) => col.field)
+    
+    const processedRow = processImageFields(deepClonedMappedRow, imageFields, {
+      processList: true,
+      cleanArray: false
     })
     
     const mergedRow = {
       ...defaultRow,
-      ...deepClonedMappedRow
+      ...processedRow
     }
     return mergedRow
   })
@@ -1111,6 +1209,9 @@ watch(
 
 // ==================== 生命周期 ====================
 onMounted(async () => {
+  // 初始化选项数据（从列配置中获取）
+  await initFieldOptions()
+  
   // 检查是否有手选数据（sessionStorage）
   const hasManualSelection = sessionStorage.getItem(props.storageKey) !== null
   
@@ -1192,7 +1293,7 @@ defineExpose({
   <StatusStoragePlus
     ref="statusStoragePlusRef"
     :stores="stateStores"
-    storage-prefix="IMPORT_GRID_STATE_"
+    :storage-prefix="props.windowId || 'IMPORT_GRID_STATE_'"
   >
     <div class="import-grid-container">
       <!-- 工具栏 -->
@@ -1248,7 +1349,7 @@ defineExpose({
     <div class="table-wrapper">
       <TablePlus
         ref="tablePlusRef"
-        :columns="props.columns"
+        :columns="processedColumns"
         :data="dataList"
         v-model:currentRowIndex="currentRowIndex"
         :show-delete-button="true"

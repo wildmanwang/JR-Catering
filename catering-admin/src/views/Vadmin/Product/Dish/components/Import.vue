@@ -5,7 +5,7 @@
  * 数据通过 sessionStorage 从父窗口（Dish.vue）传递
  */
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { computed } from 'vue'
 import { ContentWrap } from '@/components/ContentWrap'
 import ImportGrid, { type ImportGridColumn, type SaveConfig, type ToolbarButton } from '@/wintemplate/importGrid/ImportGrid.vue'
 import { getDishStatusOptionsApi, addDishListApi, putDishListApi, getDishApi } from '@/api/vadmin/product/dish'
@@ -17,10 +17,6 @@ defineOptions({
 
 // ==================== 常量 ====================
 const IMPORT_STORAGE_KEY = 'IMPORT_DISH_PAYLOAD'
-
-// ==================== 状态 ====================
-const dishStatusOptions = ref<Array<{ label: string; value: number }>>([])
-const kitchenOptions = ref<Array<{ label: string; value: number }>>([])
 
 // ==================== 列配置 ====================
 const columns = computed<ImportGridColumn[]>(() => [
@@ -62,7 +58,9 @@ const columns = computed<ImportGridColumn[]>(() => [
     type: 'select',
     show: true,
     required: true,
-    options: kitchenOptions.value,
+    optionsApi: () => getKitchenListApi({ is_active: true }),
+    optionsIdField: 'id',
+    optionsLabelFormat: [['field', 'name_unique']],
     selectProps: {
       disabled: false,
       filterable: false
@@ -104,7 +102,9 @@ const columns = computed<ImportGridColumn[]>(() => [
     width: '60px',
     type: 'select',
     show: true,
-    options: dishStatusOptions.value,
+    optionsApi: getDishStatusOptionsApi,
+    optionsIdField: 'value',
+    optionsLabelFormat: [['field', 'label']],
     selectProps: {
       disabled: true,
       filterable: false
@@ -112,30 +112,6 @@ const columns = computed<ImportGridColumn[]>(() => [
     value: -1
   }
 ])
-
-// ==================== 数据获取 ====================
-const getDishStatusOptions = async () => {
-  try {
-    const res = await getDishStatusOptionsApi()
-    dishStatusOptions.value = res?.data || []
-  } catch (err) {
-    console.error('获取菜品状态列表失败：', err)
-    dishStatusOptions.value = []
-  }
-}
-
-const getKitchenOptions = async () => {
-  try {
-    const res = await getKitchenListApi({ is_active: true })
-    kitchenOptions.value = res?.data?.map((kitchen: any) => ({
-      label: kitchen.name_unique || `厨部${kitchen.id}`,
-      value: kitchen.id
-    })) || []
-  } catch (err) {
-    console.error('获取厨部列表失败：', err)
-    kitchenOptions.value = []
-  }
-}
 
 // ==================== 配置 ====================
 const toolbarButtons = computed<ToolbarButton[]>(() => [
@@ -157,9 +133,6 @@ const saveConfig = computed<SaveConfig>(() => ({
   }
 }))
 
-onMounted(async () => {
-  await Promise.all([getDishStatusOptions(), getKitchenOptions()])
-})
 </script>
 
 <template>
