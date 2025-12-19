@@ -141,13 +141,27 @@ const setImagePlusRef = (rowIndex: number, field: string, el: any) => {
 /** 输入组件引用映射（用于直接访问组件实例的 focus 方法） */
 const inputRefsMap = new Map<string, any>()
 
+/** 输入元素键盘事件监听器映射（用于清理事件监听器） */
+// 注意：不再需要 inputKeydownListenersMap
+// Tab 和 Escape 键的处理已统一由全局事件监听器 handleGlobalKeydown 处理
+
+// 注意：不再需要 findActualInputElement、attachInputKeydownListener 和 attachListenerToInput
+// Tab 和 Escape 键的处理已统一由全局事件监听器 handleGlobalKeydown 处理
+
 /** 设置输入组件引用 */
 const setInputRef = (rowIndex: number, field: string, el: any) => {
   const refKey = `${rowIndex}-${field}`
+  
   if (el) {
     inputRefsMap.set(refKey, el)
+    
+    // 注意：不再需要手动添加事件监听器
+    // Tab 和 Escape 键的处理已统一由全局事件监听器 handleGlobalKeydown 处理
   } else {
     inputRefsMap.delete(refKey)
+    
+    // 注意：不再需要清理手动添加的事件监听器
+    // Tab 和 Escape 键的处理已统一由全局事件监听器 handleGlobalKeydown 处理
   }
 }
 
@@ -415,6 +429,8 @@ const startEdit = (rowIndex: number, field: string, options?: { isKeyboardInput?
                     setCursorPosition(actualInput, col, options)
                   }
                 }
+                
+                // 注意：不再需要手动添加事件监听器，全局监听器已处理 Tab 和 Escape 键
               })
               return
             }
@@ -425,6 +441,7 @@ const startEdit = (rowIndex: number, field: string, options?: { isKeyboardInput?
               if (actualInput) {
                 actualInput.focus()
                 setCursorPosition(actualInput, col, options)
+                // 注意：不再需要手动添加事件监听器，全局监听器已处理 Tab 和 Escape 键
                 return
               }
             }
@@ -442,6 +459,8 @@ const startEdit = (rowIndex: number, field: string, options?: { isKeyboardInput?
             // 等待 DOM 完全渲染后再打开下拉框
             delayExecute(() => {
               openSelectDropdown(rowIndex, field, refKey)
+              // 添加键盘事件监听器
+              // 注意：不再需要手动添加事件监听器，全局监听器已处理 Tab 和 Escape 键
             }, 100)
             return
           }
@@ -482,6 +501,8 @@ const startEdit = (rowIndex: number, field: string, options?: { isKeyboardInput?
               setCursorPosition(actualInput, col, options)
             }
           }
+          
+          // 注意：不再需要手动添加事件监听器，全局监听器已处理 Tab 和 Escape 键
         }) // 延迟确保浏览器完成渲染
       })
     })
@@ -1145,6 +1166,7 @@ const applyCellSelection = (rowIndex: number, field: string) => {
       const cellElement = tableEl.querySelector(
         `.el-table__body tbody tr:nth-child(${rowIndex + 1}) .el-table__cell:nth-child(${columnIndex + 2})`
       ) as HTMLElement
+      
       if (cellElement) {
         cellElement.classList.add('selected-cell')
         
@@ -1393,7 +1415,13 @@ const getEditableFields = () => {
  */
 const validateCell = (rowIndex: number, field: string, value: any): boolean | string | null => {
   // 触发外部校验事件
+  // 注意：如果没有监听器，emit 会返回 undefined，此时应该返回 true（不需要校验）
   const result = emit('cell-validate', rowIndex, field, value)
+  
+  // 如果没有监听器，emit 会返回 undefined，此时应该返回 true（不需要校验）
+  if (result === undefined) {
+    return true
+  }
   
   // 如果返回 false 或字符串，表示校验失败
   if (result === false) {
@@ -1407,58 +1435,6 @@ const validateCell = (rowIndex: number, field: string, value: any): boolean | st
   return result === true || result === null
 }
 
-
-/**
- * 处理输入框键盘事件（编辑模式）
- */
-const handleInputKeydown = (event: KeyboardEvent, rowIndex: number, field: string) => {
-  const key = event.key
-  
-  // Tab: 退出编辑（校验），跳转单元格
-  if (key === 'Tab') {
-    event.preventDefault()
-    event.stopPropagation()
-    
-    // 先退出编辑状态（校验）
-    if (!exitEditMode(true)) {
-      return // 校验失败，不跳转
-    }
-    
-    // 跳转到下一个单元格
-    const direction = event.shiftKey ? 'left' : 'right'
-    navigateToCell(
-      { direction, fromRowIndex: rowIndex, fromField: field },
-      { validateCurrent: false, allowAddRow: true } // 已经校验过了，不需要再校验
-    )
-    return
-  }
-  
-  // Enter: 退出编辑（校验），不跳转单元格
-  if (key === 'Enter') {
-    event.preventDefault()
-    event.stopPropagation()
-    
-    // 退出编辑状态（校验），不跳转
-    exitEditMode(true)
-    return
-  }
-  
-  // Escape: 退出编辑（不校验）
-  if (key === 'Escape') {
-    event.preventDefault()
-    event.stopPropagation()
-    
-    exitEditMode(false)
-    return
-  }
-  
-  // 方向键：由编辑组件自身来处理键盘事件（不拦截）
-  // 对于 select/text/number 类型，方向键用于编辑框内的光标操作
-  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key)) {
-    // 不拦截，让编辑组件自己处理
-    return
-  }
-}
 
 /**
  * 处理单元格键盘事件（非编辑模式）
@@ -1497,7 +1473,7 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
       return
     }
     
-    // Tab: 选中下一个单元格
+    // Tab: 选中下一个单元格（Shift+Tab 向前跳转）
     if (key === 'Tab') {
       event.preventDefault()
       event.stopPropagation()
@@ -1510,15 +1486,9 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
       return
     }
     
-    // Enter: 同 Tab 键
+    // Enter: 图片列不支持编辑，Enter 键不处理
     if (key === 'Enter') {
-      event.preventDefault()
-      event.stopPropagation()
-      
-      navigateToCell(
-        { direction: 'tab', fromRowIndex: rowIndex, fromField: field },
-        { validateCurrent: false, allowAddRow: true }
-      )
+      // 图片列不支持编辑，Enter 键不处理
       return
     }
     
@@ -1629,7 +1599,7 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
     return
   }
   
-  // Tab: 选中下一个单元格
+  // Tab: 选中下一个单元格（Shift+Tab 向前跳转）
   if (key === 'Tab') {
     event.preventDefault()
     event.stopPropagation()
@@ -1642,15 +1612,18 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
     return
   }
   
-  // Enter: 同 Tab 键
+  // Enter: 双击单元格进入编辑状态
   if (key === 'Enter') {
     event.preventDefault()
     event.stopPropagation()
     
-    navigateToCell(
-      { direction: 'tab', fromRowIndex: rowIndex, fromField: field },
-      { validateCurrent: false, allowAddRow: true }
-    )
+    // 如果单元格不可编辑或者是图片列，则忽略
+    if (col?.editable === false || col?.type === 'image') {
+      return
+    }
+    
+    // 双击进入编辑状态
+    startEdit(rowIndex, field)
     return
   }
   
@@ -1931,17 +1904,79 @@ const handlePaste = (event: ClipboardEvent) => {
   }
 }
 
+/**
+ * 处理全局 keydown 事件（专门处理编辑模式下的 Tab 和 Escape 键）
+ * 
+ * 使用全局事件监听器的原因：
+ * 1. Element Plus 组件可能不会将 keydown 事件传递到内部的 input 元素
+ * 2. 使用捕获阶段可以确保优先处理键盘事件，防止浏览器默认行为
+ * 3. 全局监听器可以捕获所有键盘事件，不受组件内部事件处理影响
+ * 
+ * 这是唯一的事件监听方案，简化代码并避免冗余
+ */
+const handleGlobalKeydown = (event: KeyboardEvent) => {
+  // 只处理 Tab 和 Escape 键
+  const isTab = event.key === 'Tab' || event.keyCode === 9 || event.code === 'Tab'
+  const isEscape = event.key === 'Escape' || event.keyCode === 27
+  
+  if (!isTab && !isEscape) {
+    return
+  }
+  
+  // 只在编辑模式下处理
+  if (!editingCell.value) {
+    return
+  }
+  
+  // 检查焦点是否在表格内
+  const activeElement = document.activeElement
+  const tableElement = tableRef.value?.$el as HTMLElement
+  
+  // 如果焦点不在表格内，不处理
+  if (!activeElement || !tableElement || !tableElement.contains(activeElement)) {
+    return
+  }
+  
+  // 立即阻止默认行为（必须在捕获阶段阻止，否则浏览器会先处理）
+  event.preventDefault()
+  event.stopPropagation()
+  event.stopImmediatePropagation()
+  
+  if (isTab) {
+    // Tab 键：退出编辑（校验），跳转到下一个单元格
+    const direction = event.shiftKey ? 'left' : 'right'
+    const currentRowIndex = editingCell.value.rowIndex
+    const currentField = editingCell.value.field
+    
+    navigateToCell(
+      { direction, fromRowIndex: currentRowIndex, fromField: currentField },
+      { validateCurrent: true, allowAddRow: true }
+    )
+  } else if (isEscape) {
+    // Escape 键：退出编辑（不校验）
+    exitEditMode(false)
+  }
+}
+
 // ==================== 生命周期 ====================
 onMounted(() => {
   // 监听复制粘贴事件
   document.addEventListener('copy', handleCopy)
   document.addEventListener('paste', handlePaste)
+  
+  // 监听全局 keydown 事件（处理编辑模式下的 Tab 和 Escape 键）
+  // 使用捕获阶段 + passive: false，确保能够阻止默认行为
+  // 同时在 window 和 document 级别监听，确保能够捕获到键盘事件
+  window.addEventListener('keydown', handleGlobalKeydown, { capture: true, passive: false })
+  document.addEventListener('keydown', handleGlobalKeydown, { capture: true, passive: false })
 })
 
 onBeforeUnmount(() => {
   // 清理事件监听
   document.removeEventListener('copy', handleCopy)
   document.removeEventListener('paste', handlePaste)
+  window.removeEventListener('keydown', handleGlobalKeydown, { capture: true } as any)
+  document.removeEventListener('keydown', handleGlobalKeydown, { capture: true } as any)
 })
 
 /**
@@ -2059,7 +2094,6 @@ defineExpose({
           :controls="false"
           class="table-plus-input table-plus-input-number"
           :style="{ textAlign: 'left' }"
-          @keydown.stop="handleInputKeydown($event, scope.$index, column.field)"
           @focus="handleInputFocus(scope.$index, column.field)"
           @blur="handleInputBlur($event, scope.$index, column.field)"
           @input="handleInputInput(scope.$index, column.field)"
@@ -2082,7 +2116,6 @@ defineExpose({
           :filterable="column.selectProps?.filterable ?? false"
           :allow-create="column.selectProps?.allowCreate ?? false"
           v-bind="column.selectProps || {}"
-          @keydown.stop="handleInputKeydown($event, scope.$index, column.field)"
           @focus="handleInputFocus(scope.$index, column.field)"
           @blur="handleInputBlur($event, scope.$index, column.field)"
           @visible-change="(visible: boolean) => handleSelectVisibleChange(visible, scope.$index, column.field)"
@@ -2106,7 +2139,6 @@ defineExpose({
           resize="none"
           size="small"
           class="table-plus-input table-plus-textarea"
-          @keydown.stop="handleInputKeydown($event, scope.$index, column.field)"
           @focus="handleInputFocus(scope.$index, column.field)"
           @blur="handleInputBlur($event, scope.$index, column.field)"
           @input="handleInputInput(scope.$index, column.field)"
@@ -2122,7 +2154,6 @@ defineExpose({
           v-model="scope.row[column.field]"
           size="small"
           class="table-plus-input"
-          @keydown.stop="handleInputKeydown($event, scope.$index, column.field)"
           @focus="handleInputFocus(scope.$index, column.field)"
           @blur="handleInputBlur($event, scope.$index, column.field)"
           @input="handleInputInput(scope.$index, column.field)"
@@ -2790,4 +2821,5 @@ defineExpose({
   }
 }
 </style>
+
 

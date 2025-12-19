@@ -703,10 +703,22 @@ const save = async (): Promise<void> => {
               updatedDetail = config.postprocessData(detail, currentRow)
             }
             
+            // 处理图片字段（排序并移除排序前缀）
+            // 从列配置中提取 type === 'image' 的字段名
+            const imageFields = props.columns
+              .filter((col) => col.type === 'image')
+              .map((col) => col.field)
+            
+            // 使用 processImageFields 统一处理图片字段
+            const processedDetail = processImageFields(updatedDetail, imageFields, {
+              processList: true,
+              cleanArray: false
+            })
+            
             // 更新表格中的数据（完全深拷贝以避免引用共享）
             const updatedRow = {
               ...deepCloneObject(currentRow),
-              ...deepCloneObject(updatedDetail)
+              ...deepCloneObject(processedDetail)
             }
             
             dataList.value = dataList.value.map((row, idx) => 
