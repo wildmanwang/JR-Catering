@@ -65,6 +65,11 @@ interface ToolbarButton {
   label?: string // 自定义按钮文字
   onClick?: () => void // 点击事件回调
   permission?: string[] // 权限控制
+  // ==================== import 按钮专用配置 ====================
+  /** 导入页面路由路径（如果配置，将启用导入功能，优先级高于 props.importRoute） */
+  importRoute?: string
+  // 注意：importStorageKey 会根据 windowId 自动生成，无需配置
+  // 注意：importLabel 会自动使用按钮的 label，无需单独配置
   [key: string]: any // 其他按钮属性
 }
 
@@ -444,13 +449,22 @@ const standardImportTransform = (row: any): any => {
  * 工作流程：
  * 1. 获取当前选中的记录
  * 2. 将记录转换为导入格式（如果提供了 importTransform）
- * 3. 保存到 sessionStorage
+ * 3. 保存到 sessionStorage（自动根据 windowId 生成 storageKey）
  * 4. 导航到导入页面
  * 
  * 如果没有选中记录，会打开空白的批量维护页
+ * @param importRoute - 导入页面路由路径（如果提供，将优先使用；否则使用 props.importRoute）
+ * @param importLabel - 导入按钮的标签（如果提供，将使用；否则使用 props.importLabel 或 '数据'）
  */
-const openImport = async () => {
-  if (!props.importRoute) {
+const openImport = async (importRoute?: string, importLabel?: string) => {
+  // 优先使用传入的参数，其次使用 props 中的配置
+  const route = importRoute || props.importRoute
+  // 自动根据 windowId 生成 storageKey（不再从参数或 props 获取）
+  const storageKey = `IMPORT_${props.windowId || 'BASE_GRID'}_PAYLOAD`
+  // 优先使用传入的 label，其次使用 props.importLabel，最后使用默认值
+  const label = importLabel || props.importLabel || '数据'
+  
+  if (!route) {
     console.warn('未配置导入路由（importRoute），无法打开导入窗口')
     return
   }
@@ -459,14 +473,11 @@ const openImport = async () => {
     // 获取选中的记录
     const selections = await tableMethods.getSelections()
     
-    // 确定存储 key
-    const storageKey = props.importStorageKey || `IMPORT_${props.windowId || 'BASE_GRID'}_PAYLOAD`
-    
     if (!selections?.length) {
-      // 如果没有选中记录，打开空白导入页
-      sessionStorage.setItem(storageKey, JSON.stringify([]))
-      ElMessage.info(`未选择${props.importLabel || '数据'}，将打开空白批量维护页`)
-      router.push(props.importRoute)
+      // 如果没有选中记录，打开空白导入页，设置标记表示需要插入空行
+      sessionStorage.setItem(storageKey, JSON.stringify({ data: [], _addEmptyRow: true }))
+      ElMessage.info(`未选择${label}，将打开空白批量维护页`)
+      router.push(route)
       return
     }
     
@@ -485,15 +496,16 @@ const openImport = async () => {
     }
     
     if (!payload.length) {
-      ElMessage.warning(`所选${props.importLabel || '数据'}异常，已打开空白批量维护页`)
-      sessionStorage.setItem(storageKey, JSON.stringify([]))
-      router.push(props.importRoute)
+      // 数据为空，设置标记表示需要插入空行
+      sessionStorage.setItem(storageKey, JSON.stringify({ data: [], _addEmptyRow: true }))
+      ElMessage.warning(`所选${label}异常，已打开空白批量维护页`)
+      router.push(route)
       return
     }
     
-    // 保存到 sessionStorage 并导航到导入页面
-    sessionStorage.setItem(storageKey, JSON.stringify(payload))
-    router.push(props.importRoute)
+    // 保存到 sessionStorage 并导航到导入页面，设置标记表示需要插入空行
+    sessionStorage.setItem(storageKey, JSON.stringify({ data: payload, _addEmptyRow: true }))
+    router.push(route)
   } catch (err) {
     console.error('打开导入窗口失败：', err)
     ElMessage.error('打开导入窗口失败，请稍后重试')
@@ -1840,10 +1852,16 @@ const handleToolbarButtonClick = (btn: ToolbarButton) => {
       break
     case 'import':
       // 导入按钮：使用集成的 openImport
-      if (props.importRoute) {
-        openImport()
+      // 优先使用按钮配置中的路由，其次使用 props 中的配置
+      // importStorageKey 会自动根据 windowId 生成，无需配置
+      // importLabel 使用按钮的 label，如果按钮没有 label 则使用 props.importLabel 或默认值
+      const importRoute = (btn as any).importRoute || props.importRoute
+      const importLabel = btn.label || (btn as any).importLabel || props.importLabel
+      
+      if (importRoute) {
+        openImport(importRoute, importLabel)
       } else {
-        console.warn('未配置导入路由（importRoute），无法执行导入操作')
+        console.warn('未配置导入路由（importRoute），无法执行导入操作。请在 toolbarButtons 的 import 按钮配置中添加 importRoute，或在 BaseGrid 的 props 中配置 importRoute')
       }
       break
     default:

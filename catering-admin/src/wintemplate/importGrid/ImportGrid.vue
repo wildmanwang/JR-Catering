@@ -1362,25 +1362,33 @@ const setEmptyTable = async (infoMessage?: string): Promise<void> => {
 
 /**
  * 从 sessionStorage 加载导入数据
- * @returns {Promise<boolean>} 是否成功加载了数据
+ * @returns {Promise<boolean>} 是否成功加载了数据（包含是否需要插入空行的标记）
  */
-const loadDataFromStorage = async (): Promise<boolean> => {
+const loadDataFromStorage = async (): Promise<{ loaded: boolean; shouldAddEmptyRow: boolean }> => {
   try {
     const savedPayload = sessionStorage.getItem(props.storageKey)
     if (savedPayload) {
       const parsed = JSON.parse(savedPayload)
       
-      // 兼容两种数据格式：
+      // 兼容多种数据格式：
       // 1. 直接是数组格式（从 Dish.vue 等父窗口传入）
       // 2. 对象格式，包含 action 和 data
+      // 3. 对象格式，包含 data 和 _addEmptyRow 标记（从 BaseGrid 打开）
       let dataArray: any[] = []
+      let shouldAddEmptyRow = false
       
       if (Array.isArray(parsed)) {
         // 格式1：直接是数组
         dataArray = parsed
-      } else if (parsed && parsed.action === 'import' && Array.isArray(parsed.data)) {
-        // 格式2：对象格式，包含 action 和 data
-        dataArray = parsed.data
+      } else if (parsed && typeof parsed === 'object') {
+        if (parsed.action === 'import' && Array.isArray(parsed.data)) {
+          // 格式2：对象格式，包含 action 和 data
+          dataArray = parsed.data
+        } else if (Array.isArray(parsed.data)) {
+          // 格式3：对象格式，包含 data 和 _addEmptyRow 标记
+          dataArray = parsed.data
+          shouldAddEmptyRow = parsed._addEmptyRow === true
+        }
       }
       
       if (dataArray.length > 0) {
@@ -1388,13 +1396,23 @@ const loadDataFromStorage = async (): Promise<boolean> => {
         const mergedData = mapAndMergeRowData(dataArray)
         await setDataAndWaitForInit(mergedData, `已导入 ${mergedData.length} 条数据`)
         
+        // 如果需要插入空行，在数据后面添加一个空行
+        if (shouldAddEmptyRow) {
+          await addRow()
+        }
+        
         // 清除 sessionStorage，避免重复加载
         sessionStorage.removeItem(props.storageKey)
-        return true
+        return { loaded: true, shouldAddEmptyRow: false }
       } else {
-        // 数据为空数组，清除 sessionStorage
+        // 数据为空数组，如果需要插入空行则插入
+        if (shouldAddEmptyRow) {
+          await setEmptyTable()
+        }
+        
+        // 清除 sessionStorage
         sessionStorage.removeItem(props.storageKey)
-        return false
+        return { loaded: false, shouldAddEmptyRow: false }
       }
     }
   } catch (err) {
@@ -1406,7 +1424,7 @@ const loadDataFromStorage = async (): Promise<boolean> => {
   }
   
   // 没有数据，返回 false，让调用方决定如何处理（恢复状态或显示空表）
-  return false
+  return { loaded: false, shouldAddEmptyRow: false }
 }
 
 // ==================== 数据监听 ====================
@@ -1428,18 +1446,17 @@ onMounted(async () => {
   const hasManualSelection = sessionStorage.getItem(props.storageKey) !== null
   
   if (hasManualSelection) {
-    // 情况1：窗口新打开，有手选数据
+    // 情况1：窗口新打开，有手选数据（从 BaseGrid 打开）
     // 使用手选数据，清空 sessionStorage，清除状态数据（避免下次恢复时混淆）
-    const loaded = await loadDataFromStorage()
-    if (loaded) {
+    // loadDataFromStorage 会根据 _addEmptyRow 标记自动插入空行
+    const result = await loadDataFromStorage()
+    if (result.loaded) {
       // 清除状态数据，因为使用了新的手选数据
       statusStoragePlusRef.value?.clearState()
-    } else {
-      // 手选数据格式错误，显示空表
-      await setEmptyTable()
-      if (prompInfoRef.value) {
-        prompInfoRef.value.ready()
-      }
+    }
+    // 如果没有加载数据，loadDataFromStorage 已经根据 _addEmptyRow 标记处理了空行插入
+    if (prompInfoRef.value && !result.loaded) {
+      prompInfoRef.value.ready()
     }
   } else {
     // 情况2：页面恢复（从其他页面切换回来），或首次打开，或刷新页面
@@ -1454,10 +1471,9 @@ onMounted(async () => {
     const hasSavedState = await statusStoragePlusRef.value?.waitForRestore()
     
     if (!hasSavedState) {
-      if (!hasRestoredState.value && dataList.value.length === 0) {
-        if (prompInfoRef.value) {
-          prompInfoRef.value.ready()
-        }
+      // 没有保存的状态，也没有手选数据，不自动插入空行（由用户手动添加）
+      if (prompInfoRef.value && dataList.value.length === 0) {
+        prompInfoRef.value.ready()
       }
       pageReady.value = true
     }

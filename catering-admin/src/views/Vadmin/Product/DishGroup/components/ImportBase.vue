@@ -1,5 +1,5 @@
 /**
- * 菜品批量导入/维护页面
+ * 菜品分组批量导入/维护页面
  * 
  * 使用 ImportGrid 组件实现 Excel 风格的批量编辑
  * 数据通过 sessionStorage 从父窗口（Dish.vue）传递
@@ -8,17 +8,17 @@
 import { computed } from 'vue'
 import { ContentWrap } from '@/components/ContentWrap'
 import ImportGrid, { type ImportGridColumn, type SaveConfig, type ToolbarButton } from '@/wintemplate/importGrid/ImportGrid.vue'
-import { getDishStatusOptionsApi, addDishListApi, putDishListApi, getDishApi } from '@/api/vadmin/product/dish'
-import { getKitchenListApi } from '@/api/vadmin/product/kitchen'
+import { addDishGroupApi, putDishGroupApi, getDishGroupApi } from '@/api/vadmin/product/dishGroup'
+import { getDishGroupTypeListApi } from '@/api/vadmin/product/dishGroupType'
 
 defineOptions({
-  name: 'DishImport'
+  name: 'DishGroupImport'
 })
 
 // ==================== 常量 ====================
 // 注意：storageKey 必须与 BaseGrid 生成的 key 一致
 // BaseGrid 生成的格式：IMPORT_${windowId}_PAYLOAD
-const IMPORT_STORAGE_KEY = 'IMPORT_Dish_PAYLOAD'
+const IMPORT_STORAGE_KEY = 'IMPORT_DishGroup_PAYLOAD'
 
 // ==================== 列配置 ====================
 const columns = computed<ImportGridColumn[]>(() => [
@@ -54,13 +54,13 @@ const columns = computed<ImportGridColumn[]>(() => [
     show: true
   },
   {
-    field: 'kitchen_id',
-    label: '厨部',
+    field: 'dish_group_type_id',
+    label: '菜品组类型',
     width: '100px',
     type: 'select',
     show: true,
     required: true,
-    optionsApi: () => getKitchenListApi({ is_active: true }),
+    optionsApi: () => getDishGroupTypeListApi({ is_active: true }),
     optionsIdField: 'id',
     optionsLabelFormat: [['field', 'name_unique']],
     selectProps: {
@@ -69,17 +69,10 @@ const columns = computed<ImportGridColumn[]>(() => [
     }
   },
   {
-    field: 'spec',
-    label: '规格',
+    field: 'stype',
+    label: '类型',
     width: '160px',
     type: 'text',
-    show: true
-  },
-  {
-    field: 'price',
-    label: '基础售价',
-    width: '120px',
-    type: 'number',
     show: true
   },
   {
@@ -90,28 +83,22 @@ const columns = computed<ImportGridColumn[]>(() => [
     show: true
   },
   {
-    field: 'dish_images',
-    label: '图片',
-    width: '480px',
-    type: 'image',
-    size: 'small',
-    show: true,
-    value: []
-  },
-  {
-    field: 'status',
-    label: '状态',
+    field: 'is_active',
+    label: '是否启用',
     width: '60px',
     type: 'select',
     show: true,
-    optionsApi: getDishStatusOptionsApi,
-    optionsIdField: 'value',
-    optionsLabelFormat: [['field', 'label']],
-    selectProps: {
-      disabled: true,
-      filterable: false
-    },
-    value: -1
+    options: [
+      {
+        label: '是',
+        value: true
+      },
+      {
+        label: '否',
+        value: false
+      }
+    ],
+    value: true
   }
 ])
 
@@ -125,13 +112,13 @@ const saveConfig = computed<SaveConfig>(() => ({
   requiredFields: [
     { field: 'name_unique', label: '名称' },
     { field: 'name_display', label: '显示名称' },
-    { field: 'kitchen_id', label: '厨部' }
+    { field: 'dish_group_type_id', label: '菜品组类型' }
   ],
-  addApi: addDishListApi,
-  updateApi: putDishListApi,
-  getDetailApi: getDishApi,
+  addApi: addDishGroupApi,
+  updateApi: putDishGroupApi,
+  getDetailApi: getDishGroupApi,
   preprocessData: (data: any, isNew: boolean) => {
-    return isNew ? { ...data, status: 0 } : data
+    return isNew ? { ...data, is_active: true } : data
   }
 }))
 

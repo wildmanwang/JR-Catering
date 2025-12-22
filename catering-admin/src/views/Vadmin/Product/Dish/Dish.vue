@@ -147,8 +147,11 @@
     } as const,
     {
       stype: 'import' as const,
-      label: '菜品'
+      label: '菜品',
+      importRoute: '/product/dish/import'
       // 如果不提供 onClick，BaseGrid 会自动使用集成的 openImport
+      // importStorageKey 会根据 windowId 自动生成，无需配置
+      // importLabel 会自动使用按钮的 label，无需单独配置
     },
     {
       stype: 'batch' as const,
@@ -159,38 +162,35 @@
   
   // ==================== 生命周期 ====================
   // 注意：选项数据的获取已转移到 BaseGrid.vue 中，通过列定义的 optionsApi 自动获取
-  </script>
-  
-  <template>
-    <ContentWrap>
-      <BaseGrid
-        ref="gridRef"
-        :columns="columns"
-        :fetch-data-api="fetchDataApi"
-        :fetch-del-api="delDishListApi"
-        :search-conditions="searchConditions"
-        :toolbar-buttons="toolbarButtons"
-        :quick-query-list="{
-          title: '按厨部查询',
-          dataApi: () => getKitchenListApi({ is_active: true }),
-          field: 'kitchen_id',
-          idField: 'id',
-          labelFormat: [['field', 'name_unique']],
-          showAllOption: true,
-          allOptionLabel: '（全部）'
-        }"
-        node-key="id"
-        :show-action="true"
-        :page-title="'菜品'"
-        :form-schema="formSchema"
-        :rules="rules"
-        :tabs="tabs"
-        :add-api="addDishListApi"
-        :edit-api="putDishListApi"
-        :import-route="'/product/dish/import'"
-        :import-storage-key="'IMPORT_DISH_PAYLOAD'"
-        :import-label="'菜品'"
-      />
-    </ContentWrap>
-  </template>
-  
+</script>
+
+<template>
+  <ContentWrap>
+    <BaseGrid
+      ref="gridRef"
+      :columns="columns"
+      :fetch-data-api="fetchDataApi"
+      :fetch-del-api="delDishListApi"
+      :search-conditions="searchConditions"
+      :toolbar-buttons="toolbarButtons"
+      :quick-query-list="{
+        title: '按厨部查询',
+        dataApi: () => getKitchenListApi({ is_active: true }),
+        field: 'kitchen_id',
+        idField: 'id',
+        labelFormat: [['field', 'name_unique']],
+        showAllOption: true,
+        allOptionLabel: '（全部）'
+      }"
+      node-key="id"
+      :show-action="true"
+      :page-title="'菜品'"
+      :window-id="'Dish'"
+      :form-schema="formSchema"
+      :rules="rules"
+      :tabs="tabs"
+      :add-api="addDishListApi"
+      :edit-api="putDishListApi"
+    />
+  </ContentWrap>
+</template>
