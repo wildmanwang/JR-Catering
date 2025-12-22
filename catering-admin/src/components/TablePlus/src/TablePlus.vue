@@ -1644,12 +1644,16 @@ const addRow = async (row?: number, defaultRow?: any): Promise<[number, string, 
       newDefaultRow[col.field] = null
     } else if (col.type === 'image') {
       newDefaultRow[col.field] = []
+    } else if (col.type === 'select') {
+      // select 类型不设置默认值，由 props.defaultRow 或传入的 defaultRow 提供
+      // 避免空字符串覆盖有效的默认值
     } else {
       newDefaultRow[col.field] = ''
     }
   })
   
   // 合并默认行数据：列配置默认值 < props.defaultRow < 传入的 defaultRow
+  // 注意：对于 select 类型，如果 newDefaultRow 中没有该字段，则不会被空字符串覆盖
   const finalDefaultRow = { ...newDefaultRow, ...props.defaultRow, ...defaultRow }
   
   // 触发row-add事件

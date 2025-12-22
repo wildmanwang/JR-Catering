@@ -1195,7 +1195,19 @@ const handleColumnDelete = (_field: string) => {
  */
 const handleRowAdd = async (payload: { defaultRow: any; insertIndex?: number }) => {
   const { defaultRow, insertIndex } = payload
-  const newRow = { ...getDefaultRow(), ...defaultRow }
+  // 合并默认行数据：getDefaultRow() 提供列配置的默认值，defaultRow 提供 TablePlus 传递的值
+  // 对于 select 类型，如果 defaultRow 中有值，应该保留；如果没有，使用 getDefaultRow() 中的值
+  const baseDefaultRow = getDefaultRow()
+  const newRow: any = { ...baseDefaultRow }
+  // 合并 defaultRow，但跳过空字符串（避免空字符串覆盖有效的默认值）
+  Object.keys(defaultRow || {}).forEach(key => {
+    const value = defaultRow[key]
+    // 如果 defaultRow 中的值不是空字符串，或者是 null/undefined，则使用它
+    // 这样可以确保 select 类型的默认值不会被空字符串覆盖
+    if (value !== '' || baseDefaultRow[key] === undefined) {
+      newRow[key] = value
+    }
+  })
   
   // 确定插入位置
   let newIndex: number
