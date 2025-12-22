@@ -409,6 +409,59 @@ const beforeCloseHandler = async (): Promise<boolean> => {
 
 // ==================== 数据修改检测 ====================
 /**
+ * 检查记录是否是空白记录（所有字段都是默认值或空值）
+ * @param row 要检查的记录
+ * @returns 是否是空白记录
+ */
+const isEmptyRow = (row: any): boolean => {
+  const defaultRow = getDefaultRow()
+  const fieldsToCompare = props.columns.map(col => col.field)
+  
+  for (const field of fieldsToCompare) {
+    const column = props.columns.find(col => col.field === field)
+    const currentValue = row[field]
+    const defaultValue = defaultRow[field]
+    
+    if (column?.type === 'image') {
+      // 图片字段：空数组或未定义才认为是空白
+      const currentImages = currentValue || []
+      if (currentImages.length > 0) {
+        // 检查是否有实际图片（字符串格式，不是待上传的数组格式）
+        const hasRealImages = currentImages.some((item: any) => typeof item === 'string')
+        if (hasRealImages) {
+          return false // 有实际图片，不是空白
+        }
+        // 如果有待上传的图片（数组格式），也认为不是空白
+        const hasPendingUploads = currentImages.some((item: any) => 
+          typeof item === 'object' && item !== null && Array.isArray(item)
+        )
+        if (hasPendingUploads) {
+          return false // 有待上传的图片，不是空白
+        }
+      }
+    } else {
+      // 其他字段：与默认值比较
+      // 如果当前值与默认值不同，说明有修改
+      if (currentValue !== defaultValue) {
+        // 处理空值的情况：null/undefined/'' 都视为空值
+        const currentIsEmpty = (currentValue === null || currentValue === undefined || currentValue === '')
+        const defaultIsEmpty = (defaultValue === null || defaultValue === undefined || defaultValue === '')
+        
+        // 如果都是空值，认为相同，继续检查下一个字段
+        if (currentIsEmpty && defaultIsEmpty) {
+          continue
+        }
+        
+        // 否则认为有实际内容，不是空白
+        return false
+      }
+    }
+  }
+  
+  return true // 所有字段都是默认值或空值，是空白记录
+}
+
+/**
  * 获取需要保存的数据列表
  * @returns 需要保存的数据数组，包含 row、index、isNew、originalRow 信息
  */
@@ -426,8 +479,12 @@ const getDataToSave = (): Array<{ row: any; index: number; isNew: boolean; origi
     const isNew = !row.id || row.id <= 0
     
     if (isNew) {
-      dataToSave.push({ row, index: i, isNew: true, originalRow: null })
+      // 新增记录：只有非空白记录才需要保存
+      if (!isEmptyRow(row)) {
+        dataToSave.push({ row, index: i, isNew: true, originalRow: null })
+      }
     } else if (isModifiedFunc(row, originalRow)) {
+      // 已存在的记录：只有被修改过的才需要保存
       dataToSave.push({ row, index: i, isNew: false, originalRow })
     }
   }
@@ -446,7 +503,11 @@ const hasUnsavedChanges = (): boolean => {
  * 默认的数据修改检测函数
  */
 const defaultIsDataModified = (currentRow: any, originalRow: any): boolean => {
-  if (!originalRow) return true // 新增记录
+  if (!originalRow) {
+    // 新增记录：与默认值比较，而不是直接返回 true
+    // 如果与默认值相同，说明是空白记录，未修改
+    return !isEmptyRow(currentRow)
+  }
   
   // 获取所有列字段
   const fieldsToCompare = props.columns.map(col => col.field)
@@ -569,7 +630,27 @@ const save = async (): Promise<void> => {
     return
   }
   
+  // 先自动删除所有空白的新增记录（避免对空白记录进行不必要的校验）
+  // 从后往前遍历，避免删除时索引变化的问题
+  const removedIndices: number[] = []
+  for (let i = dataList.value.length - 1; i >= 0; i--) {
+    const row = dataList.value[i]
+    const isNew = !row.id || row.id <= 0
+    if (isNew && isEmptyRow(row)) {
+      // 删除空白的新增记录
+      dataList.value.splice(i, 1)
+      originalData.value.splice(i, 1)
+      removedIndices.push(i)
+    }
+  }
+  
+  // 如果有删除空白记录，等待 DOM 更新
+  if (removedIndices.length > 0) {
+    await nextTick()
+  }
+  
   // 校验必填字段（遇到第一个错误就停止）
+  // 注意：此时空白记录已被删除，只校验实际需要保存的数据
   if (config.requiredFields && config.requiredFields.length > 0) {
     for (let index = 0; index < dataList.value.length; index++) {
       const row = dataList.value[index]
@@ -836,6 +917,9 @@ const addRow = (): { row: any; index: number } => {
   dataList.value.push(newRow)
   originalData.value.push(JSON.parse(JSON.stringify(newRow)))
   
+  // 切换当前行到新行
+  currentRowIndex.value = newIndex
+  
   emit('rowAdded', newRow, newIndex)
   props.onRowAdded?.(newRow, newIndex)
   prompInfoRef.value?.info(props.addRowMessage)
@@ -1067,12 +1151,17 @@ const handleRowDelete = (rowIndex: number) => {
  */
 const handleRowAdd = (defaultRow: any) => {
   const newRow = { ...getDefaultRow(), ...defaultRow }
+  const newIndex = dataList.value.length
+  
   dataList.value.push(newRow)
   originalData.value.push(JSON.parse(JSON.stringify(newRow)))
   
+  // 切换当前行到新行
+  currentRowIndex.value = newIndex
+  
   // 触发回调
   if (props.onRowAdded) {
-    props.onRowAdded(newRow, dataList.value.length - 1)
+    props.onRowAdded(newRow, newIndex)
   }
   
   // 显示提示信息
