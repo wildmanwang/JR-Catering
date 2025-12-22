@@ -9,8 +9,8 @@ import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useTagsViewStoreWithOut } from '@/store/modules/tagsView'
 import { ElMessageBox } from 'element-plus'
-import TablePlus from '@/components/TablePlus'
-import type { TablePlusColumn } from '@/components/TablePlus'
+import TableGrid from '@/components/TableGrid'
+import type { TableGridColumn } from '@/components/TableGrid'
 import { ButtonPlus } from '@/components/ButtonPlus'
 import { PrompInfo } from '@/components/PrompInfo'
 import { StatusStoragePlus, type StatusStoreItem } from '@/components/StatusStoragePlus'
@@ -18,9 +18,9 @@ import { formatDataItem } from '@/utils/dsOptions'
 import { cleanImageArray, ImageQuerySuffix, normalizeImageUrl, processImageList } from '@/utils/imageList'
 
 /**
- * 列配置接口（扩展 TablePlusColumn）
+ * 列配置接口（扩展 TableGridColumn）
  */
-export interface ImportGridColumn extends TablePlusColumn {
+export interface ImportGridColumn extends TableGridColumn {
   /** 字段初始值（用于新增行时） */
   value?: any
   /** 选项数据获取接口（用于自动获取该字段的选项数据） */
@@ -349,7 +349,7 @@ const currentRowIndex = ref<number | null>(null)
 const prompInfoRef = ref<InstanceType<typeof PrompInfo>>()
 const saveLoading = ref(false)
 const refreshLoading = ref(false)
-const tablePlusRef = ref<InstanceType<typeof TablePlus>>()
+const tableGridRef = ref<InstanceType<typeof TableGrid>>()
 
 // ==================== 窗口关闭提醒（页签守卫） ====================
 /**
@@ -620,15 +620,15 @@ const save = async (): Promise<void> => {
   
   // 先自动删除所有空白的新增记录（避免对空白记录进行不必要的校验）
   // 从后往前遍历，避免删除时索引变化的问题
-  // 使用 TablePlus 的 deleteRow 接口删除空白行
+  // 使用 TableGrid 的 deleteRow 接口删除空白行
   const removedIndices: number[] = []
   for (let i = dataList.value.length - 1; i >= 0; i--) {
     const row = dataList.value[i]
     const isNew = !row.id || row.id <= 0
     if (isNew && isEmptyRow(row)) {
-      // 使用 TablePlus 的 deleteRow 接口删除空白行
-      if (tablePlusRef.value?.deleteRow) {
-        const [code, message] = await tablePlusRef.value.deleteRow(i)
+      // 使用 TableGrid 的 deleteRow 接口删除空白行
+      if (tableGridRef.value?.deleteRow) {
+        const [code, message] = await tableGridRef.value.deleteRow(i)
         if (code === 1) {
           removedIndices.push(i)
           // 同步更新 originalData（handleDataUpdate 会自动处理 dataList）
@@ -642,7 +642,7 @@ const save = async (): Promise<void> => {
           }
         }
       } else {
-        // 备用方案：直接操作数据（如果 TablePlus 的 deleteRow 不可用）
+        // 备用方案：直接操作数据（如果 TableGrid 的 deleteRow 不可用）
         dataList.value.splice(i, 1)
         originalData.value.splice(i, 1)
         removedIndices.push(i)
@@ -667,9 +667,9 @@ const save = async (): Promise<void> => {
             prompInfoRef.value.err(errorMessage)
           }
           config.onError?.(errorMessage)
-          // 设置当前行（使用 TablePlus 的 setCurrentRow 接口）
-          if (tablePlusRef.value?.setCurrentRow) {
-            tablePlusRef.value.setCurrentRow(index)
+          // 设置当前行（使用 TableGrid 的 setCurrentRow 接口）
+          if (tableGridRef.value?.setCurrentRow) {
+            tableGridRef.value.setCurrentRow(index)
           } else {
             currentRowIndex.value = index
           }
@@ -702,8 +702,8 @@ const save = async (): Promise<void> => {
       // 遍历所有图片类型的列
       for (const column of imageColumns) {
         try {
-          if (tablePlusRef.value?.uploadRowImageField) {
-            await tablePlusRef.value.uploadRowImageField(index, column.field)
+          if (tableGridRef.value?.uploadRowImageField) {
+            await tableGridRef.value.uploadRowImageField(index, column.field)
           }
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : '图片上传失败'
@@ -712,9 +712,9 @@ const save = async (): Promise<void> => {
             prompInfoRef.value.err(errorMessage)
           }
           config.onError?.(errorMessage)
-          // 设置当前行（使用 TablePlus 的 setCurrentRow 接口）
-          if (tablePlusRef.value?.setCurrentRow) {
-            tablePlusRef.value.setCurrentRow(index)
+          // 设置当前行（使用 TableGrid 的 setCurrentRow 接口）
+          if (tableGridRef.value?.setCurrentRow) {
+            tableGridRef.value.setCurrentRow(index)
           } else {
             currentRowIndex.value = index
           }
@@ -727,9 +727,9 @@ const save = async (): Promise<void> => {
     
     // 逐行处理需要保存的数据
     for (const { row, index, isNew } of dataToSave) {
-      // 设置当前行（使用 TablePlus 的 setCurrentRow 接口）
-      if (tablePlusRef.value?.setCurrentRow) {
-        tablePlusRef.value.setCurrentRow(index)
+      // 设置当前行（使用 TableGrid 的 setCurrentRow 接口）
+      if (tableGridRef.value?.setCurrentRow) {
+        tableGridRef.value.setCurrentRow(index)
       } else {
         currentRowIndex.value = index
       }
@@ -864,9 +864,9 @@ const save = async (): Promise<void> => {
           prompInfoRef.value.err(errorMessage)
         }
         config.onError?.(errorMessage)
-        // 设置当前行（使用 TablePlus 的 setCurrentRow 接口）
-        if (tablePlusRef.value?.setCurrentRow) {
-          tablePlusRef.value.setCurrentRow(index)
+        // 设置当前行（使用 TableGrid 的 setCurrentRow 接口）
+        if (tableGridRef.value?.setCurrentRow) {
+          tableGridRef.value.setCurrentRow(index)
         } else {
           currentRowIndex.value = index
         }
@@ -910,12 +910,12 @@ const save = async (): Promise<void> => {
 
 // ==================== 新增行 ====================
 const addRow = async (): Promise<{ row: any; index: number }> => {
-  // 使用 TablePlus 的 addRow 接口函数
-  if (tablePlusRef.value?.addRow) {
-    const [code, message, newRowIndex] = await tablePlusRef.value.addRow()
+  // 使用 TableGrid 的 addRow 接口函数
+  if (tableGridRef.value?.addRow) {
+    const [code, message, newRowIndex] = await tableGridRef.value.addRow()
     
     if (code === 1 && newRowIndex !== undefined && newRowIndex >= 0) {
-      // TablePlus 的 addRow 会触发 row-add 事件，由 handleRowAdd 处理数据添加
+      // TableGrid 的 addRow 会触发 row-add 事件，由 handleRowAdd 处理数据添加
       await nextTick()
       
       // 获取新添加的行
@@ -1169,10 +1169,10 @@ const handleDataUpdate = (newData: any[]) => {
 
 /**
  * 处理行删除
- * 删除操作在 TablePlus 组件内部实现，通过 update:data 事件处理
+ * 删除操作在 TableGrid 组件内部实现，通过 update:data 事件处理
  */
 const handleRowDelete = (_rowIndex: number) => {
-  // TablePlus 组件内部已经通过 emit('update:data') 删除了数据
+  // TableGrid 组件内部已经通过 emit('update:data') 删除了数据
   // handleDataUpdate 会自动同步更新 dataList 和 originalData
 }
 
@@ -1195,7 +1195,7 @@ const handleColumnDelete = (_field: string) => {
  */
 const handleRowAdd = async (payload: { defaultRow: any; insertIndex?: number }) => {
   const { defaultRow, insertIndex } = payload
-  // 合并默认行数据：getDefaultRow() 提供列配置的默认值，defaultRow 提供 TablePlus 传递的值
+  // 合并默认行数据：getDefaultRow() 提供列配置的默认值，defaultRow 提供 TableGrid 传递的值
   // 对于 select 类型，如果 defaultRow 中有值，应该保留；如果没有，使用 getDefaultRow() 中的值
   const baseDefaultRow = getDefaultRow()
   const newRow: any = { ...baseDefaultRow }
@@ -1564,8 +1564,8 @@ defineExpose({
     
       <!-- 表格 -->
     <div class="table-wrapper">
-      <TablePlus
-        ref="tablePlusRef"
+      <TableGrid
+        ref="tableGridRef"
         :columns="processedColumns"
         :data="dataList"
         v-model:currentRowIndex="currentRowIndex"

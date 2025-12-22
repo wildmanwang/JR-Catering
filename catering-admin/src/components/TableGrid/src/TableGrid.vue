@@ -1,8 +1,18 @@
 <!--
-  TablePlus - 可编辑表格基础组件
+  TableGrid - Excel 风格的可编辑表格组件
   
-  功能：表格渲染、单元格编辑、键盘导航、复制粘贴、单元格/行选择
-  支持：文本、数字、图片、下拉选择等列类型
+  功能特性：
+  - 单元格编辑：支持文本、数字、下拉选择、图片等类型
+  - 键盘导航：Tab、方向键、Enter、Escape 等快捷键
+  - 复制粘贴：支持单元格数据的复制和粘贴
+  - 行选择：支持单选、Ctrl 多选、Shift 范围选择
+  - 行操作：新增行、删除行（通过事件通知父组件）
+  - 列操作：新增列、删除列（通过事件通知父组件）
+  
+  设计原则：
+  - 数据流单向性：组件不直接修改 props.data 和 props.columns
+  - 接口化操作：所有表格操作都通过接口函数，避免直接操作内部状态
+  - 事件驱动：数据变更通过事件通知父组件处理
 -->
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
@@ -13,7 +23,7 @@ import { ImagePlus } from '@/components/ImagePlus'
 /**
  * 列配置接口
  */
-export interface TablePlusColumn {
+export interface TableGridColumn {
   /** 字段名（对应数据对象的 key） */
   field: string
   /** 列标题 */
@@ -50,9 +60,9 @@ export interface TablePlusColumn {
 /**
  * Props 接口
  */
-export interface TablePlusProps {
+export interface TableGridProps {
   /** 列配置数组 */
-  columns: TablePlusColumn[]
+  columns: TableGridColumn[]
   /** 表格数据 */
   data: any[]
   /** 当前行索引 */
@@ -66,7 +76,7 @@ export interface TablePlusProps {
 /**
  * Emits 接口
  */
-export interface TablePlusEmits {
+export interface TableGridEmits {
   (e: 'update:data', value: any[]): void
   (e: 'update:currentRowIndex', value: number | null): void
   (e: 'cell-click', rowIndex: number, field: string, event: MouseEvent): void
@@ -74,18 +84,18 @@ export interface TablePlusEmits {
   (e: 'cell-update', rowIndex: number, field: string, value: any): void
   (e: 'row-delete', rowIndex: number): void
   (e: 'row-add', payload: { defaultRow: any; insertIndex?: number }): void
-  (e: 'column-add', payload: { field: string; colDefine: TablePlusColumn; insertIndex?: number }): void
+  (e: 'column-add', payload: { field: string; colDefine: TableGridColumn; insertIndex?: number }): void
   (e: 'column-delete', field: string): void
   (e: 'image-update', rowIndex: number, field: string, value: any[]): void
   (e: 'cell-validate', rowIndex: number, field: string, value: any): boolean | string | null
 }
 
-const props = withDefaults(defineProps<TablePlusProps>(), {
+const props = withDefaults(defineProps<TableGridProps>(), {
   currentRowIndex: null,
   showDeleteButton: true
 })
 
-const emit = defineEmits<TablePlusEmits>()
+const emit = defineEmits<TableGridEmits>()
 
 // 表格引用
 const tableRef = ref<InstanceType<typeof ElTable>>()
@@ -94,7 +104,6 @@ const tableRef = ref<InstanceType<typeof ElTable>>()
 /** 当前正在编辑的单元格 */
 const editingCell = ref<{ rowIndex: number; field: string } | null>(null)
 
-/** 选中的行索引 */
 /** 当前行索引（当前聚焦的行） */
 const currentRowIndex = ref<number | null>(props.currentRowIndex ?? null)
 
@@ -146,27 +155,17 @@ const setImagePlusRef = (rowIndex: number, field: string, el: any) => {
 /** 输入组件引用映射（用于直接访问组件实例的 focus 方法） */
 const inputRefsMap = new Map<string, any>()
 
-/** 输入元素键盘事件监听器映射（用于清理事件监听器） */
-// 注意：不再需要 inputKeydownListenersMap
-// Tab 和 Escape 键的处理已统一由全局事件监听器 handleGlobalKeydown 处理
-
-// 注意：不再需要 findActualInputElement、attachInputKeydownListener 和 attachListenerToInput
-// Tab 和 Escape 键的处理已统一由全局事件监听器 handleGlobalKeydown 处理
-
-/** 设置输入组件引用 */
+/**
+ * 设置输入组件引用
+ * 用于管理输入组件的引用，便于直接访问组件实例的方法（如 focus）
+ */
 const setInputRef = (rowIndex: number, field: string, el: any) => {
   const refKey = `${rowIndex}-${field}`
   
   if (el) {
     inputRefsMap.set(refKey, el)
-    
-    // 注意：不再需要手动添加事件监听器
-    // Tab 和 Escape 键的处理已统一由全局事件监听器 handleGlobalKeydown 处理
   } else {
     inputRefsMap.delete(refKey)
-    
-    // 注意：不再需要清理手动添加的事件监听器
-    // Tab 和 Escape 键的处理已统一由全局事件监听器 handleGlobalKeydown 处理
   }
 }
 
@@ -233,7 +232,7 @@ const updateCellData = (rowIndex: number, field: string, value: any) => {
  * @param field 字段名
  * @param column 列配置
  */
-const handlePlainTextPaste = (pasteData: string, rowIndex: number, field: string, column: TablePlusColumn) => {
+const handlePlainTextPaste = (pasteData: string, rowIndex: number, field: string, column: TableGridColumn) => {
   if (!pasteData) return
   
   if (column.type === 'number') {
@@ -334,7 +333,7 @@ const openSelectDropdown = (rowIndex: number, field: string, refKey: string) => 
  * @param column 列配置
  * @returns 是否成功处理
  */
-const handleCustomDataPaste = (cellData: any, rowIndex: number, field: string, column: TablePlusColumn): boolean => {
+const handleCustomDataPaste = (cellData: any, rowIndex: number, field: string, column: TableGridColumn): boolean => {
   if (cellData.type !== column.type) {
     // 类型不匹配，忽略粘贴
     return false
@@ -360,7 +359,7 @@ const handleCustomDataPaste = (cellData: any, rowIndex: number, field: string, c
 /**
  * 格式化单元格显示值
  */
-const formatCellValue = (value: any, column: TablePlusColumn): string => {
+const formatCellValue = (value: any, column: TableGridColumn): string => {
   if (column.formatter) {
     return column.formatter({}, column, value)
   }
@@ -505,8 +504,6 @@ const startEdit = (row: number, field: string, options?: { isKeyboardInput?: boo
                     setCursorPosition(actualInput, col, options)
                   }
                 }
-                
-                // 注意：不再需要手动添加事件监听器，全局监听器已处理 Tab 和 Escape 键
               })
               return
             }
@@ -517,7 +514,6 @@ const startEdit = (row: number, field: string, options?: { isKeyboardInput?: boo
               if (actualInput) {
                 actualInput.focus()
                 setCursorPosition(actualInput, col, options)
-                // 注意：不再需要手动添加事件监听器，全局监听器已处理 Tab 和 Escape 键
                 return
               }
             }
@@ -532,11 +528,8 @@ const startEdit = (row: number, field: string, options?: { isKeyboardInput?: boo
           
           // 对于 select 列，需要特殊处理：打开下拉框
           if (col.type === 'select') {
-            // 等待 DOM 完全渲染后再打开下拉框
             delayExecute(() => {
               openSelectDropdown(row, field, refKey)
-              // 添加键盘事件监听器
-              // 注意：不再需要手动添加事件监听器，全局监听器已处理 Tab 和 Escape 键
             }, 100)
             return
           }
@@ -577,9 +570,7 @@ const startEdit = (row: number, field: string, options?: { isKeyboardInput?: boo
               setCursorPosition(actualInput, col, options)
             }
           }
-          
-          // 注意：不再需要手动添加事件监听器，全局监听器已处理 Tab 和 Escape 键
-        }) // 延迟确保浏览器完成渲染
+        })
       })
     })
   })
@@ -1230,7 +1221,7 @@ const handleSelectVisibleChange = (visible: boolean, rowIndex: number, field: st
  * @param insertIndex 插入位置，从0开始。如果未提供或insertIndex<0，则在末尾追加；如果insertIndex>=0且<=最大列号，则在insertIndex前插入
  * @returns [code, message, newColIndex] code=1表示成功，code=-1表示失败
  */
-const addColumn = async (field: string, colDefine: TablePlusColumn, insertIndex?: number): Promise<[number, string, number?]> => {
+const addColumn = async (field: string, colDefine: TableGridColumn, insertIndex?: number): Promise<[number, string, number?]> => {
   // 参数校验
   if (!field || field.trim() === '') {
     return [-1, '字段名field无效']
@@ -1578,9 +1569,6 @@ const updateSelectedRowIndex = () => {
   })
 }
 
-/**
- * 设置当前行（程序内部使用）
- */
 /**
  * 设置当前行（接口函数）
  * @param row 行索引，如果提供且有效则设置当前行，如果为 null 或 undefined 则取消当前行
@@ -2224,7 +2212,7 @@ const processImageArrayForPaste = (imageArray: any[]): any[] => {
  * @param column 列配置
  * @returns 包含 copyValue 和 copyData 的对象
  */
-const prepareCopyData = (value: any, column: TablePlusColumn | null): { copyValue: string; copyData: any } => {
+const prepareCopyData = (value: any, column: TableGridColumn | null): { copyValue: string; copyData: any } => {
   let copyValue = ''
   let copyData = value
   
@@ -2251,7 +2239,7 @@ const handleCopy = (event: ClipboardEvent) => {
   // 确定源单元格：优先使用编辑模式，否则使用选中的单元格
   let rowIndex: number | null = null
   let field: string | null = null
-  let column: TablePlusColumn | null = null
+  let column: TableGridColumn | null = null
   
   if (editingCell.value) {
     // 编辑模式：使用当前编辑的单元格
@@ -2305,7 +2293,7 @@ const handlePaste = (event: ClipboardEvent) => {
   // 确定目标单元格：优先使用编辑模式，否则使用选中的单元格
   let rowIndex: number | null = null
   let field: string | null = null
-  let column: TablePlusColumn | null = null
+  let column: TableGridColumn | null = null
   
   if (editingCell.value) {
     // 编辑模式：使用当前编辑的单元格
