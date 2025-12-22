@@ -59,6 +59,8 @@ export interface TablePlusProps {
   currentRowIndex?: number | null
   /** 是否显示删除按钮（默认 true） */
   showDeleteButton?: boolean
+  /** 默认行数据（用于新增行时，如果未提供 defaultRow 参数） */
+  defaultRow?: any
 }
 
 /**
@@ -71,7 +73,9 @@ export interface TablePlusEmits {
   (e: 'cell-dblclick', rowIndex: number, field: string, event: MouseEvent): void
   (e: 'cell-update', rowIndex: number, field: string, value: any): void
   (e: 'row-delete', rowIndex: number): void
-  (e: 'row-add', defaultRow: any): void
+  (e: 'row-add', payload: { defaultRow: any; insertIndex?: number }): void
+  (e: 'column-add', payload: { field: string; colDefine: TablePlusColumn; insertIndex?: number }): void
+  (e: 'column-delete', field: string): void
   (e: 'image-update', rowIndex: number, field: string, value: any[]): void
   (e: 'cell-validate', rowIndex: number, field: string, value: any): boolean | string | null
 }
@@ -91,10 +95,11 @@ const tableRef = ref<InstanceType<typeof ElTable>>()
 const editingCell = ref<{ rowIndex: number; field: string } | null>(null)
 
 /** 选中的行索引 */
-const selectedRowIndex = ref<number | null>(props.currentRowIndex ?? null)
+/** 当前行索引（当前聚焦的行） */
+const currentRowIndex = ref<number | null>(props.currentRowIndex ?? null)
 
-/** 选中的多行索引（用于 Ctrl/Shift 多选） */
-const selectedWholeRowIndices = ref<number[]>([])
+/** 选中的行索引数组（用于 Ctrl/Shift 多选，有绿色边框的行） */
+const selectedRowIndices = ref<number[]>([])
 
 /** 上次选中的行索引（用于 Shift 范围选择） */
 const lastSelectedRowIndex = ref<number | null>(null)
@@ -105,16 +110,16 @@ const effectiveRowIndex = computed(() => {
   if (editingCell.value?.rowIndex !== undefined && editingCell.value?.rowIndex !== null) {
     return editingCell.value.rowIndex
   }
-  // 否则使用选中的行索引
-  return selectedRowIndex.value
+  // 否则使用当前行索引
+  return currentRowIndex.value
 })
 
 // 监听 props.currentRowIndex 的变化，同步到内部状态
 watch(
   () => props.currentRowIndex,
   (newVal) => {
-    if (newVal !== selectedRowIndex.value) {
-      selectedRowIndex.value = newVal
+    if (newVal !== currentRowIndex.value) {
+      currentRowIndex.value = newVal
     }
   },
   { immediate: true }
@@ -388,20 +393,91 @@ const isEditing = (rowIndex: number, field: string): boolean => {
 }
 
 /**
- * 开始编辑单元格
+ * 内部辅助函数：取消选择单元格（不返回结果，用于内部调用）
  */
-const startEdit = (rowIndex: number, field: string, options?: { isKeyboardInput?: boolean; inputValue?: string }) => {
+const _deselectCellInternal = (): void => {
+  if (editingCell.value) {
+    endEdit()
+  }
+  
+  const tableEl = tableRef.value?.$el as HTMLElement
+  if (tableEl) {
+    tableEl.querySelectorAll('.el-table__cell.selected-cell').forEach(el => {
+      el.classList.remove('selected-cell')
+    })
+    tableEl.querySelectorAll('.el-table__cell.editing-cell').forEach(el => {
+      el.classList.remove('editing-cell')
+    })
+    tableEl.querySelectorAll('.table-plus-cell, .table-plus-image').forEach((el: HTMLElement) => {
+      el.blur()
+    })
+  }
+}
+
+/**
+ * 进入编辑（接口函数）
+ * @param row 行索引，从0开始
+ * @param field 字段名
+ * @param options 可选配置
+ * @returns [code, message] code=1表示成功，code=-1表示失败
+ */
+const startEdit = (row: number, field: string, options?: { isKeyboardInput?: boolean; inputValue?: string }): [number, string] => {
+  // 参数校验
+  if (row < 0 || row >= props.data.length) {
+    return [-1, `行号${row}无效`]
+  }
+  
   const col = props.columns.find(c => c.field === field)
-  if (!col || col.editable === false || col.type === 'image') {
-    return
+  if (!col || col.show === false) {
+    return [-1, `列${field}无效`]
+  }
+  
+  if (col.editable === false) {
+    return [-1, `列${field}不可编辑`]
+  }
+  
+  if (col.type === 'image') {
+    return [-1, '图片列不支持编辑']
+  }
+  
+  // 检查当前选中单元格是否与目标单元格一致
+  const selectedCell = document.querySelector('.el-table__cell.selected-cell') as HTMLElement
+  if (selectedCell) {
+    const rowElement = selectedCell.closest('tr')
+    if (rowElement) {
+      const tbody = rowElement.parentElement
+      if (tbody) {
+        const rows = Array.from(tbody.querySelectorAll('tr'))
+        const actualRowIndex = rows.indexOf(rowElement)
+        if (actualRowIndex !== row) {
+          return [-1, '目标单元格未选中']
+        }
+        
+        const visibleColumns = props.columns.filter(col => col.show !== false)
+        const cellIndex = Array.from(rowElement.children).indexOf(selectedCell)
+        if (cellIndex > 0 && cellIndex <= visibleColumns.length) {
+          const actualField = visibleColumns[cellIndex - 1].field
+          if (actualField !== field) {
+            return [-1, '目标单元格未选中']
+          }
+        }
+      }
+    }
+  } else {
+    // 如果没有选中单元格，允许直接进入编辑（兼容某些场景）
+    // 但需要先选中单元格
+    const [selectCode, selectMsg] = selectCell(row, field)
+    if (selectCode !== 1) {
+      return [selectCode, selectMsg]
+    }
   }
   
   // 如果已经在编辑这个单元格，不做任何操作
-  if (isEditing(rowIndex, field)) {
-    return
+  if (isEditing(row, field)) {
+    return [1, '就绪']
   }
   
-  editingCell.value = { rowIndex, field }
+  editingCell.value = { rowIndex: row, field }
   
   // 等待 DOM 更新后聚焦输入框
   // 使用双重 nextTick + requestAnimationFrame + setTimeout 确保 DOM 完全更新
@@ -410,7 +486,7 @@ const startEdit = (rowIndex: number, field: string, options?: { isKeyboardInput?
       requestAnimationFrame(() => {
         // 再使用 setTimeout 确保浏览器完成渲染
         setTimeout(() => {
-          const refKey = `${rowIndex}-${field}`
+          const refKey = `${row}-${field}`
           
           // 首先尝试通过 ref 访问组件实例
           const componentRef = inputRefsMap.get(refKey)
@@ -421,7 +497,7 @@ const startEdit = (rowIndex: number, field: string, options?: { isKeyboardInput?
               
               // 等待焦点设置完成后再设置光标位置
               delayExecute(() => {
-                const cellKey = `${rowIndex}-${field}`
+                const cellKey = `${row}-${field}`
                 const inputElement = document.querySelector(`[data-cell-key="${cellKey}"]`) as HTMLElement
                 if (inputElement) {
                   const actualInput = inputElement.querySelector('input, textarea') as HTMLInputElement | HTMLTextAreaElement
@@ -448,7 +524,7 @@ const startEdit = (rowIndex: number, field: string, options?: { isKeyboardInput?
           }
           
           // 如果 ref 方法失败，回退到 DOM 查询方法
-          const cellKey = `${rowIndex}-${field}`
+          const cellKey = `${row}-${field}`
           const inputElement = document.querySelector(`[data-cell-key="${cellKey}"]`) as HTMLElement
           if (!inputElement) {
             return
@@ -458,7 +534,7 @@ const startEdit = (rowIndex: number, field: string, options?: { isKeyboardInput?
           if (col.type === 'select') {
             // 等待 DOM 完全渲染后再打开下拉框
             delayExecute(() => {
-              openSelectDropdown(rowIndex, field, refKey)
+              openSelectDropdown(row, field, refKey)
               // 添加键盘事件监听器
               // 注意：不再需要手动添加事件监听器，全局监听器已处理 Tab 和 Escape 键
             }, 100)
@@ -507,6 +583,8 @@ const startEdit = (rowIndex: number, field: string, options?: { isKeyboardInput?
       })
     })
   })
+  
+  return [1, '就绪']
 }
 
 /**
@@ -543,9 +621,9 @@ const endEdit = () => {
 }
 
 /**
- * 退出编辑状态并进入选中状态
- * @param shouldValidate 是否校验数据（默认 false）
- * @param shouldSelect 是否选中当前单元格（默认 true，用于 Enter 键场景；false 用于导航到其他单元格场景）
+ * 内部辅助函数：退出编辑状态（不返回结果，用于内部调用）
+ * @param shouldValidate 是否校验数据
+ * @param shouldSelect 是否选中当前单元格
  * @returns 是否成功退出编辑（校验失败时返回 false）
  */
 const exitEditMode = (shouldValidate: boolean = false, shouldSelect: boolean = true): boolean => {
@@ -589,7 +667,7 @@ const exitEditMode = (shouldValidate: boolean = false, shouldSelect: boolean = t
           cellElement.classList.add('selected-cell')
           
           // 更新选中行索引
-          selectedRowIndex.value = rowIndex
+          currentRowIndex.value = rowIndex
           emit('update:currentRowIndex', rowIndex)
           
           // 确保单元格获得焦点
@@ -612,18 +690,116 @@ const exitEditMode = (shouldValidate: boolean = false, shouldSelect: boolean = t
 }
 
 /**
- * 取消选择单元格
- * @returns 是否成功取消选择
+ * 退出编辑（接口函数）
+ * @param row 行索引，从0开始
+ * @param field 字段名
+ * @param shouldValidate 是否校验数据，默认true
+ * @returns [code, message] code=1表示成功，code=-1表示失败
  */
-const deselectCell = (): boolean => {
-  // 1. 如果单元格处于编辑状态，则退出编辑状态（不校验，不选中）
+const exitEdit = (row: number, field: string, shouldValidate: boolean = true): [number, string] => {
+  // 如果当前没有单元格处于编辑状态，直接返回成功
+  if (!editingCell.value) {
+    return [1, '就绪']
+  }
+  
+  // 参数校验
+  if (row < 0 || row >= props.data.length) {
+    return [-1, `行号${row}无效`]
+  }
+  
+  const col = props.columns.find(c => c.field === field)
+  if (!col) {
+    return [-1, `列${field}无效`]
+  }
+  
+  // 检查当前编辑单元格是否与目标单元格一致
+  const { rowIndex, field: currentField } = editingCell.value
+  if (rowIndex !== row || currentField !== field) {
+    return [-1, '目标单元格与编辑单元格不一致']
+  }
+  
+  // 校验数据（如果需要）
+  if (shouldValidate) {
+    const currentValue = props.data[rowIndex]?.[field]
+    const validateResult = validateCell(rowIndex, field, currentValue)
+    
+    // 校验失败，返回错误信息
+    if (validateResult !== true && validateResult !== null) {
+      const errorMsg = typeof validateResult === 'string' ? validateResult : '数据校验失败'
+      return [-1, errorMsg]
+    }
+  }
+  
+  // 退出编辑状态并选中单元格
+  const success = exitEditMode(shouldValidate, true)
+  if (!success) {
+    return [-1, '退出编辑失败']
+  }
+  
+  return [1, '就绪']
+}
+
+/**
+ * 退出单元格选中（接口函数）
+ * @param row 行索引（可选，如果提供则只取消该行的单元格选中）
+ * @param field 字段名（可选，如果提供则只取消该字段的单元格选中）
+ * @returns [code, message] code=1表示成功，code=-1表示失败
+ */
+const deselectCell = (row?: number, field?: string): [number, string] => {
+  const tableEl = tableRef.value?.$el as HTMLElement
+  
+  // 如果提供了row和field，只取消该单元格的选中
+  if (row !== undefined && field !== undefined) {
+    // 参数校验
+    if (row < 0 || row >= props.data.length) {
+      return [-1, `行号${row}无效`]
+    }
+    
+    const col = props.columns.find(c => c.field === field)
+    if (!col) {
+      return [-1, `列${field}无效`]
+    }
+    
+    // 如果该单元格正在编辑，退出编辑状态
+    if (editingCell.value && editingCell.value.rowIndex === row && editingCell.value.field === field) {
+      endEdit()
+    }
+    
+    // 取消该单元格的选中状态
+    if (tableEl) {
+      const tbody = tableEl.querySelector('.el-table__body tbody')
+      if (tbody) {
+        const rows = Array.from(tbody.querySelectorAll('tr'))
+        if (rows[row]) {
+          const visibleColumns = props.columns.filter(col => col.show !== false)
+          const fieldIndex = visibleColumns.findIndex(c => c.field === field)
+          if (fieldIndex >= 0) {
+            // 数据列从第2个开始（第1个是序号列）
+            const cellIndex = fieldIndex + 1
+            const cells = Array.from(rows[row].children)
+            if (cells[cellIndex]) {
+              cells[cellIndex].classList.remove('selected-cell')
+              cells[cellIndex].classList.remove('editing-cell')
+              const cellElement = cells[cellIndex].querySelector('.table-plus-cell, .table-plus-image') as HTMLElement
+              if (cellElement) {
+                cellElement.blur()
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    return [1, '就绪']
+  }
+  
+  // 如果没有提供参数，取消所有单元格的选中
+  // 如果单元格处于编辑状态，则退出编辑状态
   if (editingCell.value) {
-    // 直接调用 endEdit()，不调用 exitEditMode()，因为 exitEditMode 会选中单元格
     endEdit()
   }
   
-  // 2. 单元格取消选中状态，并失去焦点
-  const tableEl = tableRef.value?.$el as HTMLElement
+  // 单元格取消选中状态，并失去焦点
   if (tableEl) {
     // 移除所有单元格的选中状态和编辑状态
     tableEl.querySelectorAll('.el-table__cell.selected-cell').forEach(el => {
@@ -633,133 +809,107 @@ const deselectCell = (): boolean => {
       el.classList.remove('editing-cell')
     })
     
+    // 移除所有单元格的聚焦状态（cell-focused 类）
+    tableEl.querySelectorAll('.table-plus-cell.cell-focused').forEach(el => {
+      el.classList.remove('cell-focused')
+    })
+    
     // 移除所有单元格的焦点（包括普通单元格和 image 列）
     tableEl.querySelectorAll('.table-plus-cell, .table-plus-image').forEach((el: HTMLElement) => {
       el.blur()
     })
   }
   
-  // 注意：不清除 selectedRowIndex，因为可能需要在取消选中后保留行索引信息
-  // 如果需要完全清除，可以取消下面的注释
-  // selectedRowIndex.value = null
-  // emit('update:currentRowIndex', null)
-  
-  return true
+  return [1, '就绪']
 }
 
-/**
- * 取消行选择
- * @returns 是否成功取消行选择
- */
-const deselectRow = (): boolean => {
-  // 清除整行选中状态
-  selectedWholeRowIndices.value = []
-  lastSelectedRowIndex.value = null
-  
-  // 清除行选中相关的 DOM 样式（如果有的话）
-  const tableEl = tableRef.value?.$el as HTMLElement
-  if (tableEl) {
-    // 移除行选中相关的样式类（根据实际实现调整）
-    tableEl.querySelectorAll('tr.selected-row').forEach(el => {
-      el.classList.remove('selected-row')
-    })
-  }
-  
-  return true
-}
 
 /**
- * 选择行
- * @param targetRowIndex 目标行号
- * @param selectType 选择类型：'single' | 'ctrl' | 'shift'
- * @returns 是否成功选择行
+ * 选中行（接口函数）
+ * @param row 行索引，从0开始
+ * @param selectType 选择模式，默认'single'
+ * @returns [code, message] code=1表示成功，code=-1表示失败
  */
-const selectRow = (targetRowIndex: number, selectType: 'single' | 'ctrl' | 'shift' = 'single'): boolean => {
-  // ==================== 步骤1：校验目标行号是否有效 ====================
-  if (targetRowIndex < 0 || targetRowIndex >= props.data.length) {
-    return false // 无效行号，停止动作
+const selectRow = (row: number, selectType: 'single' | 'ctrl' | 'shift' = 'single'): [number, string] => {
+  // 参数校验
+  if (row < 0 || row >= props.data.length) {
+    return [-1, `行号${row}无效`]
   }
   
-  // ==================== 步骤2：如果当前有单元格处于编辑或选中状态，则取消单元格选中 ====================
-  deselectCell()
+  // 单选模式下，如果目标行是唯一被选中的行，直接返回（避免重复操作）
+  // 注意：如果有多行被选中，即使目标行在其中，也应该先取消其他行，再选中目标行
+  if (selectType === 'single' && selectedRowIndices.value.length === 1 && selectedRowIndices.value[0] === row) {
+    return [1, '就绪']
+  }
   
-  // ==================== 步骤3：执行行选择操作 ====================
+  // 退出单元格选中（使用接口函数）
+  const [deselectCellCode, deselectCellMsg] = deselectCell()
+  if (deselectCellCode !== 1) {
+    return [deselectCellCode, deselectCellMsg]
+  }
+  
+  // 执行行选择操作
   const tableEl = tableRef.value?.$el as HTMLElement
   if (!tableEl) {
-    return false
+    return [-1, '表格元素不存在']
   }
   
   let rowsToSelect: number[] = []
   
   switch (selectType) {
     case 'single':
-      // 单选：先取消其他行选择，再选中目标行
-      // 清除所有行的选中样式（先取消其他行选择）
-      const tbody = tableEl.querySelector('.el-table__body tbody')
-      if (tbody) {
-        tbody.querySelectorAll('tr.selected-row').forEach(el => {
-          el.classList.remove('selected-row')
-        })
+      // 单选：先取消所有其他行选择，再选中目标行
+      // 使用接口函数确保一致性
+      const [deselectRowCode, deselectRowMsg] = deselectRow()
+      if (deselectRowCode !== 1) {
+        return [deselectRowCode, deselectRowMsg]
       }
       
-      // 更新选中行列表（再选目标行）
-      selectedWholeRowIndices.value = [targetRowIndex]
-      lastSelectedRowIndex.value = targetRowIndex
-      rowsToSelect = [targetRowIndex]
+      // 选中目标行
+      selectedRowIndices.value = [row]
+      lastSelectedRowIndex.value = row
+      rowsToSelect = [row]
       break
       
     case 'ctrl':
       // ctrl选：不取消其他行选择，增加选中当前行（如果已选中则取消选中）
-      const currentIndex = selectedWholeRowIndices.value.indexOf(targetRowIndex)
+      const currentIndex = selectedRowIndices.value.indexOf(row)
       if (currentIndex === -1) {
-        // 未选中，添加到选中列表（不取消其他行选择）
-        selectedWholeRowIndices.value.push(targetRowIndex)
-        // 在 ctrl 模式下，需要确保所有已选中的行都有样式，所以 rowsToSelect 应该包含所有已选中的行
-        rowsToSelect = [...selectedWholeRowIndices.value]
-        // 更新 lastSelectedRowIndex
-        lastSelectedRowIndex.value = targetRowIndex
+        selectedRowIndices.value.push(row)
+        rowsToSelect = [...selectedRowIndices.value]
+        lastSelectedRowIndex.value = row
       } else {
-        // 已选中，从选中列表移除
-        selectedWholeRowIndices.value.splice(currentIndex, 1)
-        // 移除该行的选中样式
+        selectedRowIndices.value.splice(currentIndex, 1)
         const tbody = tableEl.querySelector('.el-table__body tbody')
         if (tbody) {
           const rows = Array.from(tbody.querySelectorAll('tr'))
-          if (rows[targetRowIndex]) {
-            rows[targetRowIndex].classList.remove('selected-row')
+          if (rows[row]) {
+            rows[row].classList.remove('selected-row')
           }
         }
-        // 如果移除后没有选中的行，清除 lastSelectedRowIndex 和当前行
-        if (selectedWholeRowIndices.value.length === 0) {
+        if (selectedRowIndices.value.length === 0) {
           lastSelectedRowIndex.value = null
-          selectedRowIndex.value = null
+          currentRowIndex.value = null
           emit('update:currentRowIndex', null)
+          return [1, '就绪']
         } else {
-          // 更新 lastSelectedRowIndex 为最后一个选中的行
-          lastSelectedRowIndex.value = selectedWholeRowIndices.value[selectedWholeRowIndices.value.length - 1]
-          // 确保其他已选中的行保持样式（重新应用所有已选中行的样式）
-          rowsToSelect = [...selectedWholeRowIndices.value]
+          lastSelectedRowIndex.value = selectedRowIndices.value[selectedRowIndices.value.length - 1]
+          rowsToSelect = [...selectedRowIndices.value]
         }
-        // ctrl 模式下取消选中，如果还有其他选中的行，需要确保它们保持样式
-        if (rowsToSelect.length > 0) {
-          // 继续执行后续的样式应用逻辑
-          break
+        if (rowsToSelect.length === 0) {
+          return [1, '就绪']
         }
-        // 如果没有其他选中的行，直接返回
-        return true
       }
       break
       
     case 'shift':
       // shift选：选中目标行到上次选中行之间的全部行
       if (lastSelectedRowIndex.value !== null) {
-        // 有上次选中的行，选中从上次选中行到目标行之间的所有行
         const startRowIndex = lastSelectedRowIndex.value
-        const endRowIndex = targetRowIndex
+        const endRowIndex = row
         const minRowIndex = Math.min(startRowIndex, endRowIndex)
         const maxRowIndex = Math.max(startRowIndex, endRowIndex)
         
-        // 生成需要选中的行索引列表
         rowsToSelect = []
         for (let i = minRowIndex; i <= maxRowIndex; i++) {
           if (i >= 0 && i < props.data.length) {
@@ -767,24 +917,20 @@ const selectRow = (targetRowIndex: number, selectType: 'single' | 'ctrl' | 'shif
           }
         }
         
-        // 更新选中行列表（合并，去重）
-        const newSelectedRows = [...new Set([...selectedWholeRowIndices.value, ...rowsToSelect])]
-        selectedWholeRowIndices.value = newSelectedRows
+        const newSelectedRows = [...new Set([...selectedRowIndices.value, ...rowsToSelect])]
+        selectedRowIndices.value = newSelectedRows
       } else {
-        // 没有上次选中的行，只选中目标行（相当于单选）
-        selectedWholeRowIndices.value = [targetRowIndex]
-        rowsToSelect = [targetRowIndex]
+        selectedRowIndices.value = [row]
+        rowsToSelect = [row]
       }
-      lastSelectedRowIndex.value = targetRowIndex
+      lastSelectedRowIndex.value = row
       break
   }
   
   // 应用选中样式到需要选中的行
-  // 使用双重 nextTick 确保 DOM 更新完成
   nextTick(() => {
     nextTick(() => {
       rowsToSelect.forEach(rowIndex => {
-        // 使用更可靠的选择器
         const tbody = tableEl.querySelector('.el-table__body tbody')
         if (tbody) {
           const rows = Array.from(tbody.querySelectorAll('tr'))
@@ -796,20 +942,18 @@ const selectRow = (targetRowIndex: number, selectType: 'single' | 'ctrl' | 'shif
     })
   })
   
-  // ==================== 步骤4：设置目标行为当前行 ====================
-  // 注意：ctrl 模式下不设置当前行（保持原样），只更新选中行列表
+  // 设置目标行为当前行
   if (selectType !== 'ctrl') {
-    selectedRowIndex.value = targetRowIndex
-    emit('update:currentRowIndex', targetRowIndex)
+    currentRowIndex.value = row
+    emit('update:currentRowIndex', row)
   } else {
-    // ctrl 模式下，如果目标行被选中，设置为当前行
-    if (rowsToSelect.length > 0 && rowsToSelect.includes(targetRowIndex)) {
-      selectedRowIndex.value = targetRowIndex
-      emit('update:currentRowIndex', targetRowIndex)
+    if (rowsToSelect.length > 0 && rowsToSelect.includes(row)) {
+      currentRowIndex.value = row
+      emit('update:currentRowIndex', row)
     }
   }
   
-  return true
+  return [1, '就绪']
 }
 
 /**
@@ -847,7 +991,7 @@ const calculateTargetCell = (
   } else {
     // 相对位置
     const direction = target.direction
-    const fromRowIndex = target.fromRowIndex ?? selectedRowIndex.value ?? 0
+    const fromRowIndex = target.fromRowIndex ?? currentRowIndex.value ?? 0
     const fromField = target.fromField ?? (() => {
       // 如果没有指定字段，尝试从当前选中单元格获取
       if (tableEl) {
@@ -978,24 +1122,24 @@ const handleInputUpdate = (rowIndex: number, field: string, value: any) => {
   emit('cell-update', rowIndex, field, value)
 }
 
-const handleInputInput = (rowIndex: number, field: string) => {
+const handleInputInput = (_rowIndex: number, _field: string) => {
   // 输入时的处理（如果需要）
 }
 
 const handleInputFocus = (rowIndex: number, field: string) => {
   // 聚焦时确保编辑状态
   if (!isEditing(rowIndex, field)) {
-    startEdit(rowIndex, field)
+    startEdit(rowIndex, field) // 忽略返回值，只触发编辑
   }
 }
 
 /**
  * 处理输入框失焦事件
- * @param event 焦点事件
- * @param rowIndex 行索引
- * @param field 字段名
+ * @param _event 焦点事件
+ * @param _rowIndex 行索引
+ * @param _field 字段名
  */
-const handleInputBlur = (event: FocusEvent, rowIndex: number, field: string) => {
+const handleInputBlur = (_event: FocusEvent, _rowIndex: number, _field: string) => {
   // 延迟执行，以便其他事件（如点击另一个单元格）先执行
   delayExecute(() => {
     // 如果焦点移到了另一个单元格的输入框，不退出编辑模式
@@ -1040,11 +1184,15 @@ const handleImageUpdate = (rowIndex: number, field: string, val: any[]) => {
  * 处理图片单元格点击
  */
 const handleImageCellClick = (rowIndex: number, field: string, event: Event) => {
-  // 使用统一的导航函数选中该单元格
-  navigateToCell(
-    { rowIndex, field },
-    { validateCurrent: false, allowAddRow: false }
-  )
+  // 检查点击的目标是否是删除按钮（删除按钮不应该选中单元格）
+  const target = event.target as HTMLElement
+  if (target && (target.classList.contains('remove-btn-normal') || target.classList.contains('remove-btn-small') || target.closest('.remove-btn-normal') || target.closest('.remove-btn-small'))) {
+    // 点击的是删除按钮，不选中单元格，让删除功能正常执行
+    return
+  }
+  
+  // 使用 selectCell 接口函数选中该单元格
+  selectCell(rowIndex, field)
   // 阻止事件冒泡，避免触发表格的 cell-click 事件
   event.stopPropagation()
 }
@@ -1074,85 +1222,177 @@ const handleSelectVisibleChange = (visible: boolean, rowIndex: number, field: st
 }
 
 // ==================== 单元格选择 ====================
+// ==================== 列操作 ====================
 /**
- * 导航到目标单元格（统一的单元格选择函数）
+ * 新增列（接口函数）
+ * @param field 字段名
+ * @param colDefine 列定义对象
+ * @param insertIndex 插入位置，从0开始。如果未提供或insertIndex<0，则在末尾追加；如果insertIndex>=0且<=最大列号，则在insertIndex前插入
+ * @returns [code, message, newColIndex] code=1表示成功，code=-1表示失败
+ */
+const addColumn = async (field: string, colDefine: TablePlusColumn, insertIndex?: number): Promise<[number, string, number?]> => {
+  // 参数校验
+  if (!field || field.trim() === '') {
+    return [-1, '字段名field无效']
+  }
+  
+  // 检查字段名是否已存在
+  if (props.columns.some(col => col.field === field)) {
+    return [-1, `字段名${field}已存在`]
+  }
+  
+  // 校验列定义
+  if (!colDefine || typeof colDefine !== 'object') {
+    return [-1, '列定义colDefine无效']
+  }
+  
+  if (!colDefine.field || !colDefine.label) {
+    return [-1, '列定义缺少必要属性（field或label）']
+  }
+  
+  // 退出单元格选中
+  const [deselectCode, deselectMsg] = deselectCell()
+  if (deselectCode !== 1) {
+    return [deselectCode, deselectMsg]
+  }
+  
+  // 确定插入位置
+  const visibleColumns = props.columns.filter(col => col.show !== false)
+  let finalInsertIndex: number | undefined
+  
+  if (insertIndex === undefined || insertIndex < 0) {
+    // 在末尾追加
+    finalInsertIndex = undefined
+  } else if (insertIndex >= 0 && insertIndex <= visibleColumns.length) {
+    // 在insertIndex前插入
+    finalInsertIndex = insertIndex
+  } else {
+    return [-1, `列号${insertIndex}无效`]
+  }
+  
+  // 触发column-add事件
+  emit('column-add', { field, colDefine, insertIndex: finalInsertIndex })
+  
+  // 等待父组件处理
+  await nextTick()
+  
+  // 确定新增列的索引
+  const newVisibleColumns = props.columns.filter(col => col.show !== false)
+  const newColIndex = finalInsertIndex === undefined ? newVisibleColumns.length - 1 : finalInsertIndex
+  
+  return [1, '就绪', newColIndex]
+}
+
+/**
+ * 删除列（接口函数）
+ * @param field 字段名
+ * @returns [code, message] code=1表示成功，code=-1表示失败
+ */
+const deleteColumn = async (field: string): Promise<[number, string]> => {
+  // 参数校验
+  const col = props.columns.find(c => c.field === field)
+  if (!col) {
+    return [-1, `字段名${field}无效`]
+  }
+  
+  // 退出单元格选中
+  const [deselectCode, deselectMsg] = deselectCell()
+  if (deselectCode !== 1) {
+    return [deselectCode, deselectMsg]
+  }
+  
+  // 如果删除的列是当前选中单元格的列，清除选中状态
+  if (editingCell.value && editingCell.value.field === field) {
+    endEdit()
+    currentRowIndex.value = null
+    emit('update:currentRowIndex', null)
+  }
+  
+  // 触发column-delete事件
+  emit('column-delete', field)
+  
+  // 等待父组件处理
+  await nextTick()
+  
+  return [1, '就绪']
+}
+
+// ==================== 单元格导航 ====================
+/**
+ * 导航到单元格（接口函数）
  * @param target 目标单元格配置
- *   - 精确单元格：{ rowIndex: number, field: string }
- *   - 相对位置：{ direction: 'up' | 'down' | 'left' | 'right' | 'tab' | 'enter', fromRowIndex?: number, fromField?: string }
  * @param options 选项
- *   - validateCurrent: 是否校验当前编辑单元格（默认 true）
- *   - allowAddRow: 是否允许自动新增行（默认 true）
- * @returns 是否成功导航
+ * @returns [code, message] code=1表示成功，code=-1表示失败
  */
 const navigateToCell = (
   target: 
     | { rowIndex: number; field: string }
     | { direction: 'up' | 'down' | 'left' | 'right' | 'tab' | 'enter'; fromRowIndex?: number; fromField?: string },
   options: { validateCurrent?: boolean; allowAddRow?: boolean } = {}
-): boolean => {
+): [number, string] => {
   const { validateCurrent = true, allowAddRow = true } = options
   
-  // ==================== 步骤1：处理编辑状态 ====================
+  // 处理编辑状态
   if (editingCell.value) {
-    // 退出编辑状态（根据选项决定是否校验，但不选中当前单元格，因为要选中新单元格）
-    if (!exitEditMode(validateCurrent, false)) {
-      return false // 校验失败，停止继续动作
+    const success = exitEditMode(validateCurrent, false)
+    if (!success) {
+      return [-1, '退出编辑失败']
     }
   }
   
-  // ==================== 步骤2：目标单元格校验（此时不做实际的操作，只为获取精确的目标单元格）====================
+  // 计算目标单元格位置
   const targetCell = calculateTargetCell(target, allowAddRow)
   
-  // 如果目标单元格不合法，则停止动作
+  // 如果目标单元格不合法，返回错误
   if (!targetCell) {
-    return false
+    return [-1, '目标单元格无效']
   }
   
   const { rowIndex: targetRowIndex, field: targetField, shouldAddRow } = targetCell
   
-  // ==================== 步骤3：执行选择单元格的操作 ====================
-  // 3.1 如果有行被选中，取消行选择
-  if (selectedWholeRowIndices.value.length > 0) {
-    deselectRow()
+  // 取消所有行选中和单元格选中
+  const [deselectRowCode, deselectRowMsg] = deselectRow()
+  if (deselectRowCode !== 1) {
+    return [deselectRowCode, deselectRowMsg]
   }
   
-  // 3.2 如果有单元格处于编辑或选中状态，则取消单元格选中
-  deselectCell()
+  const [deselectCellCode, deselectCellMsg] = deselectCell()
+  if (deselectCellCode !== 1) {
+    return [deselectCellCode, deselectCellMsg]
+  }
   
-  // 3.3 如果目标单元格的行号大于最大行号，则新增行
-  if (shouldAddRow) {
+  // 如果目标单元格的行号大于最大行号且allowAddRow为true，则新增行
+  if (shouldAddRow && allowAddRow) {
     const defaultRow: any = {}
     props.columns.forEach(col => {
       defaultRow[col.field] = col.type === 'number' ? null : (col.type === 'image' ? [] : '')
     })
-    emit('row-add', defaultRow)
+    emit('row-add', { defaultRow, insertIndex: targetRowIndex })
   }
   
-  // 3.4 选中目标单元格，并获得焦点
+  // 选中目标单元格，并获得焦点
   // 如果新增了行，需要等待数据更新
   if (shouldAddRow || targetRowIndex >= props.data.length) {
     nextTick(() => {
       if (props.data.length > 0) {
         const actualRowIndex = props.data.length - 1
         applyCellSelection(actualRowIndex, targetField)
-        // 3.5 设置目标单元格所在行为当前行
-        selectedRowIndex.value = actualRowIndex
+        currentRowIndex.value = actualRowIndex
         emit('update:currentRowIndex', actualRowIndex)
       }
     })
   } else {
     applyCellSelection(targetRowIndex, targetField)
-    // 3.5 设置目标单元格所在行为当前行
-    selectedRowIndex.value = targetRowIndex
+    currentRowIndex.value = targetRowIndex
     emit('update:currentRowIndex', targetRowIndex)
   }
   
-  return true
+  return [1, '就绪']
 }
 
 /**
  * 应用单元格选中状态（内部辅助函数）
- * 注意：此函数只负责 DOM 操作和焦点设置，不负责更新 selectedRowIndex（由调用方负责）
+ * 注意：此函数只负责 DOM 操作和焦点设置，不负责更新 currentRowIndex（由调用方负责）
  */
 const applyCellSelection = (rowIndex: number, field: string) => {
   nextTick(() => {
@@ -1188,16 +1428,130 @@ const applyCellSelection = (rowIndex: number, field: string) => {
 }
 
 /**
- * 选中单元格（保留向后兼容）
+ * 取消选中行（接口函数）
+ * @param row 行索引（可选，如果提供则只取消该行的选中状态）
+ * @returns [code, message] code=1表示成功，code=-1表示失败
  */
-const selectCell = (rowIndex: number, field?: string) => {
-  if (!field) {
-    selectedRowIndex.value = rowIndex
-    emit('update:currentRowIndex', rowIndex)
-    return
+const deselectRow = (row?: number): [number, string] => {
+  const tableEl = tableRef.value?.$el as HTMLElement
+  
+  // 如果提供了row参数，只取消该行的选中状态
+  if (row !== undefined) {
+    // 参数校验
+    if (row < 0 || row >= props.data.length) {
+      return [-1, `行号${row}无效`]
+    }
+    
+    // 从选中行数组中移除该行
+    const index = selectedRowIndices.value.indexOf(row)
+    if (index !== -1) {
+      selectedRowIndices.value.splice(index, 1)
+    }
+    
+    // 如果该行是当前行，清除当前行
+    if (currentRowIndex.value === row) {
+      currentRowIndex.value = null
+      emit('update:currentRowIndex', null)
+    }
+    
+    // 如果该行是上次选中的行，更新lastSelectedRowIndex
+    if (lastSelectedRowIndex.value === row) {
+      if (selectedRowIndices.value.length > 0) {
+        lastSelectedRowIndex.value = selectedRowIndices.value[selectedRowIndices.value.length - 1]
+      } else {
+        lastSelectedRowIndex.value = null
+      }
+    }
+    
+    // 移除该行的DOM选中样式
+    if (tableEl) {
+      const tbody = tableEl.querySelector('.el-table__body tbody')
+      if (tbody) {
+        const rows = Array.from(tbody.querySelectorAll('tr'))
+        if (rows[row]) {
+          rows[row].classList.remove('selected-row')
+        }
+      }
+    }
+    
+    return [1, '就绪']
   }
   
-  navigateToCell({ rowIndex, field }, { validateCurrent: false })
+  // 如果没有提供参数，取消所有行的选中状态
+  // 清除整行选中状态
+  selectedRowIndices.value = []
+  lastSelectedRowIndex.value = null
+  currentRowIndex.value = null
+  emit('update:currentRowIndex', null)
+  
+  // 清除行选中相关的 DOM 样式
+  if (tableEl) {
+    tableEl.querySelectorAll('tr.selected-row').forEach(el => {
+      el.classList.remove('selected-row')
+    })
+  }
+  
+  return [1, '就绪']
+}
+
+/**
+ * 取消选中当前行（接口函数，向后兼容）
+ * @returns [code, message] code=1表示成功，code=-1表示失败
+ */
+const clearCurrentRow = (): [number, string] => {
+  // 取消所有单元格选中
+  const [cellCode, cellMsg] = deselectCell()
+  if (cellCode !== 1) {
+    return [cellCode, cellMsg]
+  }
+  
+  // 取消所有行选中
+  return deselectRow()
+}
+
+/**
+ * 选中单元格（接口函数）
+ * @param row 行索引，从0开始
+ * @param field 字段名
+ * @returns [code, message] code=1表示成功，code=-1表示失败
+ */
+const selectCell = (row: number, field: string): [number, string] => {
+  // 参数校验
+  if (row < 0 || row >= props.data.length) {
+    return [-1, `行号${row}无效`]
+  }
+  
+  const col = props.columns.find(c => c.field === field)
+  if (!col || col.show === false || col.editable === false) {
+    return [-1, `列${field}无效`]
+  }
+  
+  // 退出当前编辑状态
+  if (editingCell.value) {
+    const success = exitEditMode(false, false)
+    if (!success) {
+      return [-1, '退出编辑失败']
+    }
+  }
+  
+  // 取消单元格选中和行选择
+  const [deselectCellCode, deselectCellMsg] = deselectCell()
+  if (deselectCellCode !== 1) {
+    return [deselectCellCode, deselectCellMsg]
+  }
+  
+  const [deselectRowCode, deselectRowMsg] = deselectRow()
+  if (deselectRowCode !== 1) {
+    return [deselectRowCode, deselectRowMsg]
+  }
+  
+  // 选中目标单元格
+  const [navCode, navMsg] = navigateToCell({ rowIndex: row, field }, { validateCurrent: false, allowAddRow: false })
+  if (navCode !== 1) {
+    return [navCode, navMsg]
+  }
+  
+  return [1, '就绪']
 }
 
 /**
@@ -1215,7 +1569,7 @@ const updateSelectedRowIndex = () => {
           const rows = Array.from(tbody.querySelectorAll('tr'))
           const rowIndex = rows.indexOf(row)
           if (rowIndex !== -1) {
-            selectedRowIndex.value = rowIndex
+            currentRowIndex.value = rowIndex
             emit('update:currentRowIndex', rowIndex)
           }
         }
@@ -1227,45 +1581,160 @@ const updateSelectedRowIndex = () => {
 /**
  * 设置当前行（程序内部使用）
  */
-const setCurrentRow = (rowIndex: number | null) => {
-  selectedRowIndex.value = rowIndex
-  emit('update:currentRowIndex', rowIndex)
+/**
+ * 设置当前行（接口函数）
+ * @param row 行索引，如果提供且有效则设置当前行，如果为 null 或 undefined 则取消当前行
+ * @returns [code, message] code=1表示成功，code=-1表示失败
+ */
+const setCurrentRow = (row: number | null | undefined): [number, string] => {
+  // 如果 row 为 null 或 undefined，取消当前行
+  if (row === null || row === undefined) {
+    currentRowIndex.value = null
+    emit('update:currentRowIndex', null)
+    return [1, '就绪']
+  }
+  
+  // 参数校验
+  if (row < 0 || row >= props.data.length) {
+    return [-1, `行号${row}无效`]
+  }
+  
+  // 设置当前行
+  currentRowIndex.value = row
+  emit('update:currentRowIndex', row)
+  return [1, '就绪']
 }
 
-// ==================== 行删除 ====================
+// ==================== 行操作 ====================
 /**
- * 处理删除行
+ * 新增行（接口函数）
+ * @param row 插入位置，从0开始。如果未提供或row<0，则在末尾追加；如果row>=0且<=最大行号，则在row前插入
+ * @param defaultRow 默认行数据，如果未提供则使用列配置的默认值
+ * @returns [code, message, newRowIndex] code=1表示成功，code=-1表示失败
  */
-const handleDeleteRow = (rowIndex: number) => {
-  if (rowIndex < 0 || rowIndex >= props.data.length) return
-  
-  const newData = [...props.data]
-  newData.splice(rowIndex, 1)
-  
-  emit('update:data', newData)
-  emit('row-delete', rowIndex)
-  
-  // 如果删除了当前行，清除选中状态
-  if (selectedRowIndex.value === rowIndex) {
-    selectedRowIndex.value = null
-    emit('update:currentRowIndex', null)
-  } else if (selectedRowIndex.value !== null && selectedRowIndex.value > rowIndex) {
-    // 如果删除的行在当前行之前，更新当前行索引
-    selectedRowIndex.value--
-    emit('update:currentRowIndex', selectedRowIndex.value)
+const addRow = async (row?: number, defaultRow?: any): Promise<[number, string, number?]> => {
+  // 取消所有单元格选中和行选中（在新增行之前执行，确保能正确取消选中）
+  const [deselectCellCode, deselectCellMsg] = deselectCell()
+  if (deselectCellCode !== 1) {
+    return [deselectCellCode, deselectCellMsg]
   }
   
-  // 结束编辑
-  if (editingCell.value && editingCell.value.rowIndex === rowIndex) {
+  const [deselectRowCode, deselectRowMsg] = deselectRow()
+  if (deselectRowCode !== 1) {
+    return [deselectRowCode, deselectRowMsg]
+  }
+  
+  // 确定插入位置
+  let insertIndex: number | undefined
+  if (row === undefined || row < 0) {
+    // 在末尾追加
+    insertIndex = undefined
+  } else if (row >= 0 && row <= props.data.length) {
+    // 在row前插入
+    insertIndex = row
+  } else {
+    return [-1, `行号${row}无效`]
+  }
+  
+  // 创建默认行数据
+  // 优先使用传入的 defaultRow，其次使用 props.defaultRow，最后使用列配置的默认值
+  const newDefaultRow: any = {}
+  props.columns.forEach(col => {
+    if (col.type === 'number') {
+      newDefaultRow[col.field] = null
+    } else if (col.type === 'image') {
+      newDefaultRow[col.field] = []
+    } else {
+      newDefaultRow[col.field] = ''
+    }
+  })
+  
+  // 合并默认行数据：列配置默认值 < props.defaultRow < 传入的 defaultRow
+  const finalDefaultRow = { ...newDefaultRow, ...props.defaultRow, ...defaultRow }
+  
+  // 触发row-add事件
+  emit('row-add', { defaultRow: finalDefaultRow, insertIndex })
+  
+  // 等待父组件处理并DOM更新
+  await nextTick()
+  await nextTick() // 双重nextTick确保DOM完全更新
+  
+  // 确定新增行的索引
+  let newRowIndex: number
+  if (insertIndex === undefined) {
+    newRowIndex = props.data.length - 1
+  } else {
+    newRowIndex = insertIndex
+  }
+  
+  // 选中新增的行
+  if (newRowIndex >= 0 && newRowIndex < props.data.length) {
+    const [selectCode, selectMsg] = selectRow(newRowIndex)
+    if (selectCode !== 1) {
+      return [selectCode, selectMsg, newRowIndex]
+    }
+  }
+  
+  return [1, '就绪', newRowIndex]
+}
+
+/**
+ * 删除行（接口函数）
+ * @param row 行索引，从0开始
+ * @returns [code, message] code=1表示成功，code=-1表示失败
+ */
+const deleteRow = async (row: number): Promise<[number, string]> => {
+  // 参数校验
+  if (row < 0 || row >= props.data.length) {
+    return [-1, `行号${row}无效`]
+  }
+  
+  // 取消所有行的选中状态（删除行时应该清除所有选中状态）
+  const [deselectRowCode, deselectRowMsg] = deselectRow()
+  if (deselectRowCode !== 1) {
+    return [deselectRowCode, deselectRowMsg]
+  }
+  
+  // 取消所有单元格选中
+  const [deselectCellCode, deselectCellMsg] = deselectCell()
+  if (deselectCellCode !== 1) {
+    return [deselectCellCode, deselectCellMsg]
+  }
+  
+  // 如果删除的行是当前行，清除当前行
+  if (currentRowIndex.value === row) {
+    currentRowIndex.value = null
+    emit('update:currentRowIndex', null)
+  } else if (currentRowIndex.value !== null && currentRowIndex.value > row) {
+    // 如果删除的行在当前行之前，更新当前行索引（减1）
+    currentRowIndex.value--
+    emit('update:currentRowIndex', currentRowIndex.value)
+  }
+  
+  // 如果删除的行正在编辑，结束编辑状态
+  if (editingCell.value && editingCell.value.rowIndex === row) {
     endEdit()
   }
+  
+  // 在组件内部删除数据，然后通过emit('update:data')通知父组件
+  const newData = [...props.data]
+  newData.splice(row, 1)
+  emit('update:data', newData)
+  
+  // 同时触发row-delete事件（保持向后兼容）
+  emit('row-delete', row)
+  
+  // 等待DOM更新
+  await nextTick()
+  
+  return [1, '就绪']
 }
 
 // ==================== 单元格点击事件 ====================
 /**
  * 处理单元格点击
  */
-const handleCellClick = (row: any, column: any, cell?: HTMLElement, event?: MouseEvent) => {
+const handleCellClick = (row: any, column: any, _cell?: HTMLElement, event?: MouseEvent) => {
   const rowIndex = props.data.indexOf(row)
   const field = column.property || column.field
   
@@ -1283,13 +1752,8 @@ const handleCellClick = (row: any, column: any, cell?: HTMLElement, event?: Mous
       selectType = 'ctrl'
     }
     
-    // 普通点击且该行已经被选中（在 selectedWholeRowIndices 中），不切换，直接返回
-    // 注意：这里检查的是行是否被选中，而不是 effectiveRowIndex，因为单元格选中和行选中是不同的状态
-    if (selectType === 'single' && selectedWholeRowIndices.value.includes(rowIndex)) {
-      return
-    }
-    
     // 使用 selectRow 函数来处理行选择（它会自动处理 DOM 样式）
+    // 注意：无论点击行是否与当前行号一致，都应该选中（按优化方案要求）
     selectRow(rowIndex, selectType)
     
     return
@@ -1297,21 +1761,11 @@ const handleCellClick = (row: any, column: any, cell?: HTMLElement, event?: Mous
   
   if (rowIndex === -1 || !field) return
   
-  const col = props.columns.find(c => c.field === field)
-  if (!col || col.editable === false) {
-    return
-  }
-  
-  // 如果点击的是正在编辑的单元格，不处理（保持编辑状态）
-  if (isEditing(rowIndex, field)) {
-    return
-  }
-  
-  // 使用统一的导航函数
+  // 使用统一的导航函数（内部会处理列校验和编辑状态检查）
   navigateToCell(
     { rowIndex, field },
     { validateCurrent: false, allowAddRow: false }
-  )
+  ) // 忽略返回值
   
   emit('cell-click', rowIndex, field, event!)
 }
@@ -1319,18 +1773,22 @@ const handleCellClick = (row: any, column: any, cell?: HTMLElement, event?: Mous
 /**
  * 处理单元格双击
  */
-const handleCellDblclick = (row: any, column: any, cell?: HTMLElement, event?: MouseEvent) => {
+const handleCellDblclick = (row: any, column: any, _cell?: HTMLElement, event?: MouseEvent) => {
   const rowIndex = props.data.indexOf(row)
   const field = column.property || column.field
   
   if (rowIndex === -1 || !field) return
   
-  const col = props.columns.find(c => c.field === field)
-  if (!col || col.editable === false || col.type === 'image') {
-    return
+  // 使用统一的编辑函数（内部会处理列校验和编辑状态检查）
+  const [editCode] = startEdit(rowIndex, field)
+  if (editCode !== 1) {
+    return // 如果编辑失败，不继续处理
   }
   
-  startEdit(rowIndex, field)
+  const col = props.columns.find(c => c.field === field)
+  if (!col) {
+    return
+  }
   
   // 对于 select 列，双击后自动打开下拉框
   if (col.type === 'select') {
@@ -1482,7 +1940,7 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
       navigateToCell(
         { direction, fromRowIndex: rowIndex, fromField: field },
         { validateCurrent: false, allowAddRow: true }
-      )
+      ) // 忽略返回值
       return
     }
     
@@ -1508,7 +1966,7 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
       navigateToCell(
         { direction, fromRowIndex: rowIndex, fromField: field },
         { validateCurrent: false, allowAddRow: true }
-      )
+      ) // 忽略返回值
       return
     }
     
@@ -1559,7 +2017,7 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
     emit('update:data', newData)
     
     // 设置编辑状态（标记为键盘录入模式）
-    startEdit(rowIndex, field, { isKeyboardInput: true, inputValue: key })
+    startEdit(rowIndex, field, { isKeyboardInput: true, inputValue: key }) // 忽略返回值
     return
   }
   
@@ -1595,7 +2053,7 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
   // F2 进入编辑
   if (key === 'F2') {
     event.preventDefault()
-    startEdit(rowIndex, field)
+    startEdit(rowIndex, field) // 忽略返回值
     return
   }
   
@@ -1643,7 +2101,7 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
     navigateToCell(
       { direction, fromRowIndex: rowIndex, fromField: field },
       { validateCurrent: false, allowAddRow: true }
-    )
+    ) // 忽略返回值
     return
   }
 }
@@ -1951,10 +2409,13 @@ const handleGlobalKeydown = (event: KeyboardEvent) => {
     navigateToCell(
       { direction, fromRowIndex: currentRowIndex, fromField: currentField },
       { validateCurrent: true, allowAddRow: true }
-    )
+    ) // 忽略返回值
   } else if (isEscape) {
     // Escape 键：退出编辑（不校验）
-    exitEditMode(false)
+    if (editingCell.value) {
+      const { rowIndex, field } = editingCell.value
+      exitEdit(rowIndex, field, false)
+    }
   }
 }
 
@@ -1992,10 +2453,22 @@ const uploadRowImageField = async (rowIndex: number, field: string): Promise<voi
 
 // ==================== 暴露方法 ====================
 defineExpose({
-  startEdit,
-  endEdit,
+  // 单元格操作接口
   selectCell,
+  deselectCell,
+  startEdit,
+  exitEdit,
+  clearCurrentRow,
+  navigateToCell,
+  // 行操作接口
   selectRow,
+  deselectRow,
+  addRow,
+  deleteRow,
+  // 列操作接口
+  addColumn,
+  deleteColumn,
+  // 其他接口
   setCurrentRow,
   uploadRowImageField
 })
@@ -2189,7 +2662,7 @@ defineExpose({
         <div
           class="action-delete"
           :class="{ 'action-delete-current': effectiveRowIndex === scope.$index }"
-          @click.stop="handleDeleteRow(scope.$index)"
+          @click.stop="deleteRow(scope.$index)"
         >
           <ElIcon :size="16">
             <Delete />
@@ -2253,14 +2726,26 @@ defineExpose({
     border-right: 2px solid #e8e8e8;
     padding: 0 !important;
     cursor: pointer !important; // 整个单元格区域都是手指指针
+    user-select: none; // 禁止文字选中
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
     
     // 确保 .cell 容器和所有子元素都是 pointer 光标
     .cell {
       cursor: pointer !important;
+      user-select: none; // 禁止文字选中
+      -webkit-user-select: none;
+      -moz-user-select: none;
+      -ms-user-select: none;
     }
     
     * {
       cursor: pointer !important;
+      user-select: none; // 禁止文字选中
+      -webkit-user-select: none;
+      -moz-user-select: none;
+      -ms-user-select: none;
     }
   }
   
@@ -2323,10 +2808,18 @@ defineExpose({
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  user-select: none; // 禁止文字选中
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
   
-  // 确保所有子元素都继承 pointer 光标
+  // 确保所有子元素都继承 pointer 光标和禁止选中
   * {
     cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
   }
 }
 
@@ -2335,11 +2828,19 @@ defineExpose({
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  user-select: none; // 禁止文字选中
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
   
-  // 确保 SVG 和 path 元素也继承 pointer 光标
+  // 确保 SVG 和 path 元素也继承 pointer 光标和禁止选中
   svg,
   svg path {
     cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
   }
 }
 
@@ -2347,6 +2848,10 @@ defineExpose({
   font-size: 12px;
   color: #606266;
   cursor: pointer;
+  user-select: none; // 禁止文字选中
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
 }
 
 // 当前行的首尾列前景色为绿色（和选中边框一样的颜色）
@@ -2629,16 +3134,28 @@ defineExpose({
     align-items: center !important;
   }
   
-  // 序号列的 .cell 容器和所有子元素都应该是 pointer 光标
+  // 序号列的 .cell 容器和所有子元素都应该是 pointer 光标，并禁止文字选中
   tbody .el-table__cell:first-child {
     cursor: pointer !important;
+    user-select: none !important; // 禁止文字选中
+    -webkit-user-select: none !important;
+    -moz-user-select: none !important;
+    -ms-user-select: none !important;
     
     .cell {
       cursor: pointer !important;
+      user-select: none !important; // 禁止文字选中
+      -webkit-user-select: none !important;
+      -moz-user-select: none !important;
+      -ms-user-select: none !important;
     }
     
     * {
       cursor: pointer !important;
+      user-select: none !important; // 禁止文字选中
+      -webkit-user-select: none !important;
+      -moz-user-select: none !important;
+      -ms-user-select: none !important;
     }
   }
   
@@ -2762,12 +3279,13 @@ defineExpose({
       }
     }
     
-    // 最后一个数据单元格：添加右边框（使用 box-shadow，因为 ::after 已被下边框占用）
+    // 最后一个数据单元格：添加右边框
+    // 注意：Action列是最后一列，所以倒数第二个是最后一个数据单元格
     .el-table__cell:nth-last-child(2) {
       position: relative !important;
       
-      // 右边框
-      box-shadow: 2px 0 0 0 rgb(16, 153, 104) !important;
+      // 右边框（使用 border-right，因为 box-shadow 可能被覆盖）
+      border-right: 2px solid rgb(16, 153, 104) !important;
       
       // 上边框（确保最后一个单元格也有上边框）
       &::before {

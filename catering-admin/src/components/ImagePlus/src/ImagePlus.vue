@@ -758,6 +758,10 @@ defineExpose({
   overflow: visible;
   position: relative;
   gap: 0;
+  user-select: none; // 禁止文字选中
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
 }
 
 .el-icon--upload-normal {
@@ -807,6 +811,10 @@ defineExpose({
   line-height: 1.2;
   padding: 0;
   flex-shrink: 0;
+  user-select: none; // 禁止文字选中
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
 }
 
 // ==================== small 尺寸（60px*60px，参考 ImportGrid）====================
@@ -964,6 +972,10 @@ defineExpose({
   height: 100%;
   margin: 0;
   padding: 0;
+  user-select: none; // 禁止文字选中
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
   box-sizing: border-box;
   overflow: visible;
   position: relative;
@@ -1017,6 +1029,10 @@ defineExpose({
   line-height: 1.2;
   padding: 0;
   flex-shrink: 0;
+  user-select: none; // 禁止文字选中
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
 }
 
 // ==================== 通用样式（兼容旧代码，默认使用 normal 尺寸）====================

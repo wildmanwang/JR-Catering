@@ -15,7 +15,7 @@ import { ButtonPlus } from '@/components/ButtonPlus'
 import { PrompInfo } from '@/components/PrompInfo'
 import { StatusStoragePlus, type StatusStoreItem } from '@/components/StatusStoragePlus'
 import { formatDataItem } from '@/utils/dsOptions'
-import { processImageFields, cleanImageArray, ImageQuerySuffix } from '@/utils/imageList'
+import { cleanImageArray, ImageQuerySuffix, normalizeImageUrl, processImageList } from '@/utils/imageList'
 
 /**
  * 列配置接口（扩展 TablePlusColumn）
@@ -154,7 +154,6 @@ const deepCloneObject = (obj: any): any => {
   return cloned
 }
 
-// 注意：cleanImageArray 已从 @/utils/imageList 导入
 
 /**
  * 获取默认行数据
@@ -232,7 +231,6 @@ const initFieldOptions = async () => {
       } else if (res?.data && Array.isArray(res.data)) {
         rawOptions = res.data
       } else {
-        console.warn(`字段 ${field} 的选项数据格式不正确：`, res)
         rawOptions = []
       }
       
@@ -275,7 +273,10 @@ const initFieldOptions = async () => {
       
       fieldOptionsData.value[field] = transformedOptions
     } catch (err) {
-      console.error(`获取字段 ${field} 的选项数据失败：`, err)
+      const errorMessage = `获取字段 ${field} 的选项数据失败`
+      if (prompInfoRef.value) {
+        prompInfoRef.value.err(errorMessage)
+      }
       fieldOptionsData.value[field] = []
     }
   })
@@ -304,7 +305,6 @@ const deepCloneData = (data: any[]): any[] => {
   return JSON.parse(JSON.stringify(data))
 }
 
-// 标记是否已经恢复了状态（用于在 onMounted 中判断是否需要显示空表）
 const hasRestoredState = ref(false)
 
 // 配置状态存储（StatusStoragePlus 组件使用）
@@ -323,20 +323,12 @@ const stateStores = computed<StatusStoreItem[]>(() => [
       if (state.data) {
         dataList.value = deepCloneData(state.data)
       }
-      // 恢复 originalData（保存状态时已经保存了原始数据）
       if (state.originalData) {
         originalData.value = deepCloneData(state.originalData)
       }
       
-      // 等待 ImagePlus 等子组件完成数据初始化
-      // 使用双重 nextTick 确保所有子组件（包括 ImagePlus）都已完成数据更新
       await nextTick()
       await nextTick()
-      
-      // 注意：这里不能重新设置 originalData，因为我们要保持恢复的原始数据
-      // 这样才能正确检测到用户修改的数据
-      // 如果子组件（如 ImagePlus）对数据进行了规范化，我们需要同步更新 originalData 中对应的格式
-      // 但是只同步格式变化，不改变数据的值，以确保能正确检测到未保存的修改
       
       // 同步 originalData 和 dataList 的长度（处理删除行的情况）
       if (originalData.value.length > dataList.value.length) {
@@ -392,20 +384,6 @@ const beforeCloseHandler = async (): Promise<boolean> => {
 }
 
 
-// 注意：已移除 handleBeforeUnload 监听
-// 原因：
-// 1. 页面刷新时，状态已由 StatusStoragePlus 自动保存到 localStorage，刷新后可以恢复
-// 2. 关闭浏览器标签页时，状态会在组件卸载时自动保存，下次打开可以恢复
-// 3. 应用内的页签关闭已由 beforeCloseHandler 处理，有友好的自定义提示
-// 4. 浏览器系统对话框体验较差，且现代浏览器不允许自定义消息内容
-// 如果需要阻止刷新/关闭标签页，可以取消下面的注释，但建议保留当前实现
-// const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-//   if (props.saveConfig && hasUnsavedChanges()) {
-//     event.preventDefault()
-//     event.returnValue = ''
-//     return ''
-//   }
-// }
 
 // ==================== 数据修改检测 ====================
 /**
@@ -484,7 +462,6 @@ const getDataToSave = (): Array<{ row: any; index: number; isNew: boolean; origi
         dataToSave.push({ row, index: i, isNew: true, originalRow: null })
       }
     } else if (isModifiedFunc(row, originalRow)) {
-      // 已存在的记录：只有被修改过的才需要保存
       dataToSave.push({ row, index: i, isNew: false, originalRow })
     }
   }
@@ -544,7 +521,6 @@ const defaultIsDataModified = (currentRow: any, originalRow: any): boolean => {
       }
       
       // 比较每个元素（包括顺序和标记），因为排序变化也应该被检测到
-      // 保存后 originalData 应该已经是规范化后的格式，可以直接比较
       for (let i = 0; i < currentValidImages.length; i++) {
         if (currentValidImages[i] !== originalValidImages[i]) {
           return true
@@ -604,7 +580,10 @@ const getDetailWithApi = async (id: any): Promise<any> => {
   }
   // 如果获取详情失败，返回 null，不抛出错误，避免影响保存流程
   // 因为保存已经成功，只是获取详情失败
-  console.warn('获取详情失败：', res.msg || '获取详情失败')
+  const warningMessage = res.msg || '获取详情失败'
+  if (prompInfoRef.value) {
+    prompInfoRef.value.warn(warningMessage)
+  }
   return null
 }
 
@@ -614,33 +593,60 @@ const getDetailWithApi = async (id: any): Promise<any> => {
 const save = async (): Promise<void> => {
   const config = props.saveConfig
   if (!config) {
-    console.warn('saveConfig is required to use save functionality')
+    const errorMessage = '保存配置不存在，无法执行保存操作'
+    if (prompInfoRef.value) {
+      prompInfoRef.value.err(errorMessage)
+    }
     return
   }
   
   const useApi = !!(config.addApi && config.updateApi && config.getDetailApi)
   
   if (!useApi && !config.onSave) {
-    console.warn('Either (addApi + updateApi + getDetailApi) or onSave is required')
+    const errorMessage = '保存配置不完整：需要提供 (addApi + updateApi + getDetailApi) 或 onSave'
+    if (prompInfoRef.value) {
+      prompInfoRef.value.err(errorMessage)
+    }
     return
   }
   
   if (!useApi && config.onSave && !config.onGetDetail) {
-    console.warn('onGetDetail is required when using onSave')
+    const errorMessage = '保存配置不完整：使用 onSave 时必须提供 onGetDetail'
+    if (prompInfoRef.value) {
+      prompInfoRef.value.err(errorMessage)
+    }
     return
   }
   
   // 先自动删除所有空白的新增记录（避免对空白记录进行不必要的校验）
   // 从后往前遍历，避免删除时索引变化的问题
+  // 使用 TablePlus 的 deleteRow 接口删除空白行
   const removedIndices: number[] = []
   for (let i = dataList.value.length - 1; i >= 0; i--) {
     const row = dataList.value[i]
     const isNew = !row.id || row.id <= 0
     if (isNew && isEmptyRow(row)) {
-      // 删除空白的新增记录
-      dataList.value.splice(i, 1)
-      originalData.value.splice(i, 1)
-      removedIndices.push(i)
+      // 使用 TablePlus 的 deleteRow 接口删除空白行
+      if (tablePlusRef.value?.deleteRow) {
+        const [code, message] = await tablePlusRef.value.deleteRow(i)
+        if (code === 1) {
+          removedIndices.push(i)
+          // 同步更新 originalData（handleDataUpdate 会自动处理 dataList）
+          if (originalData.value.length > i) {
+            originalData.value.splice(i, 1)
+          }
+        } else {
+          const warningMessage = `删除空白行失败（第${i + 1}行）：${message}`
+          if (prompInfoRef.value) {
+            prompInfoRef.value.warn(warningMessage)
+          }
+        }
+      } else {
+        // 备用方案：直接操作数据（如果 TablePlus 的 deleteRow 不可用）
+        dataList.value.splice(i, 1)
+        originalData.value.splice(i, 1)
+        removedIndices.push(i)
+      }
     }
   }
   
@@ -650,7 +656,6 @@ const save = async (): Promise<void> => {
   }
   
   // 校验必填字段（遇到第一个错误就停止）
-  // 注意：此时空白记录已被删除，只校验实际需要保存的数据
   if (config.requiredFields && config.requiredFields.length > 0) {
     for (let index = 0; index < dataList.value.length; index++) {
       const row = dataList.value[index]
@@ -662,8 +667,12 @@ const save = async (): Promise<void> => {
             prompInfoRef.value.err(errorMessage)
           }
           config.onError?.(errorMessage)
-          // 设置当前行（TablePlus 会自动定位）
-          currentRowIndex.value = index
+          // 设置当前行（使用 TablePlus 的 setCurrentRow 接口）
+          if (tablePlusRef.value?.setCurrentRow) {
+            tablePlusRef.value.setCurrentRow(index)
+          } else {
+            currentRowIndex.value = index
+          }
           return
         }
       }
@@ -703,20 +712,27 @@ const save = async (): Promise<void> => {
             prompInfoRef.value.err(errorMessage)
           }
           config.onError?.(errorMessage)
-          // 设置当前行（TablePlus 会自动定位）
-          currentRowIndex.value = index
+          // 设置当前行（使用 TablePlus 的 setCurrentRow 接口）
+          if (tablePlusRef.value?.setCurrentRow) {
+            tablePlusRef.value.setCurrentRow(index)
+          } else {
+            currentRowIndex.value = index
+          }
           return
         }
       }
     }
     
-    // 上传完成后，重新获取数据（因为图片数据已更新）
     await nextTick()
     
     // 逐行处理需要保存的数据
     for (const { row, index, isNew } of dataToSave) {
-      // 设置当前行
-      currentRowIndex.value = index
+      // 设置当前行（使用 TablePlus 的 setCurrentRow 接口）
+      if (tablePlusRef.value?.setCurrentRow) {
+        tablePlusRef.value.setCurrentRow(index)
+      } else {
+        currentRowIndex.value = index
+      }
       
       // 显示进度
       const progressMessage = `正在提交第 ${index + 1} 行...`
@@ -726,7 +742,6 @@ const save = async (): Promise<void> => {
       config.onProgress?.(progressMessage)
       
       try {
-        // 重新获取行数据（因为图片上传后数据已更新）
         let currentData = dataList.value
         const updatedRow = currentData[index] || row
         
@@ -734,8 +749,6 @@ const save = async (): Promise<void> => {
         let submitData = JSON.parse(JSON.stringify(updatedRow))
         
         // 处理图片字段：确保只保留字符串格式的图片（过滤掉数组格式的未上传图片）
-        // 注意：必须保留标记（?original、?add、?delete），因为后端需要这些标记来判断操作类型
-        // ?add 标记的图片在删除时已经从数组中移除，不会出现在这里
         const imageColumns = props.columns.filter(col => col.type === 'image')
         for (const column of imageColumns) {
           if (Array.isArray(submitData[column.field])) {
@@ -769,8 +782,10 @@ const save = async (): Promise<void> => {
               : await config.onGetDetail!(id)
           } catch (err) {
             // 如果获取详情失败，不抛出错误，避免影响保存流程
-            // 因为保存已经成功，只是获取详情失败
-            console.warn('获取详情失败：', err)
+            const warningMessage = err instanceof Error ? err.message : '获取详情失败'
+            if (prompInfoRef.value) {
+              prompInfoRef.value.warn(warningMessage)
+            }
             detail = null
           }
           
@@ -778,35 +793,17 @@ const save = async (): Promise<void> => {
             currentData = dataList.value
             const currentRow = currentData[index]
             
-            // 数据后处理
-            let updatedDetail = detail
-            if (config.postprocessData) {
-              updatedDetail = config.postprocessData(detail, currentRow)
-            }
+            const processedRow = processSingleRowData(detail, currentRow)
             
-            // 处理图片字段（排序并移除排序前缀）
-            // 从列配置中提取 type === 'image' 的字段名
-            const imageFields = props.columns
-              .filter((col) => col.type === 'image')
-              .map((col) => col.field)
-            
-            // 使用 processImageFields 统一处理图片字段
-            const processedDetail = processImageFields(updatedDetail, imageFields, {
-              processList: true,
-              cleanArray: false
-            })
-            
-            // 更新表格中的数据（完全深拷贝以避免引用共享）
             const updatedRow = {
               ...deepCloneObject(currentRow),
-              ...deepCloneObject(processedDetail)
+              ...deepCloneObject(processedRow)
             }
             
             dataList.value = dataList.value.map((row, idx) => 
               idx === index ? updatedRow : row
             )
             
-            // 等待 ImagePlus 组件规范化数据后再更新原始数据
             await nextTick()
             await nextTick() // 双重 nextTick 确保 ImagePlus 完成规范化
             
@@ -867,8 +864,12 @@ const save = async (): Promise<void> => {
           prompInfoRef.value.err(errorMessage)
         }
         config.onError?.(errorMessage)
-        // 设置当前行（不选中具体单元格，因为无法确定具体字段）
-        currentRowIndex.value = index
+        // 设置当前行（使用 TablePlus 的 setCurrentRow 接口）
+        if (tablePlusRef.value?.setCurrentRow) {
+          tablePlusRef.value.setCurrentRow(index)
+        } else {
+          currentRowIndex.value = index
+        }
         // 中断整个处理流程
         return
       }
@@ -897,8 +898,6 @@ const save = async (): Promise<void> => {
       config.onWarn?.(noChangeMessage)
     }
     
-    // 清除当前行
-    currentRowIndex.value = null
   } catch (err) {
     console.error('保存失败：', err)
     const errorMessage = '保存失败，请稍后重试'
@@ -910,21 +909,51 @@ const save = async (): Promise<void> => {
 }
 
 // ==================== 新增行 ====================
-const addRow = (): { row: any; index: number } => {
-  const newRow = getDefaultRow()
-  const newIndex = dataList.value.length
-  
-  dataList.value.push(newRow)
-  originalData.value.push(JSON.parse(JSON.stringify(newRow)))
-  
-  // 切换当前行到新行
-  currentRowIndex.value = newIndex
-  
-  emit('rowAdded', newRow, newIndex)
-  props.onRowAdded?.(newRow, newIndex)
-  prompInfoRef.value?.info(props.addRowMessage)
-  
-  return { row: newRow, index: newIndex }
+const addRow = async (): Promise<{ row: any; index: number }> => {
+  // 使用 TablePlus 的 addRow 接口函数
+  if (tablePlusRef.value?.addRow) {
+    const [code, message, newRowIndex] = await tablePlusRef.value.addRow()
+    
+    if (code === 1 && newRowIndex !== undefined && newRowIndex >= 0) {
+      // TablePlus 的 addRow 会触发 row-add 事件，由 handleRowAdd 处理数据添加
+      await nextTick()
+      
+      // 获取新添加的行
+      const newRow = dataList.value[newRowIndex]
+      if (newRow) {
+        // 同步更新 originalData
+        if (originalData.value.length <= newRowIndex) {
+          originalData.value.push(JSON.parse(JSON.stringify(newRow)))
+        } else {
+          originalData.value[newRowIndex] = JSON.parse(JSON.stringify(newRow))
+        }
+        
+        emit('rowAdded', newRow, newRowIndex)
+        props.onRowAdded?.(newRow, newRowIndex)
+        prompInfoRef.value?.info(props.addRowMessage)
+        
+        return { row: newRow, index: newRowIndex }
+      } else {
+        const errorMessage = '新增行失败：新行不存在'
+        if (prompInfoRef.value) {
+          prompInfoRef.value.err(errorMessage)
+        }
+        throw new Error(errorMessage)
+      }
+    } else {
+      const errorMessage = message || '新增行失败'
+      if (prompInfoRef.value) {
+        prompInfoRef.value.err(errorMessage)
+      }
+      throw new Error(errorMessage)
+    }
+  } else {
+    const errorMessage = '表格组件未就绪，无法新增行'
+    if (prompInfoRef.value) {
+      prompInfoRef.value.err(errorMessage)
+    }
+    throw new Error(errorMessage)
+  }
 }
 
 // ==================== 工具栏相关 ====================
@@ -942,7 +971,7 @@ const toolbarButtons = computed<ToolbarButton[]>(() => {
           ...btn,
           stype: 'new',
           onClick: async () => {
-            addRow()
+            await addRow()
             if (btn.onClick) {
               await btn.onClick()
             }
@@ -1024,7 +1053,10 @@ const toolbarButtons = computed<ToolbarButton[]>(() => {
  */
 const handleSave = async (): Promise<void> => {
   if (!props.saveConfig) {
-    console.warn('saveConfig is required to use save functionality')
+    const errorMessage = '保存配置不存在，无法执行保存操作'
+    if (prompInfoRef.value) {
+      prompInfoRef.value.err(errorMessage)
+    }
     return
   }
   
@@ -1032,7 +1064,6 @@ const handleSave = async (): Promise<void> => {
   try {
     await save()
   } catch (err) {
-    console.error('保存失败：', err)
     const errorMessage = err instanceof Error ? err.message : '保存失败，请稍后重试'
     if (prompInfoRef.value) {
       prompInfoRef.value.err(errorMessage)
@@ -1050,7 +1081,10 @@ const handleSave = async (): Promise<void> => {
  */
 const handleRefresh = async (): Promise<void> => {
   if (!props.saveConfig) {
-    console.warn('saveConfig is required to use refresh functionality')
+    const errorMessage = '保存配置不存在，无法执行刷新操作'
+    if (prompInfoRef.value) {
+      prompInfoRef.value.err(errorMessage)
+    }
     return
   }
   
@@ -1071,13 +1105,11 @@ const handleRefresh = async (): Promise<void> => {
   
   refreshLoading.value = true
   try {
-    // 从当前数据中提取已保存的记录的 ID（排除新增的行）
     const savedIds = dataList.value
       .filter(row => row.id && row.id > 0)
       .map(row => row.id)
     
     if (savedIds.length === 0) {
-      // 没有已保存的数据，清空数据列表（不插入空行，与 F5 刷新行为一致）
       clearDataList('没有已保存的数据')
       return
     }
@@ -1111,7 +1143,6 @@ const handleRefresh = async (): Promise<void> => {
     const refreshedData = mapAndMergeRowData(rawDataArray)
     await setDataAndWaitForInit(refreshedData, `已刷新 ${refreshedData.length} 条数据`)
   } catch (err) {
-    console.error('刷新失败：', err)
     const errorMessage = err instanceof Error ? err.message : '刷新失败，请稍后重试'
     if (prompInfoRef.value) {
       prompInfoRef.value.err(errorMessage)
@@ -1138,26 +1169,54 @@ const handleDataUpdate = (newData: any[]) => {
 
 /**
  * 处理行删除
+ * 删除操作在 TablePlus 组件内部实现，通过 update:data 事件处理
  */
-const handleRowDelete = (rowIndex: number) => {
-  // 同步删除 originalData 中对应的行
-  if (rowIndex >= 0 && rowIndex < originalData.value.length) {
-    originalData.value.splice(rowIndex, 1)
-  }
+const handleRowDelete = (_rowIndex: number) => {
+  // TablePlus 组件内部已经通过 emit('update:data') 删除了数据
+  // handleDataUpdate 会自动同步更新 dataList 和 originalData
+}
+
+/**
+ * 处理列新增
+ */
+const handleColumnAdd = (_payload: { field: string; colDefine: any; insertIndex?: number }) => {
+  // 列操作暂不支持
+}
+
+/**
+ * 处理列删除
+ */
+const handleColumnDelete = (_field: string) => {
+  // 列操作暂不支持
 }
 
 /**
  * 处理行新增
  */
-const handleRowAdd = (defaultRow: any) => {
+const handleRowAdd = async (payload: { defaultRow: any; insertIndex?: number }) => {
+  const { defaultRow, insertIndex } = payload
   const newRow = { ...getDefaultRow(), ...defaultRow }
-  const newIndex = dataList.value.length
   
-  dataList.value.push(newRow)
-  originalData.value.push(JSON.parse(JSON.stringify(newRow)))
+  // 确定插入位置
+  let newIndex: number
+  if (insertIndex === undefined || insertIndex < 0) {
+    // 在末尾追加
+    dataList.value.push(newRow)
+    newIndex = dataList.value.length - 1
+  } else if (insertIndex >= 0 && insertIndex <= dataList.value.length) {
+    // 在insertIndex前插入
+    dataList.value.splice(insertIndex, 0, newRow)
+    newIndex = insertIndex
+  } else {
+    // 无效的插入位置，在末尾追加
+    dataList.value.push(newRow)
+    newIndex = dataList.value.length - 1
+  }
   
-  // 切换当前行到新行
-  currentRowIndex.value = newIndex
+  originalData.value.splice(newIndex, 0, JSON.parse(JSON.stringify(newRow)))
+  
+  // 等待DOM更新
+  await nextTick()
   
   // 触发回调
   if (props.onRowAdded) {
@@ -1173,7 +1232,73 @@ const handleRowAdd = (defaultRow: any) => {
 // ==================== 数据持久化 ====================
 // 状态保存和恢复功能已由 StatusStoragePlus 组件处理
 
-// 注意：图片处理已转移到 @/utils/imageList，使用 processImageFields 函数
+/**
+ * 预处理从数据库获得的记录的图片字段
+ * 处理逻辑：
+ * 1. 删除排序前缀（如：10-http://... -> http://...）
+ * 2. 移除所有查询参数（包括 ?original, ?add, ?delete）
+ * 3. 添加 ?original 后缀（标记为原始图片）
+ * 
+ * 注意：?add 和 ?delete 后缀不属于预处理，这些是用户操作标记
+ * 但这里是从数据库获取的数据，所以需要统一添加 ?original 后缀
+ * 
+ * @param row 数据行
+ * @returns 处理后的数据行
+ */
+const preprocessImageFieldsFromDatabase = (row: any): any => {
+  if (!row || typeof row !== 'object') return row
+  
+  // 从列配置中提取 type === 'image' 的字段名
+  const imageFields = props.columns
+    .filter((col) => col.type === 'image')
+    .map((col) => col.field)
+  
+  if (imageFields.length === 0) return row
+  
+  const processed = { ...row }
+  
+  imageFields.forEach((fieldName) => {
+    if (!row.hasOwnProperty(fieldName)) return
+    
+    const value = row[fieldName]
+    
+    if (Array.isArray(value)) {
+      const sortedAndCleaned = processImageList(value)
+      processed[fieldName] = sortedAndCleaned.map((url: string) => normalizeImageUrl(url))
+    } else if (typeof value === 'string' && value.length > 0) {
+      processed[fieldName] = normalizeImageUrl(value)
+    }
+  })
+  
+  return processed
+}
+
+/**
+ * 处理单条记录数据（公共逻辑）
+ * 统一处理从后台获取的数据：映射、图片字段预处理、后处理、合并默认值
+ * @param rawData 原始数据（从后台获取）
+ * @param currentRow 当前行数据（可选，用于 postprocessData）
+ * @returns 处理后的行数据
+ */
+const processSingleRowData = (rawData: any, currentRow?: any): any => {
+  let mappedRow = props.mapRowData ? props.mapRowData(rawData) : rawData
+  const deepClonedMappedRow = JSON.parse(JSON.stringify(mappedRow))
+  
+  const preprocessedData = preprocessImageFieldsFromDatabase(deepClonedMappedRow)
+  
+  let processedData = preprocessedData
+  if (currentRow && props.saveConfig?.postprocessData) {
+    processedData = props.saveConfig.postprocessData(preprocessedData, currentRow)
+  }
+  
+  const defaultRow = getDefaultRow()
+  const mergedRow = {
+    ...defaultRow,
+    ...processedData
+  }
+  
+  return mergedRow
+}
 
 /**
  * 映射和合并行数据（公共逻辑）
@@ -1181,29 +1306,7 @@ const handleRowAdd = (defaultRow: any) => {
  * @returns 合并后的行数据数组
  */
 const mapAndMergeRowData = (rawDataArray: any[]): any[] => {
-  return rawDataArray.map((item: any) => {
-    const defaultRow = getDefaultRow() // 每行独立创建
-    const mappedRow = props.mapRowData ? props.mapRowData(item) : item
-    // 对mappedRow做完全深拷贝，避免任何引用共享
-    const deepClonedMappedRow = JSON.parse(JSON.stringify(mappedRow))
-    
-    // 处理图片字段（排序并移除排序前缀）
-    // 从列配置中提取 type === 'image' 的字段名
-    const imageFields = props.columns
-      .filter((col) => col.type === 'image')
-      .map((col) => col.field)
-    
-    const processedRow = processImageFields(deepClonedMappedRow, imageFields, {
-      processList: true,
-      cleanArray: false
-    })
-    
-    const mergedRow = {
-      ...defaultRow,
-      ...processedRow
-    }
-    return mergedRow
-  })
+  return rawDataArray.map((item: any) => processSingleRowData(item))
 }
 
 /**
@@ -1212,16 +1315,10 @@ const mapAndMergeRowData = (rawDataArray: any[]): any[] => {
  * @param infoMessage 可选的提示信息
  */
 const setDataAndWaitForInit = async (newData: any[], infoMessage?: string): Promise<void> => {
-  // 更新数据
   dataList.value = newData
   
-  // 等待 ImagePlus 组件完成数据初始化（如果有图片列）
-  // 使用双重 nextTick 确保所有子组件（包括 ImagePlus）都已完成数据更新
   await nextTick()
   await nextTick()
-  
-  // 在 ImagePlus 组件完成数据初始化后再设置 originalData
-  // 这样可以确保 dataList 和 originalData 的一致性，避免误报未保存修改
   originalData.value = JSON.parse(JSON.stringify(dataList.value))
   
   emit('dataLoaded', dataList.value)
@@ -1289,8 +1386,10 @@ const loadDataFromStorage = async (): Promise<boolean> => {
       }
     }
   } catch (err) {
-    console.error('加载导入数据失败：', err)
-    // 数据格式错误，清除 sessionStorage
+    const errorMessage = '加载导入数据失败'
+    if (prompInfoRef.value) {
+      prompInfoRef.value.err(errorMessage)
+    }
     sessionStorage.removeItem(props.storageKey)
   }
   
@@ -1343,60 +1442,38 @@ onMounted(async () => {
     const hasSavedState = await statusStoragePlusRef.value?.waitForRestore()
     
     if (!hasSavedState) {
-      // 首次打开，没有保存的状态，不自动插入空行
-      // 让 dataList 保持为空数组，用户需要手动添加数据
       if (!hasRestoredState.value && dataList.value.length === 0) {
-        // 不调用 setEmptyTable()，保持空数组，避免刷新后自动插入空行导致提示保存
-        // 如果用户需要添加数据，可以通过工具栏的"新增"按钮添加
         if (prompInfoRef.value) {
           prompInfoRef.value.ready()
         }
       }
-      // 设置 pageReady，显示页面
       pageReady.value = true
     }
-    // 如果有保存的状态，handleRestoreComplete 会在状态恢复完成后被调用，并设置 pageReady
   }
   
-  // 注册页签关闭前检查函数（仅在配置了 saveConfig 时）
   if (props.saveConfig) {
     const currentRoute = router.currentRoute.value
     tagsViewStore.registerBeforeCloseHandler(currentRoute.fullPath, beforeCloseHandler)
-    // 注意：不再监听 beforeunload 事件
-    // 原因：状态已由 StatusStoragePlus 自动保存，刷新/关闭标签页时不会丢失数据
-    // 如果需要浏览器级别的提示，可以取消下面的注释
-    // window.addEventListener('beforeunload', handleBeforeUnload)
   }
 })
 
 onBeforeUnmount(() => {
-  // 注销页签关闭前检查函数
   if (props.saveConfig) {
     const currentRoute = router.currentRoute.value
     tagsViewStore.unregisterBeforeCloseHandler(currentRoute.fullPath)
-    // 注意：不再移除 beforeunload 监听（因为已经不再添加）
-    // window.removeEventListener('beforeunload', handleBeforeUnload)
   }
-  
-  // 状态清空由 StatusStoragePlus 组件自动处理
 })
 
 /**
  * 处理状态恢复完成回调
- * 当 StatusStoragePlus 完成状态恢复后，调用此函数
  */
 const handleRestoreComplete = async (_restored: boolean) => {
-  // 状态恢复已完成（无论是否成功恢复）
-  // 如果没有恢复状态（首次打开、刷新页面或没有保存的状态），不自动插入空行
   if (!hasRestoredState.value && dataList.value.length === 0) {
-    // 不调用 setEmptyTable()，保持空数组，避免刷新后自动插入空行导致提示保存
-    // 如果用户需要添加数据，可以通过工具栏的"新增"按钮添加
     if (prompInfoRef.value) {
       prompInfoRef.value.ready()
     }
   }
   
-  // 显示页面
   pageReady.value = true
 }
 
@@ -1481,9 +1558,12 @@ defineExpose({
         :data="dataList"
         v-model:currentRowIndex="currentRowIndex"
         :show-delete-button="true"
+        :default-row="getDefaultRow()"
         @update:data="handleDataUpdate"
         @row-delete="handleRowDelete"
         @row-add="handleRowAdd"
+        @column-add="handleColumnAdd"
+        @column-delete="handleColumnDelete"
       />
       </div>
     </div>
