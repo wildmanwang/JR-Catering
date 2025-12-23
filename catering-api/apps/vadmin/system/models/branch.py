@@ -18,5 +18,5 @@ class Branch(BaseModel):
 
     name_unique: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, comment="名称")
     company_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="所属公司")
-    web_site: Mapped[str] = mapped_column(String(255), comment="主页")
+    web_site: Mapped[str] = mapped_column(String(255), nullable=True, comment="主页")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, comment="是否可用")

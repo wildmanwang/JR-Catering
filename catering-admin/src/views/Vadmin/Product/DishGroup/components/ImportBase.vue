@@ -6,6 +6,7 @@
  */
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { ContentWrap } from '@/components/ContentWrap'
 import ImportGrid, { type ImportGridColumn, type SaveConfig, type ToolbarButton } from '@/wintemplate/importGrid/ImportGrid.vue'
 import { addDishGroupApi, putDishGroupApi, getDishGroupApi } from '@/api/vadmin/product/dishGroup'
@@ -14,6 +15,8 @@ import { getDishGroupTypeListApi } from '@/api/vadmin/product/dishGroupType'
 defineOptions({
   name: 'DishGroupImport'
 })
+
+const router = useRouter()
 
 // ==================== 常量 ====================
 // 注意：storageKey 必须与 BaseGrid 生成的 key 一致
@@ -105,7 +108,16 @@ const columns = computed<ImportGridColumn[]>(() => [
 // ==================== 配置 ====================
 const toolbarButtons = computed<ToolbarButton[]>(() => [
   { type: 'add', stype: 'new' },
-  { type: 'save', stype: 'save' }
+  { type: 'save', stype: 'save' },
+  { 
+    type: 'custom', 
+    stype: 'setting', 
+    label: '菜品', 
+    alignRight: true,
+    onClick: () => {
+      router.push('/product/dishGroup/importDetail')
+    }
+  }
 ])
 
 const saveConfig = computed<SaveConfig>(() => ({

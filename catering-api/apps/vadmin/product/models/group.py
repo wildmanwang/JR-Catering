@@ -23,6 +23,7 @@ class DishGroup(BaseModel):
     name_english: Mapped[str | None] = mapped_column(String(255), comment="英文名称")
     dish_group_type_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="菜品组类型")
     stype: Mapped[int] = mapped_column(Integer, nullable=False, comment="类型 0/可选;2/必选")
+    branch_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="门店")
     order_number: Mapped[int | None] = mapped_column(Integer, comment="排序号")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, comment="是否可用")
 

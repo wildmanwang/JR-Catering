@@ -59,6 +59,15 @@ const columns = [
     width: '100px'
   },
   {
+    field: 'branch_id',
+    label: '门店',
+    type: 'select' as const,
+    optionsApi: () => getBranchListApi(),
+    optionsIdField: 'id',
+    optionsLabelFormat: [['field', 'name_unique']],
+    width: '100px'
+  },
+  {
     field: 'order_number',
     label: '排序号',
     type: 'text' as const,

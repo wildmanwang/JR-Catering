@@ -977,6 +977,16 @@ const toolbarButtons = computed<ToolbarButton[]>(() => {
             }
           }
         })
+        // 在"new"按钮之后自动添加"更新"按钮
+        mappedButtons.push({
+          type: 'custom',
+          stype: 'batch',
+          label: '更新',
+          alignRight: false,
+          onClick: async () => {
+            // 更新按钮的点击处理逻辑（可以后续扩展）
+          }
+        })
       } else if (btn.type === 'save') {
         mappedButtons.push({
           ...btn,
@@ -1022,10 +1032,22 @@ const toolbarButtons = computed<ToolbarButton[]>(() => {
   if (props.saveConfig) {
     const hasRefreshButton = mappedButtons.some(btn => btn.type === 'refresh')
     if (!hasRefreshButton) {
-      // 找到保存按钮的位置，在它后面插入刷新按钮
+      // 找到保存按钮的位置
       const saveIndex = mappedButtons.findIndex(btn => btn.type === 'save')
       if (saveIndex >= 0) {
-        mappedButtons.splice(saveIndex + 1, 0, {
+        // 查找 save 按钮之后是否有右侧对齐的自定义按钮
+        let insertIndex = saveIndex + 1
+        for (let i = saveIndex + 1; i < mappedButtons.length; i++) {
+          const btn = mappedButtons[i]
+          // 如果遇到右侧对齐的自定义按钮，刷新按钮应该插入在它之后
+          if (btn.type === 'custom' && btn.alignRight) {
+            insertIndex = i + 1
+          } else if (btn.type === 'save' || btn.type === 'refresh') {
+            // 如果遇到其他 save 或 refresh 按钮，停止查找
+            break
+          }
+        }
+        mappedButtons.splice(insertIndex, 0, {
           type: 'refresh',
           stype: 'refresh',
           loading: refreshLoading.value,
@@ -1362,9 +1384,9 @@ const setEmptyTable = async (infoMessage?: string): Promise<void> => {
 
 /**
  * 从 sessionStorage 加载导入数据
- * @returns {Promise<boolean>} 是否成功加载了数据（包含是否需要插入空行的标记）
+ * @returns {Promise<boolean>} 是否成功加载了数据
  */
-const loadDataFromStorage = async (): Promise<{ loaded: boolean; shouldAddEmptyRow: boolean }> => {
+const loadDataFromStorage = async (): Promise<boolean> => {
   try {
     const savedPayload = sessionStorage.getItem(props.storageKey)
     if (savedPayload) {
@@ -1373,9 +1395,8 @@ const loadDataFromStorage = async (): Promise<{ loaded: boolean; shouldAddEmptyR
       // 兼容多种数据格式：
       // 1. 直接是数组格式（从 Dish.vue 等父窗口传入）
       // 2. 对象格式，包含 action 和 data
-      // 3. 对象格式，包含 data 和 _addEmptyRow 标记（从 BaseGrid 打开）
+      // 3. 对象格式，包含 data（从 BaseGrid 打开）
       let dataArray: any[] = []
-      let shouldAddEmptyRow = false
       
       if (Array.isArray(parsed)) {
         // 格式1：直接是数组
@@ -1385,34 +1406,26 @@ const loadDataFromStorage = async (): Promise<{ loaded: boolean; shouldAddEmptyR
           // 格式2：对象格式，包含 action 和 data
           dataArray = parsed.data
         } else if (Array.isArray(parsed.data)) {
-          // 格式3：对象格式，包含 data 和 _addEmptyRow 标记
+          // 格式3：对象格式，包含 data
           dataArray = parsed.data
-          shouldAddEmptyRow = parsed._addEmptyRow === true
         }
       }
       
       if (dataArray.length > 0) {
-        // 有数据，加载数据
+        // 有数据，加载数据（不插入空行）
         const mergedData = mapAndMergeRowData(dataArray)
         await setDataAndWaitForInit(mergedData, `已导入 ${mergedData.length} 条数据`)
         
-        // 如果需要插入空行，在数据后面添加一个空行
-        if (shouldAddEmptyRow) {
-          await addRow()
-        }
-        
         // 清除 sessionStorage，避免重复加载
         sessionStorage.removeItem(props.storageKey)
-        return { loaded: true, shouldAddEmptyRow: false }
+        return true
       } else {
-        // 数据为空数组，如果需要插入空行则插入
-        if (shouldAddEmptyRow) {
-          await setEmptyTable()
-        }
+        // 数据为空数组，不插入空行，直接清空
+        clearDataList()
         
         // 清除 sessionStorage
         sessionStorage.removeItem(props.storageKey)
-        return { loaded: false, shouldAddEmptyRow: false }
+        return false
       }
     }
   } catch (err) {
@@ -1424,7 +1437,7 @@ const loadDataFromStorage = async (): Promise<{ loaded: boolean; shouldAddEmptyR
   }
   
   // 没有数据，返回 false，让调用方决定如何处理（恢复状态或显示空表）
-  return { loaded: false, shouldAddEmptyRow: false }
+  return false
 }
 
 // ==================== 数据监听 ====================
@@ -1448,14 +1461,14 @@ onMounted(async () => {
   if (hasManualSelection) {
     // 情况1：窗口新打开，有手选数据（从 BaseGrid 打开）
     // 使用手选数据，清空 sessionStorage，清除状态数据（避免下次恢复时混淆）
-    // loadDataFromStorage 会根据 _addEmptyRow 标记自动插入空行
-    const result = await loadDataFromStorage()
-    if (result.loaded) {
+    // 不插入空行，只加载手选的数据
+    const loaded = await loadDataFromStorage()
+    if (loaded) {
       // 清除状态数据，因为使用了新的手选数据
       statusStoragePlusRef.value?.clearState()
     }
-    // 如果没有加载数据，loadDataFromStorage 已经根据 _addEmptyRow 标记处理了空行插入
-    if (prompInfoRef.value && !result.loaded) {
+    // 如果没有加载数据，不插入空行
+    if (prompInfoRef.value && !loaded) {
       prompInfoRef.value.ready()
     }
   } else {
