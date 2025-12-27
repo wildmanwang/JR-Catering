@@ -1,10 +1,6 @@
 import request from '@/config/axios'
 
 
-export const getDishGroupTypeStatusOptionsApi = (): Promise<IResponse> => {
-  return request.get({ url: '/vadmin/product/dishgrouptypestatusoptions' })
-}
-
 export const getDishGroupTypeListApi = (params: any): Promise<IResponse> => {
   return request.get({ url: '/vadmin/product/dishgrouptype', params })
 }

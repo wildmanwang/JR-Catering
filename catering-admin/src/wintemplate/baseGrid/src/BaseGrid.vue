@@ -77,7 +77,20 @@ interface ToolbarButton {
 interface GridColumn {
   field: string // 字段名
   label: string // 列标题
-  type?: 'selection' | 'image' | 'text' | 'status' | 'action' // 列类型
+  /** 
+   * 列类型
+   * - 'selection': 多选列（表格左侧复选框）
+   * - 'image': 图片列（使用 ImageSingle 组件显示）
+   * - 'text': 文本列（默认类型，支持 options/optionsApi/原始值三种显示方式）
+   *   - 如果配置了 options，则按选项映射显示标签
+   *   - 如果配置了 optionsApi，则按 dsOptions 规则自动获取并映射显示标签
+   *   - 否则，按原始值显示
+   * - 'status': 状态列（使用 statusOptions 或 optionsApi 映射显示）
+   * - 'action': 操作列（显示操作按钮）
+   * 
+   * 注意：select 类型已并入 text 类型，请使用 type: 'text' 并配置 options 或 optionsApi
+   */
+  type?: 'selection' | 'image' | 'text' | 'status' | 'action'
   width?: string | number // 列宽度
   minWidth?: string | number // 最小宽度
   align?: 'left' | 'center' | 'right' // 单元格内容对齐方式
@@ -89,18 +102,47 @@ interface GridColumn {
   // 图片列专用配置
   imageField?: string // 图片字段名，默认使用 field（支持 url 字符串或 url 数组，ImageSingle 组件会自动处理）
   imageSize?: 'normal' | 'small' // 图片尺寸：normal（100px*100px）或 small（60px*60px），默认 normal
+  // 文本列/选择列专用配置（type='text' 时使用）
+  /** 
+   * 选项数据数组（用于文本列显示选项标签，优先级高于 optionsApi）
+   * 配置后，表格会根据字段值匹配选项中的 value/id，显示对应的 label
+   * @example
+   * options: [
+   *   { label: '是', value: 1 },
+   *   { label: '否', value: 0 }
+   * ]
+   */
+  options?: Array<{ label: string; value: any }> | (() => Array<{ label: string; value: any }>)
   // 状态列专用配置
   statusOptions?: Array<{ label: string; value: any }> | (() => Array<{ label: string; value: any }>) // 状态映射选项
-  /** 选项数据获取接口（用于自动获取该字段的选项数据，供 statusOptions、fieldOptions、searchConditions 使用） */
-  optionsApi?: () => Promise<{ data?: any[]; code?: number; [key: string]: any }> // 返回格式：{ data: [...], code: 200 } 或直接返回数组
+  /** 
+   * 选项数据获取接口（用于自动获取该字段的选项数据）
+   * 配置后，BaseGrid 会自动调用此接口获取选项数据，并按 dsOptions 规则转换
+   * 返回格式：{ data: [...], code: 200 } 或直接返回数组
+   * @example
+   * optionsApi: () => getBranchListApi({ is_active: true })
+   */
+  optionsApi?: () => Promise<{ data?: any[]; code?: number; [key: string]: any }>
   /** 选项数据转换函数（将 API 返回的数据转换为标准格式，如果不提供则使用默认转换） */
   optionsTransform?: (data: any) => Array<{ label: string; value: any }> // 默认：假设返回的是 { data: [...] } 格式
-  /** 选项数据的 id 字段名（用于简化配置，如果不提供 optionsTransform，将使用此字段作为唯一标识） */
-  optionsIdField?: string // 例如：'id'
+  /** 
+   * 选项数据的 id 字段名（用于简化配置，配合 optionsLabelFormat 使用）
+   * 如果不提供 optionsTransform，将使用此字段作为唯一标识
+   * @example 'id' 或 'value'
+   */
+  optionsIdField?: string
   /** 选项数据的 label 字段配置（用于简化配置，如果不提供 optionsTransform，将使用此配置生成 label） */
   optionsLabelFields?: Array<string> // 例如：['name_unique'] 或 ['固定字符串', 'name_unique']，数组中的项目可以是固定字符串或字段名（已废弃，请使用 optionsLabelFormat）
-  /** 选项数据的 label 格式配置（用于简化配置，使用 dsOptions.ts 的格式） */
-  optionsLabelFormat?: Array<['field' | 'value', string]> // 例如：[['field', 'name_unique'], ['value', '-'], ['field', 'status']]
+  /** 
+   * 选项数据的 label 格式配置（用于简化配置，使用 dsOptions.ts 的格式）
+   * 配合 optionsIdField 使用，用于从选项数据中生成显示标签
+   * @example 
+   * // 只显示 name_unique 字段
+   * optionsLabelFormat: [['field', 'name_unique']]
+   * // 显示 name_unique 和 status，中间用 '-' 连接
+   * optionsLabelFormat: [['field', 'name_unique'], ['value', '-'], ['field', 'status']]
+   */
+  optionsLabelFormat?: Array<['field' | 'value', string]>
   // 操作列专用配置
   actionSlots?: (data: any) => JSX.Element | JSX.Element[] | null // 自定义操作插槽
   actionOptions?: ActionOption[] // 操作按钮配置
@@ -199,8 +241,7 @@ const props = withDefaults(defineProps<Props>(), {
   windowId: '',
   rules: () => ({}),
   tabs: () => [
-    { label: '基础信息', name: 'basic' },
-    { label: '操作日志', name: 'log' }
+    { label: '基础信息', name: 'basic' }
   ],
   fieldOptions: () => ({}),
   enableView: true,
@@ -252,21 +293,21 @@ const transformOptionsByConfig = (col: GridColumn, rawData: any[]): Array<{ labe
     return col.optionsTransform(rawData)
   }
   
-  // 如果配置了 optionsLabelFormat，使用 dsOptions.ts 格式
-  if (col.optionsIdField && col.optionsLabelFormat && col.optionsLabelFormat.length > 0) {
-    return rawData.map((item: any) => {
-      const id = item[col.optionsIdField!]
-      const label = generateLabelByFormat(rawData, id, col.optionsLabelFormat!)
-      
-      // 返回标准格式，同时保留原始数据
-      return {
-        id,
-        label,
-        value: id, // 为了兼容，同时提供 value
-        ...item // 保留原始数据，供表单下拉框使用
+      // 如果配置了 optionsLabelFormat，使用 dsOptions.ts 格式
+      if (col.optionsIdField && col.optionsLabelFormat && col.optionsLabelFormat.length > 0) {
+        return rawData.map((item: any) => {
+          const id = item[col.optionsIdField!]
+          const label = generateLabelByFormat(rawData, id, col.optionsLabelFormat!)
+          
+          // 返回标准格式，同时保留原始数据
+          return {
+            id,
+            label,
+            value: id, // 为了兼容，同时提供 value
+            ...item // 保留原始数据，供表单下拉框使用
+          }
+        })
       }
-    })
-  }
   
   // 如果配置了 optionsIdField 和 optionsLabelFields（旧格式，向后兼容）
   if (col.optionsIdField && col.optionsLabelFields && col.optionsLabelFields.length > 0) {
@@ -1753,13 +1794,83 @@ const convertColumns = (columns: GridColumn[]): TableColumn[] => {
         }
 
       case 'text':
-      default:
-        // 文本列：默认类型，支持自定义格式化
+      default: {
+        // 文本列：默认类型，支持自定义格式化、options、optionsApi 三种情况
+        // 如果配置了 options 或 optionsApi，使用选项数据映射显示文字
+        // 注意：即使 optionsApi 数据还未加载，也要使用 slots，以便在数据加载后能响应式更新
+        const hasOptionsConfig = col.options || col.optionsApi
+        
+        if (hasOptionsConfig) {
+          return {
+            ...baseColumn,
+            show: true,
+            slots: {
+              default: (data: any) => {
+                const row = data.row
+                
+                // 优先使用自定义格式化函数
+                if (col.formatter) {
+                  const result = col.formatter(row)
+                  return result !== undefined && result !== null ? String(result) : ''
+                }
+                
+                // 获取字段值
+                const fieldValue = row[col.field]
+                if (fieldValue === null || fieldValue === undefined || fieldValue === '') {
+                  return ''
+                }
+                
+                // 情况1：如果配置了 options，优先使用 options
+                let options: Array<{ label: string; value: any }> | undefined
+                if (col.options) {
+                  options = typeof col.options === 'function' ? col.options() : col.options
+                } 
+                // 情况2：如果配置了 optionsApi，使用自动获取的数据（响应式访问，即使数据还未加载也能在加载后更新）
+                else if (col.optionsApi && fieldOptionsData.value[col.field] && fieldOptionsData.value[col.field].length > 0) {
+                  options = fieldOptionsData.value[col.field]
+                }
+                
+                // 查找匹配的选项
+                if (options && Array.isArray(options) && options.length > 0) {
+                  const matchedOption = options.find((item: any) => {
+                    // 严格匹配
+                    if (item.value === fieldValue || item.id === fieldValue) {
+                      return true
+                    }
+                    // 类型转换后匹配（处理数字和字符串的转换）
+                    if (String(item.value) === String(fieldValue) || String(item.id) === String(fieldValue)) {
+                      return true
+                    }
+                    // 如果 optionsIdField 配置了，也尝试通过该字段匹配
+                    if (col.optionsIdField && item[col.optionsIdField] === fieldValue) {
+                      return true
+                    }
+                    // 类型转换后匹配 optionsIdField
+                    if (col.optionsIdField && String(item[col.optionsIdField]) === String(fieldValue)) {
+                      return true
+                    }
+                    return false
+                  })
+                  
+                  if (matchedOption) {
+                    return matchedOption.label || String(fieldValue)
+                  }
+                }
+                
+                // 情况3：没有匹配到选项，返回原始值
+                return String(fieldValue)
+              }
+            }
+          }
+        }
+        
+        // 情况3：没有配置 options 或 optionsApi，按原始值显示
         return {
           ...baseColumn,
           show: true,
           formatter: col.formatter
         }
+      }
     }
   })
 }

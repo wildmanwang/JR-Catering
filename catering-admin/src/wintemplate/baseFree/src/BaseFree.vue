@@ -20,10 +20,22 @@ defineOptions({
  */
 export interface FreeFormField extends FormSchema {
   /** 
-   * 列类型，用于决定列的显示样式和处理逻辑
+   * 字段类型，用于决定字段的显示组件和处理逻辑
+   * - 'image': 图片字段（使用 ImagePlus 组件）
+   * - 'text': 文本字段（使用 Input 组件）
+   * - 'status': 状态字段（使用 Select 组件，支持 statusOptions）
+   * - 'number': 数字字段（使用 InputNumber 组件）
+   * - 'select': 下拉选择字段（使用 ElSelect 组件，支持 options/optionsApi/原始值三种情况）
+   *   - 如果配置了 options（在 componentProps 中），则按此规则渲染
+   *   - 如果配置了 optionsApi，则按 dsOptions 规则自动获取并渲染
+   *   - 否则，按原始值在下拉组件中显示
+   * - 'dropdown': 下拉字段（使用 Dropdown 组件）
+   * 
+   * 注意：selection 类型已合并到 select 类型，请使用 type: 'select'
+   * 
    * @example 'image' | 'text' | 'status' | 'number' | 'select' | 'dropdown'
    */
-  type?: 'image' | 'text' | 'status' | 'number' | 'select' | 'dropdown'
+  type?: 'image' | 'text' | 'status' | 'number' | 'select' | 'dropdown' | 'selection'
   
   /** 
    * ImagePlus 组件尺寸（仅当 type='image' 时有效）
@@ -62,18 +74,34 @@ export interface FreeFormField extends FormSchema {
    */
   customConvert?: (field: FreeFormField, data: any, mode: 'add' | 'edit' | 'view') => FormSchema | null
   /** 
-   * 选项数据获取接口（用于自动获取该字段的选项数据）
-   * 如果提供，BaseFree 会自动调用此接口获取选项数据
+   * 选项数据获取接口（用于自动获取该字段的选项数据，仅当 type='select' 时有效）
+   * 如果提供，BaseFree 会自动调用此接口获取选项数据，并按 dsOptions 规则转换
+   * 返回格式：{ data: [...], code: 200 } 或直接返回数组
+   * 
+   * 使用场景：
+   * 1. 如果配置了 options（在 componentProps 中），优先使用 options
+   * 2. 如果配置了 optionsApi，使用自动获取的数据（按 dsOptions 规则）
+   * 3. 否则，按原始值在下拉组件中显示
+   * 
+   * @example
+   * optionsApi: () => getBranchListApi({ is_active: true })
    */
   optionsApi?: () => Promise<any>
   /** 
-   * 选项数据的 id 字段名（用于简化配置）
-   * 例如：'id' 或 'value'
+   * 选项数据的 id 字段名（用于简化配置，配合 optionsLabelFormat 使用）
+   * 如果不提供 optionsTransform，将使用此字段作为唯一标识
+   * @example 'id' 或 'value'
    */
   optionsIdField?: string
   /** 
    * 选项数据的 label 格式配置（用于简化配置，使用 dsOptions.ts 的格式）
-   * 例如：[['field', 'label']] 或 [['field', 'name_unique']]
+   * 配合 optionsIdField 使用，用于从选项数据中生成显示标签
+   * 
+   * @example 
+   * // 只显示 name_unique 字段
+   * optionsLabelFormat: [['field', 'name_unique']]
+   * // 显示 name_unique 和 status，中间用 '-' 连接
+   * optionsLabelFormat: [['field', 'name_unique'], ['value', '-'], ['field', 'status']]
    */
   optionsLabelFormat?: Array<['field' | 'value', string]>
 }
@@ -123,8 +151,7 @@ const props = withDefaults(defineProps<Props>(), {
   rules: () => ({}),
   currentRow: () => null,
   tabs: () => [
-    { label: '基础信息', name: 'basic' },
-    { label: '操作日志', name: 'log' }
+    { label: '基础信息', name: 'basic' }
   ],
   fieldOptions: () => ({})
 })
@@ -366,12 +393,8 @@ const drawerWidth = computed(() => {
 })
 
 // ==================== Tab 管理 ====================
-/** 根据模式过滤后的 Tab 列表（新增模式下隐藏操作日志） */
+/** Tab 列表（支持多 Tab 模式，可根据需要扩展） */
 const filteredTabs = computed(() => {
-  // 使用内部模式，支持拷贝新增时的模式切换
-  if (currentMode.value === 'add') {
-    return props.tabs.filter(tab => tab.name !== 'log')
-  }
   return props.tabs
 })
 
@@ -461,28 +484,76 @@ const convertFormSchema = (schema: FreeFormField[]): FormSchema[] => {
       }
     }
     
-    // ==================== 选项数据处理：优先使用字段配置中的 optionsApi ====================
-    // 如果字段配置了 optionsApi，使用自动获取的数据
-    if (fieldOptionsData.value[field.field] && fieldOptionsData.value[field.field].length > 0) {
-      baseField = {
-        ...baseField,
-        componentProps: {
-          ...baseField.componentProps,
-          options: fieldOptionsData.value[field.field]
-        },
-        optionApi: undefined // 移除 optionApi，避免重复请求
+    // ==================== 选项数据处理：支持 options、optionsApi、原始值三种情况 ====================
+    // 情况1：如果配置了 options（在 componentProps 中），优先使用 options
+    // 情况2：如果配置了 optionsApi，使用自动获取的数据（按 dsOptions 规则）
+    // 情况3：否则，按原始值在下拉组件中显示（如果字段类型是 select）
+    
+    // 检查字段类型是否为 select（包括原来的 select 和 selection）
+    const isSelectType = field.type === 'select' || field.type === 'selection'
+    
+    if (isSelectType) {
+      // 情况1：如果 componentProps 中已有 options，保留它（优先级最高）
+      if (baseField.componentProps && (baseField.componentProps as any).options) {
+        // 已有 options，不做处理
       }
-    } else if (props.fieldOptions && props.fieldOptions[field.field]) {
+      // 情况2：如果字段配置了 optionsApi，使用自动获取的数据
+      else if (fieldOptionsData.value[field.field] && fieldOptionsData.value[field.field].length > 0) {
+        baseField = {
+          ...baseField,
+          componentProps: {
+            ...baseField.componentProps,
+            options: fieldOptionsData.value[field.field]
+          },
+          optionApi: undefined // 移除 optionApi，避免重复请求
+        }
+      } 
       // 兼容旧的方式：如果主窗口提供了该字段的选项数据，使用主窗口的数据（已废弃）
-      const optionsData = props.fieldOptions[field.field]
-      const options = typeof optionsData === 'function' ? optionsData() : optionsData
-      baseField = {
-        ...baseField,
-        componentProps: {
-          ...baseField.componentProps,
-          options: options
-        },
-        optionApi: undefined // 移除 optionApi，避免重复请求
+      else if (props.fieldOptions && props.fieldOptions[field.field]) {
+        const optionsData = props.fieldOptions[field.field]
+        const options = typeof optionsData === 'function' ? optionsData() : optionsData
+        baseField = {
+          ...baseField,
+          componentProps: {
+            ...baseField.componentProps,
+            options: options
+          },
+          optionApi: undefined // 移除 optionApi，避免重复请求
+        }
+      }
+      // 情况3：如果没有配置 options 或 optionsApi，确保组件类型为 Select，让原始值在下拉组件中显示
+      else {
+        // 确保组件类型为 Select
+        if (!baseField.component || baseField.component !== 'Select') {
+          baseField = {
+            ...baseField,
+            component: 'Select'
+          }
+        }
+      }
+    } else {
+      // 非 select 类型字段，保持原有逻辑
+      if (fieldOptionsData.value[field.field] && fieldOptionsData.value[field.field].length > 0) {
+        baseField = {
+          ...baseField,
+          componentProps: {
+            ...baseField.componentProps,
+            options: fieldOptionsData.value[field.field]
+          },
+          optionApi: undefined // 移除 optionApi，避免重复请求
+        }
+      } else if (props.fieldOptions && props.fieldOptions[field.field]) {
+        // 兼容旧的方式：如果主窗口提供了该字段的选项数据，使用主窗口的数据（已废弃）
+        const optionsData = props.fieldOptions[field.field]
+        const options = typeof optionsData === 'function' ? optionsData() : optionsData
+        baseField = {
+          ...baseField,
+          componentProps: {
+            ...baseField.componentProps,
+            options: options
+          },
+          optionApi: undefined // 移除 optionApi，避免重复请求
+        }
       }
     }
 
@@ -1339,8 +1410,8 @@ defineExpose({
                     <!-- 默认插槽内容为空，由使用方提供 -->
                   </slot>
                 </template>
-                <!-- 基础信息 Tab：显示表单 -->
-                <template v-else-if="tab.name !== 'log'">
+                <!-- 默认 Tab：显示表单 -->
+                <template v-else>
                   <Form
                     :key="`form-${tab.name}-${drawerVisible}`"
                     :rules="props.rules"
@@ -1348,14 +1419,6 @@ defineExpose({
                     @register="handleFormRegister"
                     :schema="getFieldsByTab(tab.name)"
                   />
-                </template>
-                <!-- 操作日志 Tab：显示占位内容 -->
-                <template v-else>
-                  <slot name="tab-log" :tab="tab" :current-row="props.currentRow" :mode="props.mode">
-                    <div class="operation-log">
-                      <p>操作日志功能待实现</p>
-                    </div>
-                  </slot>
                 </template>
               </ElTabPane>
             </ElTabs>
@@ -1450,12 +1513,6 @@ defineExpose({
   :deep(.el-button:not(.my-button)) {
     margin: 0 !important;
   }
-}
-
-.operation-log {
-  padding: 20px;
-  text-align: center;
-  color: var(--el-text-color-secondary);
 }
 
 .base-free-drawer {

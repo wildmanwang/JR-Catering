@@ -4,7 +4,7 @@
   import { getDishListApi, delDishListApi, getDishStatusOptionsApi, addDishListApi, putDishListApi } from '@/api/vadmin/product/dish'
   import { getKitchenListApi } from '@/api/vadmin/product/kitchen'
   import { ContentWrap } from '@/components/ContentWrap'
-  import { formSchema, rules, tabs } from './components/Response.vue'
+  import { formSchema, rules } from './components/Response.vue'
   
   defineOptions({
     name: 'Dish'
@@ -129,13 +129,6 @@
       type: 'input' as const,
       placeholder: '请输入名称或显示名称',
       units: 3 // 默认3单位（480px）
-    },
-    {
-      field: 'price',
-      label: '价格',
-      type: 'number' as const,
-      placeholder: '请输入价格',
-      units: 1 // 1单位 = 160px
     }
   ]
   
@@ -188,7 +181,6 @@
       :window-id="'Dish'"
       :form-schema="formSchema"
       :rules="rules"
-      :tabs="tabs"
       :add-api="addDishListApi"
       :edit-api="putDishListApi"
     />

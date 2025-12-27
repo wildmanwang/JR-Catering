@@ -23,6 +23,7 @@ class DishGroup(BaseModel):
     name_display: str | None = Field(None, title="显示名称")
     name_english: str | None = Field(None, title="英文名称")
     dish_group_type_id: int = Field(..., title="菜品组类型")
+    branch_id: int = Field(..., title="门店")
     stype: int = Field(..., title="类型 0/可选;2/必选")
     order_number: int | None = Field(None, title="排序号")
     is_active: bool = Field(True, title="是否可用")

@@ -3,6 +3,7 @@
   import { useValidator } from '@/hooks/web/useValidator'
   import type { FreeFormField } from '@/wintemplate/baseFree'
   import { getDishGroupTypeListApi } from '@/api/vadmin/product/dishGroupType'
+  import { getBranchListApi } from '@/api/vadmin/system/branch'
   
   const { required } = useValidator()
   
@@ -75,6 +76,18 @@
       }
     },
     {
+      field: 'branch_id',
+      label: '门店',
+      colProps: {
+        span: 12
+      },
+      component: 'Select',
+      newCopy: false,
+      optionsApi: () => getBranchListApi({ is_active: true }),
+      optionsIdField: 'id',
+      optionsLabelFormat: [['field', 'name_unique']]
+    },
+    {
       field: 'order_number',
       label: '排序号',
       colProps: {
@@ -111,12 +124,6 @@
     name_unique: [required()],
     dish_group_type_id: [required()]
   })
-  
-  // ==================== Tab 配置 ====================
-  export const tabs = [
-    { label: '基础信息', name: 'basic' },
-    { label: '操作日志', name: 'log' }
-  ]
 </script>
 
 <template>

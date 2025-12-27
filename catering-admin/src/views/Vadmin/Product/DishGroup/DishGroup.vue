@@ -2,14 +2,16 @@
 import { ref } from 'vue'
 import { BaseGrid } from '@/wintemplate/baseGrid'
 import {
+  getDishGroupStypeOptionsApi,
   getDishGroupListApi,
   delDishGroupApi,
   addDishGroupApi,
   putDishGroupApi
 } from '@/api/vadmin/product/dishGroup'
 import { getDishGroupTypeListApi } from '@/api/vadmin/product/dishGroupType'
+import { getBranchListApi } from '@/api/vadmin/system/branch'
 import { ContentWrap } from '@/components/ContentWrap'
-import { formSchema, rules, tabs } from './components/Response.vue'
+import { formSchema, rules } from './components/Response.vue'
 
 defineOptions({
   name: 'DishGroup'
@@ -48,24 +50,27 @@ const columns = [
   },
   {
     field: 'dish_group_type_id',
-    label: '厨部id',
+    label: '菜品组类型id',
     type: 'text' as const,
     show: false
   },
   {
     field: 'stype',
     label: '类型',
-    type: 'select' as const,
+    type: 'text' as const,
+    optionsApi: () => getDishGroupStypeOptionsApi(),
+    optionsIdField: 'value',
+    optionsLabelFormat: [['field', 'label']],
     width: '100px'
   },
   {
     field: 'branch_id',
     label: '门店',
-    type: 'select' as const,
-    optionsApi: () => getBranchListApi(),
+    type: 'text' as const,
+    optionsApi: () => getBranchListApi({ is_active: true }),
     optionsIdField: 'id',
     optionsLabelFormat: [['field', 'name_unique']],
-    width: '100px'
+    width: '200px'
   },
   {
     field: 'order_number',
@@ -76,7 +81,7 @@ const columns = [
   {
     field: 'is_active',
     label: '是否启用',
-    type: 'select' as const,
+    type: 'text' as const,
     width: '100px',
     options: [
       {
@@ -88,7 +93,7 @@ const columns = [
         value: false
       }
     ],
-    value: true
+    value: 1
   },
   {
     field: 'action',
@@ -181,7 +186,6 @@ const searchConditions = [
       :window-id="'DishGroup'"
       :form-schema="formSchema"
       :rules="rules"
-      :tabs="tabs"
       :add-api="addDishGroupApi"
       :edit-api="putDishGroupApi"
     />

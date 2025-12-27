@@ -13,7 +13,7 @@ from core.data_types import DatetimeStr
 class Branch(BaseModel):
     name_unique: str = Field(..., title="名称")
     company_id: int = Field(..., title="所属公司")
-    web_site: str = Field(..., title="主页")
+    web_site: str | None = Field(None, title="主页")
     is_active: bool = Field(True, title="是否可用")
 
 
