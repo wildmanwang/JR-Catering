@@ -1416,14 +1416,15 @@ const loadDataFromStorage = async (): Promise<boolean> => {
         const mergedData = mapAndMergeRowData(dataArray)
         await setDataAndWaitForInit(mergedData, `已导入 ${mergedData.length} 条数据`)
         
-        // 清除 sessionStorage，避免重复加载
-        sessionStorage.removeItem(props.storageKey)
+        // 不清除 sessionStorage，保留数据供其他窗口（如 ImportCross）读取
+        // 数据会在 watch 中自动更新保存
+        // sessionStorage.removeItem(props.storageKey)
         return true
       } else {
         // 数据为空数组，不插入空行，直接清空
         clearDataList()
         
-        // 清除 sessionStorage
+        // 清除 sessionStorage（空数据不需要保留）
         sessionStorage.removeItem(props.storageKey)
         return false
       }
@@ -1446,6 +1447,21 @@ watch(
   (newData) => {
     emit('dataChanged', newData)
     // 状态保存由 StatusStoragePlus 组件自动处理
+    
+    // 自动保存数据到 sessionStorage，供其他窗口（如 ImportCross）读取
+    // 保存格式：{ action: 'import', data: [...] }，与 loadDataFromStorage 的读取格式一致
+    // 注意：只在数据变化时保存，不覆盖从外部传入的初始数据
+    if (props.storageKey && newData && newData.length > 0 && pageReady.value) {
+      try {
+        const payload = {
+          action: 'import',
+          data: deepCloneData(newData)
+        }
+        sessionStorage.setItem(props.storageKey, JSON.stringify(payload))
+      } catch (error) {
+        console.error('保存数据到 sessionStorage 失败:', error)
+      }
+    }
   },
   { deep: true, flush: 'post' }
 )

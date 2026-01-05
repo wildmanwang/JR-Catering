@@ -14,8 +14,8 @@
 -->
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
-import { ElTable, ElTableColumn, ElInputNumber, ElButton, ElIcon } from 'element-plus'
-import { Plus, Rank } from '@element-plus/icons-vue'
+import { ElTable, ElTableColumn, ElInputNumber, ElIcon } from 'element-plus'
+import { Rank } from '@element-plus/icons-vue'
 
 /**
  * 行对象接口
@@ -51,6 +51,12 @@ export interface TableCrossProps {
   currentRowIndex?: number | null
   /** 当前选中的列索引 */
   currentColumnIndex?: number | null
+  /** 名称列宽度（第一列） */
+  nameColumnWidth?: number
+  /** 数据列宽度 */
+  dataColumnWidth?: number
+  /** 汇总列宽度 */
+  sumColumnWidth?: number
 }
 
 /**
@@ -72,7 +78,10 @@ export interface TableCrossEmits {
 
 const props = withDefaults(defineProps<TableCrossProps>(), {
   currentRowIndex: null,
-  currentColumnIndex: null
+  currentColumnIndex: null,
+  nameColumnWidth: 200,
+  dataColumnWidth: 160,
+  sumColumnWidth: 120
 })
 
 const emit = defineEmits<TableCrossEmits>()
@@ -359,6 +368,14 @@ const getCellValue = (rowIndex: number, columnIndex: number): number | null => {
 }
 
 /**
+ * 获取单元格的值（用于输入框，返回 number | undefined）
+ */
+const getCellValueForInput = (rowIndex: number, columnIndex: number): number | undefined => {
+  const value = getCellValue(rowIndex, columnIndex)
+  return value === null ? undefined : value
+}
+
+/**
  * 更新单元格的值
  */
 const updateCellValue = (rowIndex: number, columnIndex: number, value: number | null) => {
@@ -426,6 +443,54 @@ watch(
 // 为了在模板中使用，需要暴露columns
 const columns = computed(() => props.columns)
 
+// ==================== 填充列计算 ====================
+/** 表格容器宽度 */
+const tableWidth = ref<number>(0)
+
+/** 计算是否需要填充列（只需要1列，充满剩余宽度） */
+const needFillColumn = computed(() => {
+  if (tableWidth.value <= 0) return false
+  
+  // 计算当前列的总宽度（包括边框等）
+  // 名称列 + 数据列 + 汇总列
+  const currentWidth = props.nameColumnWidth + (columns.value.length * props.dataColumnWidth) + props.sumColumnWidth
+  
+  // 如果当前宽度已经大于等于表格宽度，不需要填充
+  if (currentWidth >= tableWidth.value) return false
+  
+  // 只需要1列填充列，让它充满剩余宽度
+  return true
+})
+
+/** 计算填充列的剩余宽度 */
+const fillColumnWidth = computed(() => {
+  if (!needFillColumn.value) return 0
+  
+  // 计算当前列的总宽度
+  const currentWidth = props.nameColumnWidth + (columns.value.length * props.dataColumnWidth) + props.sumColumnWidth
+  
+  // 计算剩余宽度（留出一些余量给边框）
+  const remainingWidth = tableWidth.value - currentWidth - 20 // 20px 余量
+  
+  // 允许宽度缩小为0，不设置最小宽度限制
+  return Math.max(0, remainingWidth)
+})
+
+/** 更新表格宽度 */
+const updateTableWidth = () => {
+  nextTick(() => {
+    const tableEl = tableRef.value?.$el as HTMLElement
+    if (tableEl) {
+      // 获取表格的实际可见宽度
+      const width = tableEl.clientWidth || tableEl.offsetWidth || 0
+      // 如果宽度发生变化，更新
+      if (width > 0 && width !== tableWidth.value) {
+        tableWidth.value = width
+      }
+    }
+  })
+}
+
 // ==================== 编辑相关函数 ====================
 /**
  * 判断单元格是否正在编辑
@@ -447,6 +512,11 @@ const startEdit = (rowIndex: number, columnIndex: number): [number, string] => {
   
   if (columnIndex < 0 || columnIndex >= props.columns.length) {
     return [-1, `列号${columnIndex}无效`]
+  }
+  
+  // 第一行和第一列不可编辑
+  if (rowIndex === 0 || columnIndex === 0) {
+    return [-1, '第一行和第一列不可编辑']
   }
   
   // 如果已经在编辑这个单元格，不做任何操作
@@ -895,6 +965,7 @@ const handleCellClick = (row: any, column: any) => {
   if (rowIndex >= 0 && columnProperty && columnProperty !== '__name__') {
     const columnIndex = props.columns.findIndex(col => col.id === columnProperty)
     if (columnIndex >= 0) {
+      // 第一行和第一列不可编辑，但可以选中
       navigateToCell(
         { rowIndex, columnIndex },
         { validateCurrent: false }
@@ -946,6 +1017,10 @@ const handleCellDblclick = (row: any, column: any) => {
   if (rowIndex >= 0 && columnProperty && columnProperty !== '__name__') {
     const columnIndex = props.columns.findIndex(col => col.id === columnProperty)
     if (columnIndex >= 0) {
+      // 第一行和第一列不可编辑
+      if (rowIndex === 0 || columnIndex === 0) {
+        return
+      }
       const [editCode] = startEdit(rowIndex, columnIndex)
       if (editCode !== 1) {
         return
@@ -985,6 +1060,11 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
   
   // 如果按下的是可打印字符，直接进入编辑
   if (key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    // 第一行和第一列不可编辑
+    if (rowIndex === 0 || columnIndex === 0) {
+      return
+    }
+    
     // 检查是否为数字
     const isNumber = /^[0-9]$/.test(key)
     if (!isNumber) {
@@ -1005,6 +1085,10 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
   
   // Delete 或 Backspace 删除单元格内容
   if ((key === 'Delete' || key === 'Backspace') && !editingCell.value) {
+    // 第一行和第一列不可编辑
+    if (rowIndex === 0 || columnIndex === 0) {
+      return
+    }
     event.preventDefault()
     updateCellValue(rowIndex, columnIndex, null)
     return
@@ -1012,6 +1096,10 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
   
   // F2 进入编辑
   if (key === 'F2') {
+    // 第一行和第一列不可编辑
+    if (rowIndex === 0 || columnIndex === 0) {
+      return
+    }
     event.preventDefault()
     startEdit(rowIndex, columnIndex)
     return
@@ -1032,6 +1120,10 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
   
   // Enter: 进入编辑状态
   if (key === 'Enter') {
+    // 第一行和第一列不可编辑
+    if (rowIndex === 0 || columnIndex === 0) {
+      return
+    }
     event.preventDefault()
     event.stopPropagation()
     
@@ -1209,12 +1301,39 @@ onMounted(() => {
   // 监听全局 keydown 事件（处理编辑模式下的 Tab 和 Escape 键）
   window.addEventListener('keydown', handleGlobalKeydown, { capture: true, passive: false })
   document.addEventListener('keydown', handleGlobalKeydown, { capture: true, passive: false })
+  
+  // 初始化表格宽度
+  updateTableWidth()
+  
+  // 监听窗口大小变化
+  window.addEventListener('resize', updateTableWidth)
+  
+  // 使用 ResizeObserver 监听表格容器大小变化
+  nextTick(() => {
+    const tableEl = tableRef.value?.$el as HTMLElement
+    if (tableEl && window.ResizeObserver) {
+      const resizeObserver = new ResizeObserver(() => {
+        updateTableWidth()
+      })
+      resizeObserver.observe(tableEl)
+      
+      // 保存 observer 引用以便清理
+      ;(tableRef.value as any).__resizeObserver = resizeObserver
+    }
+  })
 })
 
 onBeforeUnmount(() => {
   // 清理事件监听
   window.removeEventListener('keydown', handleGlobalKeydown, { capture: true } as any)
   document.removeEventListener('keydown', handleGlobalKeydown, { capture: true } as any)
+  window.removeEventListener('resize', updateTableWidth)
+  
+  // 清理 ResizeObserver
+  const tableEl = tableRef.value?.$el as HTMLElement
+  if (tableEl && (tableRef.value as any).__resizeObserver) {
+    ;(tableRef.value as any).__resizeObserver.disconnect()
+  }
 })
 
 // ==================== 暴露方法 ====================
@@ -1250,7 +1369,7 @@ defineExpose({
     <ElTableColumn
       prop="__name__"
       label=""
-      width="150"
+      :width="nameColumnWidth"
       align="center"
       fixed="left"
     >
@@ -1287,7 +1406,7 @@ defineExpose({
       :key="String(column.id)"
       :prop="String(column.id)"
       :label="column.name"
-      width="120"
+      :width="dataColumnWidth"
       align="center"
     >
       <template #header>
@@ -1313,12 +1432,18 @@ defineExpose({
         </div>
       </template>
       <template #default="scope">
+        <!-- 第一行和第一列不可编辑 -->
+        <span 
+          v-if="scope.$index === 0 || colIdx === 0"
+          class="table-cross-cell non-editable-cell"
+        >{{ getCellValue(scope.$index, colIdx) || '' }}</span>
+        
         <!-- 编辑模式：数字输入框 -->
         <ElInputNumber
-          v-if="isEditing(scope.$index, colIdx)"
-      :key="`input-number-${scope.$index}-${colIdx}`"
-      :ref="(el: any) => setInputRef(scope.$index, colIdx, el)"
-      :model-value="getCellValue(scope.$index, colIdx) as number | undefined"
+          v-else-if="isEditing(scope.$index, colIdx)"
+          :key="`input-number-${scope.$index}-${colIdx}`"
+          :ref="(el: any) => setInputRef(scope.$index, colIdx, el)"
+          :model-value="getCellValueForInput(scope.$index, colIdx)"
           size="small"
           :controls="false"
           :min="1"
@@ -1343,30 +1468,41 @@ defineExpose({
       </template>
     </ElTableColumn>
     
-    <!-- 汇总列 -->
+    <!-- 汇总列（排在数据列之后，填充列之前） -->
     <ElTableColumn
       prop="__sum__"
-      label="汇总"
-      width="120"
+      label="行小计"
+      :width="sumColumnWidth"
       align="center"
-      fixed="right"
     >
       <template #header>
         <div class="sum-header-cell">
-          <ElButton
-            type="primary"
-            size="small"
-            :icon="Plus"
-            @click.stop="addColumn()"
-          >
-            选择
-          </ElButton>
+          行小计
         </div>
       </template>
       <template #default="scope">
         <div class="sum-cell">
           {{ getRowSum(scope.$index) }}
         </div>
+      </template>
+    </ElTableColumn>
+    
+    <!-- 填充列（空白标题列，用于铺满表格，排在汇总列之后） -->
+    <ElTableColumn
+      v-if="needFillColumn"
+      prop="__fill__"
+      label=""
+      :width="fillColumnWidth"
+      align="center"
+    >
+      <template #header>
+        <div class="column-header-cell fill-column-header">
+          <!-- 空白标题 -->
+        </div>
+      </template>
+      <template #default>
+        <!-- 填充列不显示内容 -->
+        <span class="table-cross-cell fill-column-cell"></span>
       </template>
     </ElTableColumn>
     
@@ -1377,25 +1513,26 @@ defineExpose({
     <table class="sum-row-table">
       <tbody>
         <tr class="sum-row">
-          <td class="sum-row-name-cell">
-            <ElButton
-              type="primary"
-              size="small"
-              :icon="Plus"
-              @click="addRow()"
-            >
-              选择
-            </ElButton>
+          <td class="sum-row-name-cell" :style="{ width: `${nameColumnWidth}px`, minWidth: `${nameColumnWidth}px`, maxWidth: `${nameColumnWidth}px` }">
+            列小计
           </td>
           <td
             v-for="(column, colIdx) in columns"
             :key="String(column.id)"
             class="sum-row-cell"
+            :style="{ width: `${dataColumnWidth}px`, minWidth: `${dataColumnWidth}px`, maxWidth: `${dataColumnWidth}px` }"
           >
             {{ getColumnSum(colIdx) }}
           </td>
-          <td class="sum-row-sum-cell">
-            <!-- 总汇总可以显示所有数据的汇总 -->
+          <td class="sum-row-sum-cell" :style="{ width: `${sumColumnWidth}px`, minWidth: `${sumColumnWidth}px`, maxWidth: `${sumColumnWidth}px` }">
+            <!-- 总列小计可以显示所有数据的列小计 -->
+          </td>
+          <td
+            v-if="needFillColumn"
+            class="sum-row-cell fill-column-cell"
+            :style="{ width: `${fillColumnWidth}px`, minWidth: `${fillColumnWidth}px`, maxWidth: `${fillColumnWidth}px` }"
+          >
+            <!-- 填充列不显示内容 -->
           </td>
         </tr>
       </tbody>
@@ -1438,8 +1575,7 @@ defineExpose({
   // 名称列样式
   .el-table__cell:first-child {
     background-color: #fafafa;
-    font-weight: 600;
-    border-right: 2px solid #e8e8e8;
+    border-right: 1px solid #e8e8e8;
     padding: 0 !important;
     cursor: pointer !important;
     user-select: none;
@@ -1451,9 +1587,23 @@ defineExpose({
   // 表头样式
   .el-table__header th {
     background-color: #fafafa;
-    font-weight: 600;
-    border-bottom: 2px solid #e8e8e8;
+    border-bottom: 1px solid #e8e8e8;
     text-align: center !important;
+    height: auto !important;
+    min-height: 32px;
+    padding: 4px !important;
+  }
+  
+  // 表头单元格内容容器
+  .el-table__header .el-table__cell {
+    height: auto !important;
+    min-height: 32px;
+    padding: 4px !important;
+  }
+  
+  // 表格最后一行的下边框移除（避免与汇总行边框叠加，汇总行已有上边框）
+  .el-table__body tbody tr:last-child .el-table__cell {
+    border-bottom: none !important;
   }
   
   // 数据单元格的鼠标样式（Excel 风格）
@@ -1542,6 +1692,7 @@ defineExpose({
 
 .column-header-cell {
   width: 100%;
+  min-width: 0;
   height: 100%;
   display: flex;
   align-items: center;
@@ -1550,6 +1701,7 @@ defineExpose({
   cursor: move;
   user-select: none;
   gap: 6px;
+  box-sizing: border-box;
   
   &.selected-column-name {
     color: rgb(16, 153, 104);
@@ -1579,7 +1731,22 @@ defineExpose({
   
   .column-name-text {
     flex: 1;
+    min-width: 0;
     text-align: center;
+    word-break: break-word;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    white-space: normal;
+    line-height: 1.4;
+  }
+  
+  &.fill-column-header {
+    cursor: default;
+    user-select: none;
+    
+    .drag-handle {
+      display: none;
+    }
   }
 }
 
@@ -1603,6 +1770,17 @@ defineExpose({
   &:focus {
     outline: none !important;
     border: none !important;
+  }
+  
+  &.non-editable-cell {
+    cursor: default !important;
+    background-color: #f5f7fa;
+    color: #909399;
+  }
+  
+  &.fill-column-cell {
+    cursor: default !important;
+    background-color: #fafafa;
   }
 }
 
@@ -1649,41 +1827,59 @@ defineExpose({
 
 // ==================== 汇总行样式 ====================
 .sum-row-wrapper {
-  border: 1px solid #ebeef5;
+  border-left: 1px solid #ebeef5;
+  border-right: 1px solid #ebeef5;
   border-top: none;
+  border-bottom: 1px solid #ebeef5;
   background-color: #fff;
   
   .sum-row-table {
-    width: 100%;
+    width: auto;
+    table-layout: fixed;
     border-collapse: collapse;
     
     .sum-row {
       background-color: #fafafa;
-      font-weight: 600;
+      font-size: 14px;
       
       td {
         padding: 8px !important;
         text-align: center;
-        border-top: 2px solid #e8e8e8;
-        border-bottom: 1px solid #ebeef5;
+        border-top: none;
+        border-bottom: none;
         border-right: 1px solid #ebeef5;
+        font-size: 14px;
       }
       
       .sum-row-name-cell {
-        border-right: 2px solid #e8e8e8;
-        width: 150px;
-        min-width: 150px;
+        border-right: 1px solid #ebeef5;
+        text-align: center;
+        box-sizing: border-box;
+        // 宽度通过内联样式设置，使用配置的nameColumnWidth
+        // table-layout: fixed 确保列宽严格按照设置的值
+        // 边框与表头一致：右边border为1px
       }
       
       .sum-row-cell {
-        width: 120px;
-        min-width: 120px;
+        box-sizing: border-box;
+        // 宽度通过内联样式设置，使用配置的dataColumnWidth
+        // table-layout: fixed 确保列宽严格按照设置的值
       }
       
       .sum-row-sum-cell {
-        border-left: 2px solid #e8e8e8;
-        width: 120px;
-        min-width: 120px;
+        border-left: 0;
+        box-sizing: border-box;
+        // 宽度通过内联样式设置，使用配置的sumColumnWidth
+        // table-layout: fixed 确保列宽严格按照设置的值
+        // 边框与表头一致：左右border都是0（右边border由td的通用样式设置为1px）
+      }
+      
+      .fill-column-cell {
+        background-color: #fafafa;
+        box-sizing: border-box;
+        padding: 0 !important; // 填充列不需要padding，允许宽度缩小到0
+        // 宽度通过内联样式设置，使用配置的fillColumnWidth
+        // table-layout: fixed 确保列宽严格按照设置的值
       }
     }
   }
@@ -1706,8 +1902,8 @@ defineExpose({
   align-items: center;
   justify-content: center;
   padding: 4px 8px;
-  font-weight: 600;
   text-align: center;
+  font-size: 14px;
 }
 </style>
 
@@ -1717,6 +1913,13 @@ defineExpose({
   // 强制覆盖 Element Plus .cell 的 padding
   .el-table__header .el-table__cell .cell {
     padding: 0 !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    height: auto !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
   }
   
   .el-table__body .el-table__cell .cell {

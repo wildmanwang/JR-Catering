@@ -11,6 +11,8 @@ import { ContentWrap } from '@/components/ContentWrap'
 import ImportGrid, { type ImportGridColumn, type SaveConfig, type ToolbarButton } from '@/wintemplate/importGrid/ImportGrid.vue'
 import { addDishGroupApi, putDishGroupApi, getDishGroupApi } from '@/api/vadmin/product/dishGroup'
 import { getDishGroupTypeListApi } from '@/api/vadmin/product/dishGroupType'
+import { getBranchListApi } from '@/api/vadmin/system/branch'
+import { getDishGroupStypeOptionsApi } from '@/api/vadmin/product/dishGroup'
 
 defineOptions({
   name: 'DishGroupImport'
@@ -75,7 +77,20 @@ const columns = computed<ImportGridColumn[]>(() => [
     field: 'stype',
     label: '类型',
     width: '160px',
-    type: 'text',
+    type: 'select',
+    optionsApi: () => getDishGroupStypeOptionsApi(),
+    optionsIdField: 'value',
+    optionsLabelFormat: [['field', 'label']],
+    show: true
+  },
+  {
+    field: 'branch_id',
+    label: '门店',
+    width: '160px',
+    type: 'select',
+    optionsApi: () => getBranchListApi({ is_active: true }),
+    optionsIdField: 'id',
+    optionsLabelFormat: [['field', 'name_unique']],
     show: true
   },
   {

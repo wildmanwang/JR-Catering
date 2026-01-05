@@ -321,8 +321,9 @@ async def get_dish_branch(data_id: int, db: AsyncSession = Depends(db_getter)):
 ###########################################################
 @app.get("/dishgroupstypeoptions")
 async def get_options_dishgroupstype():
-    datas = [{"label": "可选", "value": 0},
-        {"label": "必选", "value": 2}]
+    datas = [{"label": "固定", "value": 2},
+        {"label": "必选", "value": 1},
+        {"label": "可选", "value": 0}]
     return SuccessResponse(datas)
 
 @app.get("/dishgrouptype", summary="获取菜品分组类型列表", tags=["菜品分组类型"])

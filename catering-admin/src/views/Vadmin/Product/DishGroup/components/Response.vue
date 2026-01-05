@@ -2,6 +2,7 @@
   import { reactive } from 'vue'
   import { useValidator } from '@/hooks/web/useValidator'
   import type { FreeFormField } from '@/wintemplate/baseFree'
+  import { getDishGroupStypeOptionsApi } from '@/api/vadmin/product/dishGroup'
   import { getDishGroupTypeListApi } from '@/api/vadmin/product/dishGroupType'
   import { getBranchListApi } from '@/api/vadmin/system/branch'
   
@@ -62,18 +63,9 @@
         span: 12
       },
       component: 'Select',
-      componentProps: {
-        options: [
-          {
-            label: '可选',
-            value: 0
-          },
-          {
-            label: '必选',
-            value: 2
-          }
-        ]
-      }
+      optionsApi: () => getDishGroupStypeOptionsApi(),
+      optionsIdField: 'value',
+      optionsLabelFormat: [['field', 'label']]
     },
     {
       field: 'branch_id',
