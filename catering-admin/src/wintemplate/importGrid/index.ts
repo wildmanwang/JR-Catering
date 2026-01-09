@@ -1,5 +1,9 @@
-import ImportGrid from './ImportGrid.vue'
+import ImportGrid from './src/ImportGrid.vue'
 
 export { ImportGrid }
-export type { ImportGridColumn, ActionColumnConfig } from './ImportGrid.vue'
-
+export type {
+  ImportGridColumn,
+  ImportGridProps,
+  ToolbarButton,
+  SaveConfig
+} from './src/ImportGrid.vue'

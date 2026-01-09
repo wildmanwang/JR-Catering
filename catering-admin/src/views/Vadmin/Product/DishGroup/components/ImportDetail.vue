@@ -7,7 +7,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { ContentWrap } from '@/components/ContentWrap'
-import ImportCross from '@/wintemplate/importCross/ImportCross.vue'
+import { ImportCross } from '@/wintemplate/importCross'
 import type { TableCrossDataConfigs } from '@/components/TableCross/src/TableCross.vue'
 
 defineOptions({

@@ -8,7 +8,7 @@
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ContentWrap } from '@/components/ContentWrap'
-import ImportGrid, { type ImportGridColumn, type SaveConfig, type ToolbarButton } from '@/wintemplate/importGrid/ImportGrid.vue'
+import { ImportGrid, type ImportGridColumn, type SaveConfig, type ToolbarButton } from '@/wintemplate/importGrid'
 import { addDishGroupApi, putDishGroupApi, getDishGroupApi } from '@/api/vadmin/product/dishGroup'
 import { getDishGroupTypeListApi } from '@/api/vadmin/product/dishGroupType'
 import { getBranchListApi } from '@/api/vadmin/system/branch'
