@@ -40,6 +40,25 @@ export interface TableCrossColumn {
 }
 
 /**
+ * 数据配置项接口
+ */
+export interface TableCrossDataConfig {
+  /** 配置标签（显示在单选按钮上） */
+  label: string
+  /** 数据类型：'int' | 'decimal(12,2)' | 'string' 等 */
+  type: string
+  /** 显示格式：用于格式化显示值 */
+  format?: string
+  /** 是否为主配置（只有第一个元素有效）：当为true时，如果第一套数据配置了值，其他数据才可以配置 */
+  primary?: boolean
+}
+
+/**
+ * 数据配置数组类型
+ */
+export type TableCrossDataConfigs = TableCrossDataConfig[]
+
+/**
  * Props 接口
  */
 export interface TableCrossProps {
@@ -57,6 +76,10 @@ export interface TableCrossProps {
   dataColumnWidth?: number
   /** 汇总列宽度 */
   sumColumnWidth?: number
+  /** 数据配置数组（支持多套数据配置） */
+  dataConfigs?: TableCrossDataConfigs
+  /** 当前选中的数据配置索引（从0开始） */
+  currentDataConfigIndex?: number
 }
 
 /**
@@ -67,7 +90,8 @@ export interface TableCrossEmits {
   (e: 'update:columns', value: TableCrossColumn[]): void
   (e: 'update:currentRowIndex', value: number | null): void
   (e: 'update:currentColumnIndex', value: number | null): void
-  (e: 'cell-update', rowIndex: number, columnIndex: number, value: number | null): void
+  (e: 'update:currentDataConfigIndex', value: number): void
+  (e: 'cell-update', rowIndex: number, columnIndex: number, value: number | null, dataConfigIndex?: number): void
   (e: 'row-add', payload: { row: TableCrossRow; insertIndex?: number }): void
   (e: 'column-add', payload: { column: TableCrossColumn; insertIndex?: number }): void
   (e: 'row-select', rowIndex: number): void
@@ -81,7 +105,9 @@ const props = withDefaults(defineProps<TableCrossProps>(), {
   currentColumnIndex: null,
   nameColumnWidth: 200,
   dataColumnWidth: 160,
-  sumColumnWidth: 120
+  sumColumnWidth: 120,
+  dataConfigs: () => [],
+  currentDataConfigIndex: 0
 })
 
 const emit = defineEmits<TableCrossEmits>()
@@ -349,15 +375,143 @@ const delayExecute = (callback: () => void, delay: number = 10) => {
 }
 
 /**
- * 获取单元格的值
+ * 验证数据类型
  */
-const getCellValue = (rowIndex: number, columnIndex: number): number | null => {
+const validateDataType = (value: any, type: string): boolean => {
+  if (value === null || value === undefined || value === '') {
+    return true // 空值允许
+  }
+  
+  // 解析类型字符串，例如 'decimal(12,2)' -> { type: 'decimal', precision: 12, scale: 2 }
+  const typeMatch = type.match(/^(\w+)(?:\((\d+)(?:,(\d+))?\))?$/)
+  if (!typeMatch) return false
+  
+  const baseType = typeMatch[1].toLowerCase()
+  const numValue = Number(value)
+  
+  switch (baseType) {
+    case 'int':
+    case 'integer':
+      return Number.isInteger(numValue) && !isNaN(numValue)
+    case 'decimal':
+    case 'float':
+    case 'double':
+    case 'numeric':
+      return !isNaN(numValue) && isFinite(numValue)
+    case 'string':
+    case 'text':
+      return true // 字符串类型接受任何值
+    default:
+      return !isNaN(numValue) && isFinite(numValue) // 默认按数字处理
+  }
+}
+
+/**
+ * 格式化显示值
+ */
+const formatValue = (value: any, format?: string): string => {
+  if (value === null || value === undefined || value === '') {
+    return ''
+  }
+  
+  if (!format) {
+    return String(value)
+  }
+  
+  const numValue = Number(value)
+  if (isNaN(numValue)) {
+    return String(value)
+  }
+  
+  // 处理常见的格式
+  switch (format.toLowerCase()) {
+    case 'decimal':
+    case 'decimal(12,2)':
+      return numValue.toFixed(2)
+    case 'decimal(10,2)':
+      return numValue.toFixed(2)
+    case 'int':
+    case 'integer':
+      return Math.floor(numValue).toString()
+    default:
+      // 可以扩展更多格式，如日期、时间等
+      return String(value)
+  }
+}
+
+/**
+ * 获取单元格的多套数据存储key
+ */
+const getCellDataKey = (columnId: string | number, dataConfigIndex: number): string => {
+  return `__data_${dataConfigIndex}_${columnId}`
+}
+
+/**
+ * 检查单元格是否可编辑（考虑primary依赖）
+ */
+const isCellEditable = (rowIndex: number, columnIndex: number, dataConfigIndex: number): boolean => {
+  // 第一行和第一列不可编辑
+  if (rowIndex === 0 || columnIndex === 0) {
+    return false
+  }
+  
+  // 如果没有数据配置，使用默认逻辑
+  if (!props.dataConfigs || props.dataConfigs.length === 0) {
+    return true
+  }
+  
+  // 如果是第一套数据（索引0），总是可编辑
+  if (dataConfigIndex === 0) {
+    return true
+  }
+  
+  // 检查第一套数据是否配置了primary
+  const firstConfig = props.dataConfigs[0]
+  if (!firstConfig || !firstConfig.primary) {
+    // primary为false或未设置，多套数据独立
+    return true
+  }
+  
+  // primary为true，需要检查第一套数据是否有值
+  const row = props.rows[rowIndex]
+  const column = props.columns[columnIndex]
+  if (!row || !column) {
+    return false
+  }
+  
+  // 获取第一套数据的值
+  const firstDataKey = getCellDataKey(column.id, 0)
+  const firstValue = row[firstDataKey]
+  
+  // 如果第一套数据有值，其他数据才可以编辑
+  return firstValue !== null && firstValue !== undefined && firstValue !== ''
+}
+
+/**
+ * 获取单元格的值（支持多套数据）
+ */
+const getCellValue = (rowIndex: number, columnIndex: number, dataConfigIndex?: number): number | null => {
   if (rowIndex < 0 || rowIndex >= props.rows.length) return null
   if (columnIndex < 0 || columnIndex >= props.columns.length) return null
   
   const row = props.rows[rowIndex]
   const column = props.columns[columnIndex]
-  const value = row[column.id]
+  
+  // 如果有多套数据配置，使用对应的数据key
+  const configIndex = dataConfigIndex ?? props.currentDataConfigIndex ?? 0
+  let value: any
+  
+  if (props.dataConfigs && props.dataConfigs.length > 0) {
+    const dataKey = getCellDataKey(column.id, configIndex)
+    value = row[dataKey]
+    // 如果多套数据中没有找到，尝试使用旧的格式（向后兼容）
+    if (value === undefined) {
+      value = row[column.id]
+    }
+  } else {
+    // 没有数据配置，使用旧的格式
+    value = row[column.id]
+  }
   
   if (value === null || value === undefined || value === '') {
     return null
@@ -368,41 +522,77 @@ const getCellValue = (rowIndex: number, columnIndex: number): number | null => {
 }
 
 /**
+ * 获取单元格的格式化显示值
+ */
+const getCellDisplayValue = (rowIndex: number, columnIndex: number, dataConfigIndex?: number): string => {
+  const value = getCellValue(rowIndex, columnIndex, dataConfigIndex)
+  if (value === null) return ''
+  
+  const configIndex = dataConfigIndex ?? props.currentDataConfigIndex ?? 0
+  const config = props.dataConfigs?.[configIndex]
+  const format = config?.format
+  
+  return formatValue(value, format)
+}
+
+/**
  * 获取单元格的值（用于输入框，返回 number | undefined）
  */
-const getCellValueForInput = (rowIndex: number, columnIndex: number): number | undefined => {
-  const value = getCellValue(rowIndex, columnIndex)
+const getCellValueForInput = (rowIndex: number, columnIndex: number, dataConfigIndex?: number): number | undefined => {
+  const value = getCellValue(rowIndex, columnIndex, dataConfigIndex)
   return value === null ? undefined : value
 }
 
 /**
- * 更新单元格的值
+ * 更新单元格的值（支持多套数据）
  */
-const updateCellValue = (rowIndex: number, columnIndex: number, value: number | null) => {
+const updateCellValue = (rowIndex: number, columnIndex: number, value: number | null, dataConfigIndex?: number) => {
   if (rowIndex < 0 || rowIndex >= props.rows.length) return
   if (columnIndex < 0 || columnIndex >= props.columns.length) return
   
+  const configIndex = dataConfigIndex ?? props.currentDataConfigIndex ?? 0
+  const config = props.dataConfigs?.[configIndex]
+  
+  // 验证数据类型
+  if (value !== null && config?.type) {
+    if (!validateDataType(value, config.type)) {
+      return // 数据类型不匹配，不更新
+    }
+  }
+  
+  const column = props.columns[columnIndex]
   const newRows = props.rows.map((row, idx) => {
     if (idx === rowIndex) {
-      const column = props.columns[columnIndex]
-      return { ...row, [column.id]: value }
+      const updatedRow = { ...row }
+      
+      // 如果有多套数据配置，使用对应的数据key
+      if (props.dataConfigs && props.dataConfigs.length > 0) {
+        const dataKey = getCellDataKey(column.id, configIndex)
+        updatedRow[dataKey] = value
+      } else {
+        // 没有数据配置，使用旧的格式（向后兼容）
+        updatedRow[column.id] = value
+      }
+      
+      return updatedRow
     }
     return row
   })
   
   emit('update:rows', newRows)
-  emit('cell-update', rowIndex, columnIndex, value)
+  emit('cell-update', rowIndex, columnIndex, value, configIndex)
 }
 
 /**
- * 计算汇总行的值（对列的数据汇总）
+ * 计算汇总行的值（对列的数据汇总，支持多套数据）
  */
 const getRowSum = (rowIndex: number): number => {
   if (rowIndex < 0 || rowIndex >= props.rows.length) return 0
   
+  const configIndex = props.currentDataConfigIndex ?? 0
   let sum = 0
   props.columns.forEach((_column, colIdx) => {
-    const value = getCellValue(rowIndex, colIdx)
+    const value = getCellValue(rowIndex, colIdx, configIndex)
     if (value !== null && value > 0) {
       sum += value
     }
@@ -411,14 +601,15 @@ const getRowSum = (rowIndex: number): number => {
 }
 
 /**
- * 计算汇总列的值（对行的数据汇总）
+ * 计算汇总列的值（对行的数据汇总，支持多套数据）
  */
 const getColumnSum = (columnIndex: number): number => {
   if (columnIndex < 0 || columnIndex >= props.columns.length) return 0
   
+  const configIndex = props.currentDataConfigIndex ?? 0
   let sum = 0
   props.rows.forEach((_row, rowIdx) => {
-    const value = getCellValue(rowIdx, columnIndex)
+    const value = getCellValue(rowIdx, columnIndex, configIndex)
     if (value !== null && value > 0) {
       sum += value
     }
@@ -442,6 +633,12 @@ watch(
 
 // 为了在模板中使用，需要暴露columns
 const columns = computed(() => props.columns)
+
+// 当前数据配置索引（用于模板）
+const currentDataConfigIndex = computed(() => props.currentDataConfigIndex ?? 0)
+
+// 数据配置（用于模板）
+const dataConfigs = computed(() => props.dataConfigs ?? [])
 
 // ==================== 填充列计算 ====================
 /** 表格容器宽度 */
@@ -907,12 +1104,20 @@ const navigateToCell = (
 
 // ==================== 单元格值更新 ====================
 const handleInputUpdate = (rowIndex: number, columnIndex: number, value: number | null) => {
-  // 校验值必须大于0
-  if (value !== null && value <= 0) {
+  // 检查是否可编辑（考虑primary依赖）
+  const configIndex = props.currentDataConfigIndex ?? 0
+  if (!isCellEditable(rowIndex, columnIndex, configIndex)) {
     return
   }
   
-  updateCellValue(rowIndex, columnIndex, value)
+  // 校验值必须大于0（如果没有数据配置，使用默认校验）
+  if (!props.dataConfigs || props.dataConfigs.length === 0) {
+    if (value !== null && value <= 0) {
+      return
+    }
+  }
+  
+  updateCellValue(rowIndex, columnIndex, value, configIndex)
 }
 
 const handleInputFocus = (rowIndex: number, columnIndex: number) => {
@@ -1436,18 +1641,18 @@ defineExpose({
         <span 
           v-if="scope.$index === 0 || colIdx === 0"
           class="table-cross-cell non-editable-cell"
-        >{{ getCellValue(scope.$index, colIdx) || '' }}</span>
+        >{{ getCellDisplayValue(scope.$index, colIdx) }}</span>
         
         <!-- 编辑模式：数字输入框 -->
         <ElInputNumber
-          v-else-if="isEditing(scope.$index, colIdx)"
+          v-else-if="isEditing(scope.$index, colIdx) && isCellEditable(scope.$index, colIdx, currentDataConfigIndex)"
           :key="`input-number-${scope.$index}-${colIdx}`"
           :ref="(el: any) => setInputRef(scope.$index, colIdx, el)"
           :model-value="getCellValueForInput(scope.$index, colIdx)"
           size="small"
           :controls="false"
           :min="1"
-          :precision="0"
+          :precision="dataConfigs[currentDataConfigIndex]?.type?.includes('decimal') ? 2 : 0"
           class="excel-edit-input-number"
           @update:model-value="(val?: number) => handleInputUpdate(scope.$index, colIdx, val ?? null)"
           @focus="handleInputFocus(scope.$index, colIdx)"
@@ -1460,11 +1665,12 @@ defineExpose({
           class="table-cross-cell"
           :class="{ 
             'selected-cell': currentRowIndex === scope.$index && currentColumnIndex === colIdx,
-            'editing-cell': isEditing(scope.$index, colIdx)
+            'editing-cell': isEditing(scope.$index, colIdx),
+            'non-editable-cell': !isCellEditable(scope.$index, colIdx, currentDataConfigIndex)
           }"
           @keydown="handleCellKeydown($event, scope.row, { property: column.id })"
           tabindex="0"
-        >{{ getCellValue(scope.$index, colIdx) || '' }}</span>
+        >{{ getCellDisplayValue(scope.$index, colIdx) }}</span>
       </template>
     </ElTableColumn>
     

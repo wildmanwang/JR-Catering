@@ -5,8 +5,10 @@
   从ImportBase窗口自动传递数据，打开交叉数据配置窗口
 -->
 <script setup lang="ts">
+import { ref } from 'vue'
 import { ContentWrap } from '@/components/ContentWrap'
 import ImportCross from '@/wintemplate/importCross/ImportCross.vue'
+import type { TableCrossDataConfigs } from '@/components/TableCross/src/TableCross.vue'
 
 defineOptions({
   name: 'DishGroupImportDetail'
@@ -17,6 +19,13 @@ defineOptions({
 const IMPORT_BASE_STORAGE_KEY = 'IMPORT_DishGroup_PAYLOAD'
 // ImportCross窗口的storage key（用于保存交叉数据）
 const IMPORT_CROSS_STORAGE_KEY = 'IMPORT_CROSS_PAYLOAD'
+
+// ==================== 数据配置 ====================
+/** 数据配置数组 */
+const dataConfigs = ref<TableCrossDataConfigs>([
+  { label: '配置菜品', type: 'int', format: '', primary: true },
+  { label: '配置加价', type: 'decimal(12,2)', format: 'decimal(12,2)' }
+])
 
 // ==================== 事件处理 ====================
 /**
@@ -48,6 +57,7 @@ const handleSave = (data: any) => {
       :name-column-width="200"
       :data-column-width="160"
       :sum-column-width="120"
+      :data-configs="dataConfigs"
       @data-changed="handleDataChanged"
       @save="handleSave"
     />

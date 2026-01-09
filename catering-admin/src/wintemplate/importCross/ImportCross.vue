@@ -6,7 +6,7 @@
 -->
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
-import TableCross, { type TableCrossRow, type TableCrossColumn } from '@/components/TableCross/src/TableCross.vue'
+import TableCross, { type TableCrossRow, type TableCrossColumn, type TableCrossDataConfigs } from '@/components/TableCross/src/TableCross.vue'
 import { ButtonPlus } from '@/components/ButtonPlus'
 import { PrompInfo } from '@/components/PrompInfo'
 import { ElSelect, ElOption, ElRadioGroup, ElRadioButton } from 'element-plus'
@@ -32,6 +32,8 @@ export interface ImportCrossProps {
   dataColumnWidth?: number
   /** 汇总列宽度 */
   sumColumnWidth?: number
+  /** 数据配置数组（支持多套数据配置） */
+  dataConfigs?: TableCrossDataConfigs
 }
 
 const props = withDefaults(defineProps<ImportCrossProps>(), {
@@ -42,7 +44,8 @@ const props = withDefaults(defineProps<ImportCrossProps>(), {
   windowId: 'ImportCross',
   nameColumnWidth: 200,
   dataColumnWidth: 160,
-  sumColumnWidth: 120
+  sumColumnWidth: 120,
+  dataConfigs: () => []
 })
 
 const emit = defineEmits<{
@@ -57,8 +60,11 @@ const branchId = ref<number | null>(null)
 /** 门店选项列表 */
 const branchOptions = ref<any[]>([])
 
-/** 数据切换类型：'use_dish' | 'price_add' */
+/** 数据切换类型：'use_dish' | 'price_add'（向后兼容，当没有数据配置时使用） */
 const dataType = ref<'use_dish' | 'price_add'>('use_dish')
+
+/** 当前选中的数据配置索引（从0开始） */
+const currentDataConfigIndex = ref<number>(0)
 
 /** Dish记录列表 */
 const dishList = ref<any[]>([])
@@ -79,6 +85,12 @@ const crossData = ref<{
 const prompInfoRef = ref<InstanceType<typeof PrompInfo>>()
 const tableCrossRef = ref<InstanceType<typeof TableCross>>()
 
+// 为了在模板中使用
+const dataConfigs = computed(() => props.dataConfigs ?? [])
+const nameColumnWidth = computed(() => props.nameColumnWidth)
+const dataColumnWidth = computed(() => props.dataColumnWidth)
+const sumColumnWidth = computed(() => props.sumColumnWidth)
+
 // ==================== 计算属性 ====================
 /** TableCross的行数据（Dish） */
 const tableRows = computed<TableCrossRow[]>(() => {
@@ -88,10 +100,22 @@ const tableRows = computed<TableCrossRow[]>(() => {
       name: dish.name_unique || ''
     }
     
-    // 为每个DishGroup列添加当前数据类型的值
+    // 为每个DishGroup列添加所有数据配置的值
     dishGroupList.value.forEach(group => {
-      const value = crossData.value[dataType.value]?.[String(dish.id)]?.[String(group.id)] ?? null
-      row[String(group.id)] = value
+      // 如果有数据配置，使用多套数据存储
+      if (props.dataConfigs && props.dataConfigs.length > 0) {
+        props.dataConfigs.forEach((config, configIndex) => {
+          const dataKey = `__data_${configIndex}_${group.id}`
+          // 从 crossData 中获取值（保持向后兼容）
+          const oldValue = crossData.value[dataType.value]?.[String(dish.id)]?.[String(group.id)]
+          // 优先使用新格式，如果没有则使用旧格式
+          row[dataKey] = oldValue ?? null
+        })
+      } else {
+        // 没有数据配置，使用旧的格式（向后兼容）
+        const value = crossData.value[dataType.value]?.[String(dish.id)]?.[String(group.id)] ?? null
+        row[String(group.id)] = value
+      }
     })
     
     return row
@@ -243,7 +267,7 @@ const saveDataToStorage = () => {
 /**
  * 处理单元格更新
  */
-const handleCellUpdate = (rowIndex: number, columnIndex: number, value: number | null) => {
+const handleCellUpdate = (rowIndex: number, columnIndex: number, value: number | null, dataConfigIndex?: number) => {
   const row = tableRows.value[rowIndex]
   const column = tableColumns.value[columnIndex]
   
@@ -251,14 +275,24 @@ const handleCellUpdate = (rowIndex: number, columnIndex: number, value: number |
   
   const dishId = String(row.id)
   const dishGroupId = String(column.id)
+  const configIndex = dataConfigIndex ?? currentDataConfigIndex.value
   
-  // 初始化数据结构
-  if (!crossData.value[dataType.value][dishId]) {
-    crossData.value[dataType.value][dishId] = {}
+  // 如果有数据配置，使用多套数据存储
+  if (props.dataConfigs && props.dataConfigs.length > 0) {
+    // 初始化数据结构（保持向后兼容）
+    if (!crossData.value[dataType.value][dishId]) {
+      crossData.value[dataType.value][dishId] = {}
+    }
+    
+    // 更新值（保持向后兼容）
+    crossData.value[dataType.value][dishId][dishGroupId] = value
+  } else {
+    // 没有数据配置，使用旧的格式
+    if (!crossData.value[dataType.value][dishId]) {
+      crossData.value[dataType.value][dishId] = {}
+    }
+    crossData.value[dataType.value][dishId][dishGroupId] = value
   }
-  
-  // 更新值
-  crossData.value[dataType.value][dishId][dishGroupId] = value
   
   // 保存到storage
   saveDataToStorage()
@@ -268,6 +302,7 @@ const handleCellUpdate = (rowIndex: number, columnIndex: number, value: number |
     dishId: row.id,
     dishGroupId: column.id,
     dataType: dataType.value,
+    dataConfigIndex: configIndex,
     value
   })
 }
@@ -359,6 +394,20 @@ watch(dataType, () => {
   }
 })
 
+/** 监听数据配置索引切换 */
+watch(currentDataConfigIndex, (newIndex) => {
+  if (prompInfoRef.value && props.dataConfigs && props.dataConfigs[newIndex]) {
+    prompInfoRef.value.info(`已切换到${props.dataConfigs[newIndex].label}`)
+  }
+})
+
+/** 初始化：如果有数据配置，默认选中第一个 */
+watch(() => props.dataConfigs, (configs) => {
+  if (configs && configs.length > 0 && currentDataConfigIndex.value >= configs.length) {
+    currentDataConfigIndex.value = 0
+  }
+}, { immediate: true })
+
 // ==================== 监听源窗口数据变化 ====================
 /**
  * 使用 StorageEvent 监听 sessionStorage 变化（跨标签页）
@@ -432,10 +481,18 @@ onBeforeUnmount(() => {
           />
         </ElSelect>
         
-        <!-- 数据切换组件 -->
-        <ElRadioGroup v-model="dataType" class="data-type-switch">
-          <ElRadioButton label="use_dish">配置菜品</ElRadioButton>
-          <ElRadioButton label="price_add">配置加价</ElRadioButton>
+        <!-- 数据切换组件：只有当数据配置数组存在且长度 > 1 时才显示 -->
+        <ElRadioGroup 
+          v-if="dataConfigs && dataConfigs.length > 1"
+          :model-value="currentDataConfigIndex"
+          @update:model-value="(val: number) => { currentDataConfigIndex = val }"
+          class="data-type-switch"
+        >
+          <ElRadioButton
+            v-for="(config, index) in dataConfigs"
+            :key="index"
+            :label="index"
+          >{{ config.label }}</ElRadioButton>
         </ElRadioGroup>
       </div>
       
@@ -470,9 +527,12 @@ onBeforeUnmount(() => {
         :name-column-width="nameColumnWidth"
         :data-column-width="dataColumnWidth"
         :sum-column-width="sumColumnWidth"
+        :data-configs="dataConfigs"
+        :current-data-config-index="currentDataConfigIndex"
         @update:rows="handleRowsUpdate"
         @update:columns="handleColumnsUpdate"
         @cell-update="handleCellUpdate"
+        @update:current-data-config-index="(val: number) => { currentDataConfigIndex = val }"
       />
     </div>
   </div>
