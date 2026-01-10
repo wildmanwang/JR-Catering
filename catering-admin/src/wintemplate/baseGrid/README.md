@@ -25,7 +25,7 @@ BaseGrid 是一个通用的数据浏览表格模板，支持数据列类型、�
 ```vue
 <script setup lang="tsx">
 import { ref } from 'vue'
-import { BaseGrid } from '@/wintemplate/baseGrid'
+import { BaseGrid } from '@/wintemplate/BaseGrid'
 import { getDishListApi, delDishListApi } from '@/api/vadmin/product/dish'
 import { BaseButton } from '@/components/Button'
 

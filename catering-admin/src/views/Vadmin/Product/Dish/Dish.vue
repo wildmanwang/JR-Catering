@@ -1,6 +1,6 @@
 <script setup lang="tsx">
   import { ref } from 'vue'
-  import { BaseGrid } from '@/wintemplate/baseGrid'
+  import { BaseGrid } from '@/wintemplate/BaseGrid'
   import { getDishListApi, delDishListApi, getDishStatusOptionsApi, addDishListApi, putDishListApi } from '@/api/vadmin/product/dish'
   import { getKitchenListApi } from '@/api/vadmin/product/kitchen'
   import { ContentWrap } from '@/components/ContentWrap'

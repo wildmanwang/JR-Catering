@@ -1,8 +1,11 @@
 <!--
   ImportCross - 交叉数据导入模板
   
-  功能：处理Dish和DishGroup的交叉数据配置
-  支持多套配置值切换（使用菜品、配置加价）
+  功能：
+  - 处理行数据和列数据的交叉数据配置
+  - 支持多套配置值切换
+  - 根据配置自动显示选择按钮
+  - 支持从源窗口自动读取数据
 -->
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
@@ -13,6 +16,29 @@ import { ElSelect, ElOption, ElRadioGroup, ElRadioButton } from 'element-plus'
 import { getBranchListApi } from '@/api/vadmin/system/branch'
 
 /**
+ * 行数据配置
+ */
+export interface RowDataConfig {
+  /** 数据名称，例如：菜品 */
+  name: string
+  /** 是否支持新增行 */
+  allowAdd: boolean
+}
+
+/**
+ * 列数据配置
+ */
+export interface ColDataConfig {
+  /** 数据名称，例如：菜品分组 */
+  name: string
+  /** 是否支持新增列 */
+  allowAdd: boolean
+}
+
+/**
+ * 组件 Props 接口
+ */
+/**
  * 组件 Props 接口
  */
 export interface ImportCrossProps {
@@ -20,10 +46,14 @@ export interface ImportCrossProps {
   storageKey?: string
   /** 源数据存储的 sessionStorage key（用于从上一个窗口自动读取数据，如 ImportBase） */
   sourceStorageKey?: string
-  /** Dish记录数组 */
+  /** @deprecated 使用 rowDatas 代替 */
   dishes?: any[]
-  /** DishGroup记录数组 */
+  /** @deprecated 使用 colDatas 代替 */
   dishGroups?: any[]
+  /** 行数据配置 */
+  rowDataConfig?: RowDataConfig
+  /** 列数据配置 */
+  colDataConfig?: ColDataConfig
   /** 窗口标识 */
   windowId?: string
   /** 名称列宽度（第一列） */
@@ -34,6 +64,8 @@ export interface ImportCrossProps {
   sumColumnWidth?: number
   /** 数据配置数组（支持多套数据配置） */
   dataConfigs?: TableCrossDataConfigs
+  /** 保存处理函数 */
+  onSave?: (data: any) => Promise<void> | void
 }
 
 const props = withDefaults(defineProps<ImportCrossProps>(), {
@@ -41,6 +73,8 @@ const props = withDefaults(defineProps<ImportCrossProps>(), {
   sourceStorageKey: '',
   dishes: () => [],
   dishGroups: () => [],
+  rowDataConfig: () => ({ name: '行数据', allowAdd: true }),
+  colDataConfig: () => ({ name: '列数据', allowAdd: true }),
   windowId: 'ImportCross',
   nameColumnWidth: 200,
   dataColumnWidth: 160,
@@ -51,6 +85,8 @@ const props = withDefaults(defineProps<ImportCrossProps>(), {
 const emit = defineEmits<{
   (e: 'dataChanged', data: any): void
   (e: 'save', data: any): void
+  (e: 'select-row-data'): void // 选择行数据事件
+  (e: 'select-col-data'): void // 选择列数据事件
 }>()
 
 // ==================== 状态管理 ====================
@@ -90,6 +126,8 @@ const dataConfigs = computed(() => props.dataConfigs ?? [])
 const nameColumnWidth = computed(() => props.nameColumnWidth)
 const dataColumnWidth = computed(() => props.dataColumnWidth)
 const sumColumnWidth = computed(() => props.sumColumnWidth)
+const rowDataConfig = computed(() => props.rowDataConfig)
+const colDataConfig = computed(() => props.colDataConfig)
 
 // ==================== 计算属性 ====================
 /** TableCross的行数据（Dish） */
@@ -199,7 +237,6 @@ const loadDataFromSource = () => {
       }
     }
   } catch (error) {
-    console.error('从源窗口加载数据失败:', error)
     if (prompInfoRef.value) {
       prompInfoRef.value.err('从上一个窗口加载数据失败')
     }
@@ -232,7 +269,7 @@ const loadDataFromStorage = () => {
       }
     }
   } catch (error) {
-    console.error('加载数据失败:', error)
+    // 加载数据失败，静默处理
   }
   
   // 如果props中有数据，优先使用props
@@ -259,7 +296,7 @@ const saveDataToStorage = () => {
     }
     sessionStorage.setItem(props.storageKey, JSON.stringify(data))
   } catch (error) {
-    console.error('保存数据失败:', error)
+    // 保存数据失败，静默处理
   }
 }
 
@@ -342,29 +379,78 @@ const handleColumnsUpdate = (columns: TableCrossColumn[]) => {
 }
 
 /**
- * 选择分组
+ * 新增行数据（菜品）
+ * @param records - 要添加的行数据记录列表
  */
-const handleSelectGroup = () => {
-  if (prompInfoRef.value) {
-    prompInfoRef.value.info('请选择分组')
+const addRowDatas = (records: any[]) => {
+  if (!records || records.length === 0) return
+  
+  // 过滤掉已存在的记录
+  const newRecords = records.filter(record => {
+    const recordId = record.id
+    return !dishList.value.some(item => item.id === recordId)
+  })
+  
+  if (newRecords.length > 0) {
+    dishList.value.push(...newRecords)
+    saveDataToStorage()
+    if (prompInfoRef.value) {
+      prompInfoRef.value.info(`已添加 ${newRecords.length} 条行数据`)
+    }
+  } else {
+    if (prompInfoRef.value) {
+      prompInfoRef.value.warn('所选记录已存在')
+    }
   }
-  // TODO: 实现选择分组的逻辑
 }
 
 /**
- * 选择菜品
+ * 新增列数据（分组）
+ * @param records - 要添加的列数据记录列表
+ */
+const addColDatas = (records: any[]) => {
+  if (!records || records.length === 0) return
+  
+  // 过滤掉已存在的记录
+  const newRecords = records.filter(record => {
+    const recordId = record.id
+    return !dishGroupList.value.some(item => item.id === recordId)
+  })
+  
+  if (newRecords.length > 0) {
+    dishGroupList.value.push(...newRecords)
+    saveDataToStorage()
+    if (prompInfoRef.value) {
+      prompInfoRef.value.info(`已添加 ${newRecords.length} 条列数据`)
+    }
+  } else {
+    if (prompInfoRef.value) {
+      prompInfoRef.value.warn('所选记录已存在')
+    }
+  }
+}
+
+/**
+ * 选择列数据（分组）
+ * 触发 select-col-data 事件，通知父组件打开列数据选择窗口
+ */
+const handleSelectGroup = () => {
+  emit('select-col-data')
+}
+
+/**
+ * 选择行数据（菜品）
+ * 触发 select-row-data 事件，通知父组件打开行数据选择窗口
  */
 const handleSelectDish = () => {
-  if (prompInfoRef.value) {
-    prompInfoRef.value.info('请选择菜品')
-  }
-  // TODO: 实现选择菜品的逻辑
+  emit('select-row-data')
 }
 
 /**
  * 保存数据
+ * 如果配置了 onSave 函数，则调用它；否则触发 save 事件
  */
-const handleSave = () => {
+const handleSave = async () => {
   if (prompInfoRef.value) {
     prompInfoRef.value.info('正在保存...')
   }
@@ -372,16 +458,32 @@ const handleSave = () => {
   // 保存到storage
   saveDataToStorage()
   
-  // 触发保存事件
-  emit('save', {
+  // 构建保存数据
+  const saveData = {
     branchId: branchId.value,
     dishes: dishList.value,
     dishGroups: dishGroupList.value,
     crossData: crossData.value
-  })
+  }
   
-  if (prompInfoRef.value) {
-    prompInfoRef.value.info('保存成功')
+  // 如果配置了保存处理函数，调用它
+  if (props.onSave) {
+    try {
+      await props.onSave(saveData)
+      if (prompInfoRef.value) {
+        prompInfoRef.value.info('保存成功')
+      }
+    } catch (error) {
+      if (prompInfoRef.value) {
+        prompInfoRef.value.err('保存失败')
+      }
+    }
+  } else {
+    // 触发保存事件
+    emit('save', saveData)
+    if (prompInfoRef.value) {
+      prompInfoRef.value.info('保存成功')
+    }
   }
 }
 
@@ -458,6 +560,21 @@ onBeforeUnmount(() => {
     window.removeEventListener('focus', handleWindowFocus)
   }
 })
+
+// ==================== 暴露方法 ====================
+defineExpose({
+  getData: () => ({
+    branchId: branchId.value,
+    dishes: dishList.value,
+    dishGroups: dishGroupList.value,
+    crossData: crossData.value
+  }),
+  saveDataToStorage,
+  addRowDatas,
+  addColDatas,
+  getRowDatas: () => [...dishList.value],
+  getColDatas: () => [...dishGroupList.value]
+})
 </script>
 
 <template>
@@ -503,14 +620,34 @@ onBeforeUnmount(() => {
       
       <!-- 右侧按钮组 -->
       <div class="toolbar-right">
-        <ButtonPlus
-          stype="select"
-          @click="handleSelectGroup"
-        >分组</ButtonPlus>
-        <ButtonPlus
-          stype="select"
-          @click="handleSelectDish"
-        >菜品</ButtonPlus>
+        <!-- 根据配置显示按钮 -->
+        <template v-if="rowDataConfig?.allowAdd">
+          <ButtonPlus
+            stype="select"
+            @click="handleSelectDish"
+          >
+            {{ rowDataConfig.name }}
+          </ButtonPlus>
+        </template>
+        <template v-if="colDataConfig?.allowAdd">
+          <ButtonPlus
+            stype="select"
+            @click="handleSelectGroup"
+          >
+            {{ colDataConfig.name }}
+          </ButtonPlus>
+        </template>
+        <!-- 如果没有配置，显示默认按钮（向后兼容） -->
+        <template v-if="!rowDataConfig && !colDataConfig">
+          <ButtonPlus
+            stype="select"
+            @click="handleSelectGroup"
+          >分组</ButtonPlus>
+          <ButtonPlus
+            stype="select"
+            @click="handleSelectDish"
+          >菜品</ButtonPlus>
+        </template>
         <ButtonPlus
           stype="save"
           @click="handleSave"

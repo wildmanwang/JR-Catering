@@ -73,7 +73,7 @@ const handleBeforeSubmit = async (formData: any) => {
 ```vue
 <!-- Test.vue -->
 <script setup lang="tsx">
-import { FreeFormField } from '@/wintemplate/baseFree'
+import { FreeFormField } from '@/wintemplate/BaseFree'
 
 const formSchema: FreeFormField[] = [
   {
@@ -152,7 +152,7 @@ const formSchema: FreeFormField[] = [
 </template>
 
 <script setup lang="tsx">
-import { FreeTab } from '@/wintemplate/baseFree'
+import { FreeTab } from '@/wintemplate/BaseFree'
 
 const tabs: FreeTab[] = [
   { label: '基础信息', name: 'basic' },
@@ -296,7 +296,7 @@ const handleCopy = () => {
 </template>
 
 <script setup lang="tsx">
-import { FreeFormField, FreeTab } from '@/wintemplate/baseFree'
+import { FreeFormField, FreeTab } from '@/wintemplate/BaseFree'
 
 // 字段配置（包含字段级别的自定义转换）
 const formSchema: FreeFormField[] = [

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { reactive } from 'vue'
   import { useValidator } from '@/hooks/web/useValidator'
-  import type { FreeFormField } from '@/wintemplate/baseFree'
+  import type { FreeFormField } from '@/wintemplate/BaseFree'
   import { getDishGroupStypeOptionsApi } from '@/api/vadmin/product/dishGroup'
   import { getDishGroupTypeListApi } from '@/api/vadmin/product/dishGroupType'
   import { getBranchListApi } from '@/api/vadmin/system/branch'

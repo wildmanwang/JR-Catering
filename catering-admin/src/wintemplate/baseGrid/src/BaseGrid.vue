@@ -10,7 +10,7 @@ import { PrompInfo } from '@/components/PrompInfo'
 import { QueryBar, type QueryCondition } from '@/components/QueryBar'
 import { StatusStoragePlus, type StatusStoreItem } from '@/components/StatusStoragePlus'
 import { ImageSingle } from '@/components/ImageSingle'
-import { BaseFree, type FreeFormField, type FreeTab } from '@/wintemplate/baseFree'
+import { BaseFree, type FreeFormField, type FreeTab } from '@/wintemplate/BaseFree'
 import { formatDataItem } from '@/utils/dsOptions'
 
 /**

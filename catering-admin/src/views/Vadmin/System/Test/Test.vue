@@ -21,6 +21,7 @@ import Response from './components/Response.vue'
 import { BaseButton } from '@/components/Button'
 import { useRouter } from 'vue-router'
 import { ImagePlus } from '@/components/ImagePlus'
+import { ResponseDrawer } from '@/wintemplate/ResponseDrawer'
 
 defineOptions({
   name: 'ProductDish'
@@ -66,6 +67,26 @@ let saveStateTimer: ReturnType<typeof setTimeout> | null = null
 
 // ImagePlus 组件实例（用于调用规范化方法）
 const imagePlusHelperRef = ref<InstanceType<typeof ImagePlus>>()
+
+// ==================== 测试抽屉弹窗 ====================
+/** 测试抽屉显示状态 */
+const testDrawerVisible = ref(false)
+/** 测试抽屉组件引用 */
+const testDrawerRef = ref<InstanceType<typeof ResponseDrawer>>()
+
+/**
+ * 打开测试抽屉
+ */
+const openTestDrawer = () => {
+  testDrawerVisible.value = true
+}
+
+/**
+ * 关闭测试抽屉
+ */
+const closeTestDrawer = () => {
+  testDrawerVisible.value = false
+}
 
 // ==================== 工具函数 ====================
 /**
@@ -884,6 +905,7 @@ fetchKitchens()
                 <ButtonPlus stype="new" @click="addAction" />
                 <ButtonPlus stype="batch" @click="configBase()">维护</ButtonPlus>
                 <ButtonPlus stype="batch" @click="delData(null)">删除</ButtonPlus>
+                <ButtonPlus stype="select" @click="openTestDrawer">测试抽屉弹窗</ButtonPlus>
               </ElCol>
             </ElRow>
           </template>
@@ -911,6 +933,21 @@ fetchKitchens()
   <div style="display: none">
     <ImagePlus ref="imagePlusHelperRef" :model-value="[]" />
   </div>
+
+  <!-- 测试抽屉弹窗 -->
+  <ResponseDrawer
+    ref="testDrawerRef"
+    v-model="testDrawerVisible"
+    title="测试抽屉弹窗"
+    @close="closeTestDrawer"
+    @cancel="closeTestDrawer"
+  >
+    <div style="padding: 20px">
+      <h2>这是测试抽屉弹窗的内容区</h2>
+      <p>您可以在内容区添加任何需要的内容。</p>
+      <p>工具栏左侧显示 PrompInfo 组件，右侧显示返回按钮和其他可配置的按钮。</p>
+    </div>
+  </ResponseDrawer>
 </template>
 
 <style scoped>

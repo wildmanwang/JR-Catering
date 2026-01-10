@@ -13,6 +13,33 @@ import { ElSelect, ElOption, ElRadioGroup, ElRadioButton } from 'element-plus'
 import { getBranchListApi } from '@/api/vadmin/system/branch'
 
 /**
+ * 行数据配置
+ */
+export interface RowDataConfig {
+  name: string // 数据名称，例如：菜品
+  allowAdd: boolean // 是否支持新增行
+}
+
+/**
+ * 列数据配置
+ */
+export interface ColDataConfig {
+  name: string // 数据名称，例如：菜品分组
+  allowAdd: boolean // 是否支持新增列
+}
+
+/**
+ * 按钮配置
+ */
+export interface ButtonConfig {
+  stype: string // 按钮类型
+  label?: string // 按钮文本（可选）
+  onClick?: () => void // 点击事件处理函数（可选）
+  show?: boolean // 是否显示，默认 true
+  buttonType?: 'row' | 'column' | 'custom' // 按钮类型标识：行数据、列数据、自定义
+}
+
+/**
  * 组件 Props 接口
  */
 export interface ImportCrossProps {
@@ -20,10 +47,20 @@ export interface ImportCrossProps {
   storageKey?: string
   /** 源数据存储的 sessionStorage key（用于从上一个窗口自动读取数据，如 ImportBase） */
   sourceStorageKey?: string
-  /** Dish记录数组 */
+  /** 行数据记录数组（原 dishes，改为通用名称） */
+  rowDatas?: any[]
+  /** 列数据记录数组（原 dishGroups，改为通用名称） */
+  colDatas?: any[]
+  /** @deprecated 使用 rowDatas 代替 */
   dishes?: any[]
-  /** DishGroup记录数组 */
+  /** @deprecated 使用 colDatas 代替 */
   dishGroups?: any[]
+  /** 行数据配置 */
+  rowDataConfig?: RowDataConfig
+  /** 列数据配置 */
+  colDataConfig?: ColDataConfig
+  /** 按钮配置数组 */
+  buttonConfigs?: ButtonConfig[]
   /** 窗口标识 */
   windowId?: string
   /** 名称列宽度（第一列） */
@@ -34,13 +71,18 @@ export interface ImportCrossProps {
   sumColumnWidth?: number
   /** 数据配置数组（支持多套数据配置） */
   dataConfigs?: TableCrossDataConfigs
+  /** 保存处理函数 */
+  onSave?: (data: any) => Promise<void> | void
 }
 
 const props = withDefaults(defineProps<ImportCrossProps>(), {
   storageKey: 'IMPORT_CROSS_PAYLOAD',
   sourceStorageKey: '',
-  dishes: () => [],
-  dishGroups: () => [],
+  rowDatas: () => [],
+  colDatas: () => [],
+  rowDataConfig: () => ({ name: '行数据', allowAdd: true }),
+  colDataConfig: () => ({ name: '列数据', allowAdd: true }),
+  buttonConfigs: () => [],
   windowId: 'ImportCross',
   nameColumnWidth: 200,
   dataColumnWidth: 160,
@@ -51,6 +93,8 @@ const props = withDefaults(defineProps<ImportCrossProps>(), {
 const emit = defineEmits<{
   (e: 'dataChanged', data: any): void
   (e: 'save', data: any): void
+  (e: 'select-row-data'): void // 选择行数据事件
+  (e: 'select-col-data'): void // 选择列数据事件
 }>()
 
 // ==================== 状态管理 ====================
@@ -66,11 +110,11 @@ const dataType = ref<'use_dish' | 'price_add'>('use_dish')
 /** 当前选中的数据配置索引（从0开始） */
 const currentDataConfigIndex = ref<number>(0)
 
-/** Dish记录列表 */
-const dishList = ref<any[]>([])
+/** 行数据记录列表（原 dishList，改为通用名称） */
+const rowDataList = ref<any[]>([])
 
-/** DishGroup记录列表 */
-const dishGroupList = ref<any[]>([])
+/** 列数据记录列表（原 dishGroupList，改为通用名称） */
+const colDataList = ref<any[]>([])
 
 /** 交叉数据配置（多套配置值） */
 const crossData = ref<{
@@ -91,30 +135,89 @@ const nameColumnWidth = computed(() => props.nameColumnWidth)
 const dataColumnWidth = computed(() => props.dataColumnWidth)
 const sumColumnWidth = computed(() => props.sumColumnWidth)
 
+/** 按钮配置（根据 rowDataConfig 和 colDataConfig 自动生成，或使用配置的 buttonConfigs） */
+const buttonConfigs = computed(() => {
+  // 如果配置了 buttonConfigs，优先使用
+  if (props.buttonConfigs && props.buttonConfigs.length > 0) {
+    return props.buttonConfigs
+  }
+  
+  // 否则根据 rowDataConfig 和 colDataConfig 自动生成
+  const configs: ButtonConfig[] = []
+  
+  // 如果行数据配置允许新增，添加选择行数据按钮
+  if (props.rowDataConfig?.allowAdd) {
+    configs.push({
+      stype: 'select',
+      label: props.rowDataConfig.name || '行数据',
+      show: true,
+      buttonType: 'row'
+    })
+  }
+  
+  // 如果列数据配置允许新增，添加选择列数据按钮
+  if (props.colDataConfig?.allowAdd) {
+    configs.push({
+      stype: 'select',
+      label: props.colDataConfig.name || '列数据',
+      show: true,
+      buttonType: 'column'
+    })
+  }
+  
+  return configs
+})
+
+/**
+ * 处理按钮点击
+ * @param btn - 按钮配置
+ */
+const handleButtonClick = (btn: ButtonConfig) => {
+  // 如果配置了 onClick，优先使用
+  if (btn.onClick) {
+    btn.onClick()
+    return
+  }
+  
+  // 否则根据 buttonType 来判断
+  if (btn.buttonType === 'row') {
+    emit('select-row-data')
+  } else if (btn.buttonType === 'column') {
+    emit('select-col-data')
+  } else {
+    // 如果没有 buttonType，尝试根据 label 来判断（向后兼容）
+    if (btn.label === props.rowDataConfig?.name || btn.label === '行数据') {
+      emit('select-row-data')
+    } else if (btn.label === props.colDataConfig?.name || btn.label === '列数据') {
+      emit('select-col-data')
+    }
+  }
+}
+
 // ==================== 计算属性 ====================
-/** TableCross的行数据（Dish） */
+/** TableCross的行数据 */
 const tableRows = computed<TableCrossRow[]>(() => {
-  return dishList.value.map(dish => {
+  return rowDataList.value.map(rowData => {
     const row: TableCrossRow = {
-      id: dish.id,
-      name: dish.name_unique || ''
+      id: rowData.id,
+      name: rowData.name_unique || rowData.name_display || ''
     }
     
-    // 为每个DishGroup列添加所有数据配置的值
-    dishGroupList.value.forEach(group => {
+    // 为每个列数据添加所有数据配置的值
+    colDataList.value.forEach((colData) => {
       // 如果有数据配置，使用多套数据存储
       if (props.dataConfigs && props.dataConfigs.length > 0) {
-        props.dataConfigs.forEach((config, configIndex) => {
-          const dataKey = `__data_${configIndex}_${group.id}`
+        props.dataConfigs.forEach((_config, configIndex) => {
+          const dataKey = `__data_${configIndex}_${colData.id}`
           // 从 crossData 中获取值（保持向后兼容）
-          const oldValue = crossData.value[dataType.value]?.[String(dish.id)]?.[String(group.id)]
+          const oldValue = crossData.value[dataType.value]?.[String(rowData.id)]?.[String(colData.id)]
           // 优先使用新格式，如果没有则使用旧格式
           row[dataKey] = oldValue ?? null
         })
       } else {
         // 没有数据配置，使用旧的格式（向后兼容）
-        const value = crossData.value[dataType.value]?.[String(dish.id)]?.[String(group.id)] ?? null
-        row[String(group.id)] = value
+        const value = crossData.value[dataType.value]?.[String(rowData.id)]?.[String(colData.id)] ?? null
+        row[String(colData.id)] = value
       }
     })
     
@@ -122,11 +225,11 @@ const tableRows = computed<TableCrossRow[]>(() => {
   })
 })
 
-/** TableCross的列数据（DishGroup） */
+/** TableCross的列数据 */
 const tableColumns = computed<TableCrossColumn[]>(() => {
-  return dishGroupList.value.map(group => ({
-    id: group.id,
-    name: group.name_unique || ''
+  return colDataList.value.map(colData => ({
+    id: colData.id,
+    name: colData.name_unique || colData.name_display || ''
   }))
 })
 
@@ -175,16 +278,16 @@ const loadDataFromSource = () => {
         }
       }
       
-      // 将源窗口的数据作为 DishGroup（列）显示
+      // 将源窗口的数据作为列数据显示
       if (sourceList.length > 0) {
-        dishGroupList.value = sourceList.map(item => ({
+        colDataList.value = sourceList.map(item => ({
           id: item.id,
           name_unique: item.name_unique || item.name_display || '',
           ...item // 保留原始数据
         }))
         
         if (prompInfoRef.value) {
-          prompInfoRef.value.info(`已从上一个窗口加载 ${dishGroupList.value.length} 个分组`)
+          prompInfoRef.value.info(`已从上一个窗口加载 ${colDataList.value.length} 个列数据`)
         }
       } else {
         // 数据为空，提示用户
@@ -199,7 +302,6 @@ const loadDataFromSource = () => {
       }
     }
   } catch (error) {
-    console.error('从源窗口加载数据失败:', error)
     if (prompInfoRef.value) {
       prompInfoRef.value.err('从上一个窗口加载数据失败')
     }
@@ -217,12 +319,18 @@ const loadDataFromStorage = () => {
     if (storageData) {
       const data = JSON.parse(storageData)
       
-      // 加载Dish和DishGroup数据
-      if (data.dishes && Array.isArray(data.dishes)) {
-        dishList.value = data.dishes
+      // 加载行数据和列数据（保持向后兼容）
+      if (data.rowDatas && Array.isArray(data.rowDatas)) {
+        rowDataList.value = data.rowDatas
+      } else if (data.dishes && Array.isArray(data.dishes)) {
+        // 向后兼容：如果使用旧的 dishes 字段
+        rowDataList.value = data.dishes
       }
-      if (data.dishGroups && Array.isArray(data.dishGroups)) {
-        dishGroupList.value = data.dishGroups
+      if (data.colDatas && Array.isArray(data.colDatas)) {
+        colDataList.value = data.colDatas
+      } else if (data.dishGroups && Array.isArray(data.dishGroups)) {
+        // 向后兼容：如果使用旧的 dishGroups 字段
+        colDataList.value = data.dishGroups
       }
       if (data.branchId !== undefined) {
         branchId.value = data.branchId
@@ -232,15 +340,21 @@ const loadDataFromStorage = () => {
       }
     }
   } catch (error) {
-    console.error('加载数据失败:', error)
+    // 加载数据失败，静默处理
   }
   
-  // 如果props中有数据，优先使用props
-  if (props.dishes && props.dishes.length > 0) {
-    dishList.value = props.dishes
+  // 如果props中有数据，优先使用props（保持向后兼容）
+  if (props.rowDatas && props.rowDatas.length > 0) {
+    rowDataList.value = props.rowDatas
+  } else if (props.dishes && props.dishes.length > 0) {
+    // 向后兼容：如果使用旧的 dishes 字段
+    rowDataList.value = props.dishes
   }
-  if (props.dishGroups && props.dishGroups.length > 0) {
-    dishGroupList.value = props.dishGroups
+  if (props.colDatas && props.colDatas.length > 0) {
+    colDataList.value = props.colDatas
+  } else if (props.dishGroups && props.dishGroups.length > 0) {
+    // 向后兼容：如果使用旧的 dishGroups 字段
+    colDataList.value = props.dishGroups
   }
 }
 
@@ -252,14 +366,17 @@ const saveDataToStorage = () => {
   
   try {
     const data = {
-      dishes: dishList.value,
-      dishGroups: dishGroupList.value,
+      rowDatas: rowDataList.value,
+      colDatas: colDataList.value,
+      // 保持向后兼容
+      dishes: rowDataList.value,
+      dishGroups: colDataList.value,
       branchId: branchId.value,
       crossData: crossData.value
     }
     sessionStorage.setItem(props.storageKey, JSON.stringify(data))
   } catch (error) {
-    console.error('保存数据失败:', error)
+    // 保存数据失败，静默处理
   }
 }
 
@@ -299,11 +416,14 @@ const handleCellUpdate = (rowIndex: number, columnIndex: number, value: number |
   
   // 触发事件
   emit('dataChanged', {
-    dishId: row.id,
-    dishGroupId: column.id,
+    rowId: row.id,
+    colId: column.id,
     dataType: dataType.value,
     dataConfigIndex: configIndex,
-    value
+    value,
+    // 保持向后兼容
+    dishId: row.id,
+    dishGroupId: column.id
   })
 }
 
@@ -313,15 +433,15 @@ const handleCellUpdate = (rowIndex: number, columnIndex: number, value: number |
 const handleRowsUpdate = (rows: TableCrossRow[]) => {
   // 更新交叉数据
   rows.forEach(row => {
-    const dishId = String(row.id)
-    dishGroupList.value.forEach(group => {
-      const groupId = String(group.id)
-      const value = row[groupId] ?? null
+    const rowId = String(row.id)
+    colDataList.value.forEach(colData => {
+      const colId = String(colData.id)
+      const value = row[colId] ?? null
       
-      if (!crossData.value[dataType.value][dishId]) {
-        crossData.value[dataType.value][dishId] = {}
+      if (!crossData.value[dataType.value][rowId]) {
+        crossData.value[dataType.value][rowId] = {}
       }
-      crossData.value[dataType.value][dishId][groupId] = value
+      crossData.value[dataType.value][rowId][colId] = value
     })
   })
   
@@ -333,8 +453,8 @@ const handleRowsUpdate = (rows: TableCrossRow[]) => {
  */
 const handleColumnsUpdate = (columns: TableCrossColumn[]) => {
   // 列更新时，需要重新构建交叉数据
-  dishGroupList.value = columns.map(col => {
-    const existing = dishGroupList.value.find(g => g.id === col.id)
+  colDataList.value = columns.map(col => {
+    const existing = colDataList.value.find(c => c.id === col.id)
     return existing || { id: col.id, name_unique: col.name }
   })
   
@@ -342,29 +462,59 @@ const handleColumnsUpdate = (columns: TableCrossColumn[]) => {
 }
 
 /**
- * 选择分组
+ * 新增行数据
  */
-const handleSelectGroup = () => {
-  if (prompInfoRef.value) {
-    prompInfoRef.value.info('请选择分组')
+const addRowDatas = (records: any[]) => {
+  if (!records || records.length === 0) return
+  
+  // 过滤掉已存在的记录
+  const newRecords = records.filter(record => {
+    const recordId = record.id
+    return !rowDataList.value.some(item => item.id === recordId)
+  })
+  
+  if (newRecords.length > 0) {
+    rowDataList.value.push(...newRecords)
+    saveDataToStorage()
+    if (prompInfoRef.value) {
+      prompInfoRef.value.info(`已添加 ${newRecords.length} 条行数据`)
+    }
+  } else {
+    if (prompInfoRef.value) {
+      prompInfoRef.value.warn('所选记录已存在')
+    }
   }
-  // TODO: 实现选择分组的逻辑
 }
 
 /**
- * 选择菜品
+ * 新增列数据
  */
-const handleSelectDish = () => {
-  if (prompInfoRef.value) {
-    prompInfoRef.value.info('请选择菜品')
+const addColDatas = (records: any[]) => {
+  if (!records || records.length === 0) return
+  
+  // 过滤掉已存在的记录
+  const newRecords = records.filter(record => {
+    const recordId = record.id
+    return !colDataList.value.some(item => item.id === recordId)
+  })
+  
+  if (newRecords.length > 0) {
+    colDataList.value.push(...newRecords)
+    saveDataToStorage()
+    if (prompInfoRef.value) {
+      prompInfoRef.value.info(`已添加 ${newRecords.length} 条列数据`)
+    }
+  } else {
+    if (prompInfoRef.value) {
+      prompInfoRef.value.warn('所选记录已存在')
+    }
   }
-  // TODO: 实现选择菜品的逻辑
 }
 
 /**
  * 保存数据
  */
-const handleSave = () => {
+const handleSave = async () => {
   if (prompInfoRef.value) {
     prompInfoRef.value.info('正在保存...')
   }
@@ -372,16 +522,35 @@ const handleSave = () => {
   // 保存到storage
   saveDataToStorage()
   
-  // 触发保存事件
-  emit('save', {
+  // 构建保存数据
+  const saveData = {
     branchId: branchId.value,
-    dishes: dishList.value,
-    dishGroups: dishGroupList.value,
-    crossData: crossData.value
-  })
+    rowDatas: rowDataList.value,
+    colDatas: colDataList.value,
+    crossData: crossData.value,
+    // 保持向后兼容
+    dishes: rowDataList.value,
+    dishGroups: colDataList.value
+  }
   
-  if (prompInfoRef.value) {
-    prompInfoRef.value.info('保存成功')
+  // 如果配置了保存处理函数，调用它
+  if (props.onSave) {
+    try {
+      await props.onSave(saveData)
+      if (prompInfoRef.value) {
+        prompInfoRef.value.info('保存成功')
+      }
+    } catch (error) {
+      if (prompInfoRef.value) {
+        prompInfoRef.value.err('保存失败')
+      }
+    }
+  } else {
+    // 触发保存事件
+    emit('save', saveData)
+    if (prompInfoRef.value) {
+      prompInfoRef.value.info('保存成功')
+    }
   }
 }
 
@@ -458,6 +627,24 @@ onBeforeUnmount(() => {
     window.removeEventListener('focus', handleWindowFocus)
   }
 })
+
+// ==================== 暴露方法 ====================
+defineExpose({
+  getData: () => ({
+    branchId: branchId.value,
+    rowDatas: rowDataList.value,
+    colDatas: colDataList.value,
+    crossData: crossData.value,
+    // 保持向后兼容
+    dishes: rowDataList.value,
+    dishGroups: colDataList.value
+  }),
+  saveDataToStorage,
+  addRowDatas,
+  addColDatas,
+  getRowDatas: () => [...rowDataList.value],
+  getColDatas: () => [...colDataList.value]
+})
 </script>
 
 <template>
@@ -503,15 +690,19 @@ onBeforeUnmount(() => {
       
       <!-- 右侧按钮组 -->
       <div class="toolbar-right">
+        <!-- 根据配置显示按钮 -->
+        <template v-for="(btn, index) in buttonConfigs" :key="index">
+          <ButtonPlus
+            v-if="btn.show !== false"
+            :stype="btn.stype"
+            @click="handleButtonClick(btn)"
+          >
+            <template v-if="btn.label">{{ btn.label }}</template>
+          </ButtonPlus>
+        </template>
+        <!-- 默认保存按钮（如果没有在配置中） -->
         <ButtonPlus
-          stype="select"
-          @click="handleSelectGroup"
-        >分组</ButtonPlus>
-        <ButtonPlus
-          stype="select"
-          @click="handleSelectDish"
-        >菜品</ButtonPlus>
-        <ButtonPlus
+          v-if="!buttonConfigs.some(btn => btn.stype === 'save')"
           stype="save"
           @click="handleSave"
         />
