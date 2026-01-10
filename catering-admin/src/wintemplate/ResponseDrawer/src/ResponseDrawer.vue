@@ -47,6 +47,8 @@ interface Props {
   width?: string | number
   /** 点击遮罩是否关闭 */
   closeOnClickModal?: boolean
+  /** 关闭前的回调（返回 false 或 Promise<false> 可阻止关闭） */
+  beforeClose?: (done: () => void) => void | Promise<void>
   /** 工具栏按钮配置（返回按钮左侧的其他按钮） */
   toolbarButtons?: ToolbarButton[]
 }
@@ -92,9 +94,19 @@ const visibleToolbarButtons = computed(() => {
  * 处理返回按钮点击
  */
 const handleReturn = () => {
-  drawerVisible.value = false
-  emit('close')
-  emit('cancel')
+  if (props.beforeClose) {
+    // 如果有 beforeClose，调用它
+    props.beforeClose(() => {
+      drawerVisible.value = false
+      emit('close')
+      emit('cancel')
+    })
+  } else {
+    // 没有 beforeClose，直接关闭
+    drawerVisible.value = false
+    emit('close')
+    emit('cancel')
+  }
 }
 
 /**
@@ -191,6 +203,7 @@ onMounted(() => {
     :close-on-click-modal="props.closeOnClickModal"
     :with-header="true"
     :title="props.title || ''"
+    :before-close="props.beforeClose"
     destroy-on-close
     class="response-drawer"
     @opened="forceSetDrawerBodyPadding"
@@ -281,8 +294,8 @@ onMounted(() => {
   width: 760px;
   max-width: 760px;
   margin: 0;
-  padding: 0 20px 20px 20px;
-  border: 1px solid #d3d4d6; /* 深灰色边框 */
+  padding: 0;
+  border: none;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -296,7 +309,7 @@ onMounted(() => {
     }
 
     .content-inner {
-      padding: 20px 0;
+      padding: 10px 0 0 20px;
       min-height: 100%;
     }
   }

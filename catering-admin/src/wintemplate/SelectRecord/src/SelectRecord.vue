@@ -1,8 +1,7 @@
 <script setup lang="tsx">
 import { computed, ref, watch, unref, nextTick } from 'vue'
-import { ElDrawer, ElScrollbar, ElTabs, ElTabPane, ElCard, ElMenu, ElMenuItem, ElMessage } from 'element-plus'
-import { ButtonPlus } from '@/components/ButtonPlus'
-import { PromptInfo } from '@/components/PromptInfo'
+import { ElScrollbar, ElTabs, ElTabPane, ElCard, ElMenu, ElMenuItem, ElMessage } from 'element-plus'
+import { ResponseDrawer, type ToolbarButton } from '@/wintemplate/ResponseDrawer'
 import { Search } from '@/components/Search'
 import { FormSchema } from '@/components/Form'
 import { Table, TableColumn } from '@/components/Table'
@@ -78,7 +77,7 @@ const drawerTitle = computed(() => {
 
 /** 计算抽屉宽度 */
 const drawerWidth = computed(() => {
-  const defaultWidth = 'calc(100vw - 600px)'
+  const defaultWidth = 'max(700px, calc(100vw - 600px))'
   if (props.width) {
     if (typeof props.width === 'string' && props.width !== defaultWidth) {
       return props.width
@@ -88,6 +87,20 @@ const drawerWidth = computed(() => {
     }
   }
   return defaultWidth
+})
+
+/** 计算工具栏按钮配置（用于传递给 ResponseDrawer） */
+const toolbarButtons = computed<ToolbarButton[]>(() => {
+  const buttons: ToolbarButton[] = []
+  
+  // 确认按钮
+  buttons.push({
+    stype: 'ok',
+    show: true,
+    onClick: handleConfirm
+  })
+  
+  return buttons
 })
 
 // ==================== Tab 管理 ====================
@@ -362,24 +375,17 @@ const handleDragEnd = () => {
   // 拖拽结束后可以在这里处理排序逻辑
 }
 
-// ==================== 信息提示 ====================
-/** 信息提示组件引用 */
-const prompInfoRef = ref<InstanceType<typeof PromptInfo>>()
+// ==================== ResponseDrawer 引用 ====================
+const responseDrawerRef = ref<InstanceType<typeof ResponseDrawer>>()
 
+// ==================== 信息提示 ====================
 /**
  * 显示信息提示
  */
 const showInfo = (type?: 'info' | 'warn' | 'error' | null, message?: string | null) => {
-  if (!type || !message) {
-    prompInfoRef.value?.ready()
-    return
-  }
-  if (type === 'info') {
-    prompInfoRef.value?.info(message)
-  } else if (type === 'warn') {
-    prompInfoRef.value?.warn(message)
-  } else if (type === 'error') {
-    prompInfoRef.value?.err(message)
+  // 通过 ResponseDrawer 的 showInfo 方法显示提示信息
+  if (responseDrawerRef.value) {
+    responseDrawerRef.value.showInfo(type || null, message || null)
   }
 }
 
@@ -392,26 +398,15 @@ defineExpose({
 </script>
 
 <template>
-  <ElDrawer
+  <ResponseDrawer
+    ref="responseDrawerRef"
     v-model="drawerVisible"
-    :size="drawerWidth"
-    direction="rtl"
-    :with-header="true"
     :title="drawerTitle"
-    destroy-on-close
-    class="select-record-drawer"
+    :width="drawerWidth"
+    :toolbar-buttons="toolbarButtons"
+    @close="handleCancel"
+    @cancel="handleCancel"
   >
-    <!-- 顶部工具栏 -->
-    <div class="select-record-toolbar">
-      <div class="toolbar-left">
-        <PromptInfo ref="prompInfoRef" />
-      </div>
-      <div class="toolbar-right">
-        <ButtonPlus stype="ok" @click="handleConfirm" />
-        <ButtonPlus stype="cancel" @click="handleCancel" />
-      </div>
-    </div>
-
     <!-- 主体内容区域 -->
     <div class="select-record-content">
       <!-- 左侧：已选记录 -->
@@ -500,59 +495,16 @@ defineExpose({
         </ElTabs>
       </div>
     </div>
-  </ElDrawer>
+  </ResponseDrawer>
 </template>
 
 <style lang="less" scoped>
-.select-record-drawer {
-  :deep(.el-drawer) {
-    display: flex;
-    flex-direction: column;
-  }
-
-  :deep(.el-drawer__header) {
-    margin-bottom: 0;
-    padding: 15px 20px;
-    border-bottom: 1px solid var(--el-border-color);
-  }
-
-  :deep(.el-drawer__body) {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    padding: 0;
-  }
-}
-
-.select-record-toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-  padding: 15px 20px;
-  border-bottom: 1px solid var(--el-border-color);
-
-  .toolbar-left {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .toolbar-right {
-    display: flex;
-    justify-content: flex-end;
-    align-items: center;
-    gap: 10px;
-    flex-shrink: 0;
-  }
-}
-
+/* SelectRecord 内容区样式 */
 .select-record-content {
   flex: 1;
   display: flex;
   overflow: hidden;
   gap: 20px;
-  padding: 20px;
 }
 
 .selected-records-panel {

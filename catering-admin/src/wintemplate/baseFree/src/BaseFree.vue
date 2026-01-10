@@ -1,8 +1,7 @@
 <script setup lang="tsx">
 import { computed, ref, watch, nextTick } from 'vue'
-import { ElDrawer, ElScrollbar, ElTabs, ElTabPane, ElMessage, ElMessageBox } from 'element-plus'
-import { ButtonPlus } from '@/components/ButtonPlus'
-import { PromptInfo } from '@/components/PromptInfo'
+import { ElScrollbar, ElTabs, ElTabPane, ElMessage, ElMessageBox } from 'element-plus'
+import { ResponseDrawer, type ToolbarButton } from '@/wintemplate/ResponseDrawer'
 import { Form, FormSchema } from '@/components/Form'
 import { useForm } from '@/hooks/web/useForm'
 import { ImagePlus } from '@/components/ImagePlus'
@@ -308,6 +307,43 @@ const handleBeforeClose = async (done: () => void) => {
     done()
   }
 }
+
+/** 计算工具栏按钮配置（用于传递给 ResponseDrawer） */
+const toolbarButtons = computed<ToolbarButton[]>(() => {
+  const buttons: ToolbarButton[] = []
+  
+  // 保存按钮
+  if (showSaveButton.value) {
+    buttons.push({
+      stype: 'save',
+      loading: props.saveLoading,
+      show: true,
+      onClick: handleSave
+    })
+  }
+  
+  // 继续新增按钮
+  if (showContinueNewButton.value) {
+    buttons.push({
+      stype: 'newcontinue',
+      loading: props.saveLoading,
+      show: true,
+      onClick: handleContinueNew
+    })
+  }
+  
+  // 拷贝新增按钮
+  if (showCopyNewButton.value) {
+    buttons.push({
+      stype: 'newcopy',
+      loading: props.saveLoading,
+      show: true,
+      onClick: handleCopyNew
+    })
+  }
+  
+  return buttons
+})
 
 /** 抽屉标题 */
 // ==================== 内部模式管理 ====================
@@ -1312,27 +1348,20 @@ const handleCancel = () => {
 /** 信息类型 */
 type InfoType = 'info' | 'warn' | 'error'
 
-/** 信息提示组件引用 */
-const prompInfoRef = ref<InstanceType<typeof PromptInfo>>()
-
 /**
  * 显示信息提示
  * @param type 信息类型：'info' | 'warn' | 'error'，为空时显示就绪状态
  * @param message 提示信息，为空时显示就绪状态
  */
 const showInfo = (type?: InfoType | null, message?: string | null) => {
-  if (!type || !message) {
-    prompInfoRef.value?.ready()
-    return
-  }
-  if (type === 'info') {
-    prompInfoRef.value?.info(message)
-  } else if (type === 'warn') {
-    prompInfoRef.value?.warn(message)
-  } else if (type === 'error') {
-    prompInfoRef.value?.err(message)
+  // 通过 ResponseDrawer 的 showInfo 方法显示提示信息
+  if (responseDrawerRef.value) {
+    responseDrawerRef.value.showInfo(type || null, message || null)
   }
 }
+
+// ==================== ResponseDrawer 引用 ====================
+const responseDrawerRef = ref<InstanceType<typeof ResponseDrawer>>()
 
 // ==================== 暴露方法 ====================
 defineExpose({
@@ -1340,203 +1369,86 @@ defineExpose({
   getFormData,
   setValues,
   getElFormExpose,
-  showInfo // 显示信息提示
+  showInfo, // 显示信息提示
+  getPrompInfoRef: () => responseDrawerRef.value?.getPrompInfoRef() // 获取 PromptInfo 引用
 })
 </script>
 
 <template>
-  <ElDrawer
+  <ResponseDrawer
+    ref="responseDrawerRef"
     v-model="drawerVisible"
-    :size="drawerWidth"
-    direction="rtl"
-    :close-on-click-modal="props.closeOnClickModal"
-    :with-header="true"
     :title="drawerTitle"
+    :width="drawerWidth"
+    :close-on-click-modal="props.closeOnClickModal"
     :before-close="handleBeforeClose"
-    destroy-on-close
-    class="base-free-drawer"
+    :toolbar-buttons="toolbarButtons"
+    @close="handleCancel"
+    @cancel="handleCancel"
   >
-    <!-- 表单内容区域（可滚动） -->
-    <div class="base-free-content-wrapper">
-      <ElScrollbar class="base-free-scrollbar">
-        <div class="base-free-content">
-          <div class="response-container">
-            <!-- 按钮区域：提示信息 + 按钮 -->
-            <!-- ==================== 扩展点6：按钮区域自定义 ==================== -->
-            <slot name="buttons" :save="handleSave" :cancel="handleCancel" :continue-new="handleContinueNew" :copy-new="handleCopyNew" :mode="props.mode" :save-loading="props.saveLoading" :show-continue-new="showContinueNewButton" :show-copy-new="showCopyNewButton">
-              <div class="response-buttons-wrapper">
-                <div class="response-buttons-info">
-                  <PromptInfo ref="prompInfoRef" />
-                </div>
-                <div class="response-buttons">
-                  <ButtonPlus
-                    v-if="showSaveButton"
-                    stype="save"
-                    :loading="props.saveLoading"
-                    @click="handleSave"
-                  />
-                  <ButtonPlus
-                    v-if="showContinueNewButton"
-                    stype="newcontinue"
-                    :loading="props.saveLoading"
-                    @click="handleContinueNew"
-                  />
-                  <ButtonPlus
-                    v-if="showCopyNewButton"
-                    stype="newcopy"
-                    :loading="props.saveLoading"
-                    @click="handleCopyNew"
-                  />
-                  <ButtonPlus
-                    stype="return"
-                    @click="handleCancel"
-                  />
-                </div>
-              </div>
+    <!-- 内容区：Tab 组件和表单 -->
+    <div class="base-free-content">
+      <!-- ==================== 扩展点6：按钮区域自定义（已移至 ResponseDrawer 工具栏） ==================== -->
+      <!-- 保留此插槽以保持向后兼容，但建议直接使用 ResponseDrawer 的 toolbarButtons -->
+      <slot name="buttons" :save="handleSave" :cancel="handleCancel" :continue-new="handleContinueNew" :copy-new="handleCopyNew" :mode="props.mode" :save-loading="props.saveLoading" :show-continue-new="showContinueNewButton" :show-copy-new="showCopyNewButton">
+        <!-- 默认按钮已由 ResponseDrawer 的 toolbarButtons 处理 -->
+      </slot>
+      
+      <!-- Tab 组件 -->
+      <ElTabs v-model="activeTab" class="base-free-tabs">
+        <ElTabPane
+          v-for="tab in filteredTabs"
+          :key="tab.name"
+          :label="tab.label"
+          :name="tab.name"
+        >
+          <!-- ==================== 扩展点5：Tab 级别的自定义内容 ==================== -->
+          <!-- 如果 Tab 配置了 customContent: true，使用插槽内容 -->
+          <template v-if="tab.customContent">
+            <slot :name="`tab-${tab.name}`" :tab="tab" :current-row="props.currentRow" :mode="props.mode">
+              <!-- 默认插槽内容为空，由使用方提供 -->
             </slot>
-            
-            <!-- Tab 组件 -->
-            <ElTabs v-model="activeTab">
-              <ElTabPane
-                v-for="tab in filteredTabs"
-                :key="tab.name"
-                :label="tab.label"
-                :name="tab.name"
-              >
-                <!-- ==================== 扩展点5：Tab 级别的自定义内容 ==================== -->
-                <!-- 如果 Tab 配置了 customContent: true，使用插槽内容 -->
-                <template v-if="tab.customContent">
-                  <slot :name="`tab-${tab.name}`" :tab="tab" :current-row="props.currentRow" :mode="props.mode">
-                    <!-- 默认插槽内容为空，由使用方提供 -->
-                  </slot>
-                </template>
-                <!-- 默认 Tab：显示表单 -->
-                <template v-else>
-                  <Form
-                    :key="`form-${tab.name}-${drawerVisible}`"
-                    :rules="props.rules"
-                    :validate-on-rule-change="false"
-                    @register="handleFormRegister"
-                    :schema="getFieldsByTab(tab.name)"
-                  />
-                </template>
-              </ElTabPane>
-            </ElTabs>
-          </div>
-        </div>
-      </ElScrollbar>
+          </template>
+          <!-- 默认 Tab：显示表单 -->
+          <template v-else>
+            <Form
+              :key="`form-${tab.name}-${drawerVisible}`"
+              :rules="props.rules"
+              :validate-on-rule-change="false"
+              @register="handleFormRegister"
+              :schema="getFieldsByTab(tab.name)"
+            />
+          </template>
+        </ElTabPane>
+      </ElTabs>
     </div>
-  </ElDrawer>
+  </ResponseDrawer>
 </template>
 
-<style lang="less">
-:deep(.base-free-drawer) {
-  .el-drawer {
-    width: max(700px, calc(100vw - 600px)) !important;
-    right: 0 !important;
-    left: auto !important;
-  }
-}
-
-:global(.base-free-drawer .el-drawer) {
-  width: max(700px, calc(100vw - 600px)) !important;
-  right: 0 !important;
-  left: auto !important;
-}
-
-.base-free-content-wrapper {
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.base-free-scrollbar {
-  flex: 1;
-  min-height: 0;
-  
-  :deep(.el-scrollbar__wrap) {
-    overflow-x: hidden;
-  }
-  
-  .base-free-content {
-    padding: 0 20px 20px 20px;
-    max-width: 720px;
-    margin-left: 0;
-    margin-right: auto;
-    
-    :deep(.el-tabs) {
-      padding: 0;
-    }
-    
-    :deep(.el-tabs__header) {
-      margin: 0;
-      padding: 0;
-    }
-    
-    :deep(.el-tabs__content) {
-      padding: 0;
-    }
-  }
-}
-
-.response-container {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-
-.response-buttons-wrapper {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-  margin-top: 0;
-  margin-bottom: 15px;
-}
-
-.response-buttons-info {
-  flex: 1;
-  min-width: 0;
-}
-
-.response-buttons {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
-  
-  // ButtonPlus 组件已内置 margin-left: 0，无需额外设置
-  // 仅保留对原生 ElButton 的样式覆盖（如果有使用）
-  :deep(.el-button:not(.my-button)) {
-    margin: 0 !important;
-  }
-}
-
-.base-free-drawer {
-  :deep(.el-drawer__header) {
-    margin-bottom: 0;
-    padding: 15px 20px;
-    border-bottom: 1px solid var(--el-border-color);
-  }
-
-  :deep(.el-drawer__body) {
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  :deep(.el-drawer__footer) {
-    padding: 15px 20px;
-    border-top: 1px solid var(--el-border-color);
-  }
-}
-
-// 图片上传样式（与 Dish/components/Response.vue 保持一致）
+<style lang="less" scoped>
+/* BaseFree 内容区样式 */
 .base-free-content {
+  /* 内容区已在 ResponseDrawer 的插槽中，不需要额外的滚动容器 */
+  /* 保持表单内容的样式 */
+  
+  :deep(.el-tabs) {
+    padding: 0;
+  }
+  
+  :deep(.el-tabs__header) {
+    margin: 0;
+    padding: 0;
+  }
+  
+  :deep(.el-tabs__content) {
+    padding: 0;
+  }
+  
+  :deep(.el-tab-pane) {
+    margin-top: 20px;
+  }
+  
+  /* 图片上传样式（与 Dish/components/Response.vue 保持一致） */
   .image-container {
     display: flex;
     flex-wrap: wrap;
@@ -1544,121 +1456,123 @@ defineExpose({
     padding: 0;
   }
 
-  .image-container {
-    .image-group {
-      position: relative;
-      width: 100px;
-      height: 100px;
-      margin: 0;
-    }
-
-    .image-item {
-      width: 100%;
-      height: 100%;
-      border-radius: 6px;
-      border: 1px solid #dcdfe6;
-      transition: all 0.3s ease;
-      cursor: pointer;
-    }
-
-    .image-item:hover {
-      transform: scale(1.05);
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    }
-
-    // ElImage 组件样式
-    .image-group :deep(.el-image) {
-      width: 100%;
-      height: 100%;
-      border-radius: 6px;
-    }
-
-    .image-group :deep(.el-image__inner) {
-      border-radius: 6px;
-      object-fit: cover;
-    }
-
-    .remove-btn {
-      position: absolute;
-      top: -6px;
-      right: -6px;
-      width: 24px;
-      height: 24px;
-      background: #f56c6c;
-      color: white;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      font-size: 12px;
-      font-weight: bold;
-      opacity: 0;
-      transition: opacity 0.3s ease;
-    }
-
-    .image-group:hover .remove-btn {
-      opacity: 1;
-    }
-
-    .image-group.dragging {
-      opacity: 0.5;
-      border-color: #409eff;
-      transform: scale(0.95);
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
-      cursor: grabbing;
-      z-index: 1000;
-    }
-
-    .image-group.drag-over {
-      transform: scale(1.15);
-      border: 2px solid #3b82f6;
-      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
-      transform: scale(1.05);
-      z-index: 10;
-      transition: all 0.2s ease;
-    }
-
-    .image-group-uploader {
-      width: 180px;
-      height: 100px;
-      flex-shrink: 0;
-    }
-
-    .image-group-uploader .el-upload {
-      border: 2px dashed #c0c4cc;
-      width: 100% !important;
-      height: 96px !important;
-      margin: 0 !important;
-      border-radius: 6px;
-    }
-
-    .el-upload:hover {
-      border-color: #409eff;
-      background: #f0f7ff;
-      color: #409eff;
-    }
-
-    .image-group-uploader .el-upload-dragger {
-      width: 100% !important;
-      height: 100% !important;
-      border: none;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .el-icon--upload {
-      width: 54px;
-      height: 54px;
-      margin-top: 0;
-    }
-
-    .upload-text {
-      font-size: 12px;
-      margin-top: -20px;
-      text-align: center;
-    }
+  .image-group {
+    position: relative;
+    width: 100px;
+    height: 100px;
+    margin: 0;
   }
+
+  .image-item {
+    width: 100%;
+    height: 100%;
+    border-radius: 6px;
+    border: 1px solid #dcdfe6;
+    transition: all 0.3s ease;
+    cursor: pointer;
+  }
+
+  .image-item:hover {
+    transform: scale(1.05);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  }
+
+  // ElImage 组件样式
+  .image-group :deep(.el-image) {
+    width: 100%;
+    height: 100%;
+    border-radius: 6px;
+  }
+
+  .image-group :deep(.el-image__inner) {
+    border-radius: 6px;
+    object-fit: cover;
+  }
+
+  .remove-btn {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    width: 24px;
+    height: 24px;
+    background: #f56c6c;
+    color: white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: bold;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+
+  .image-group:hover .remove-btn {
+    opacity: 1;
+  }
+
+  .image-group.dragging {
+    opacity: 0.5;
+    border-color: #409eff;
+    transform: scale(0.95);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    cursor: grabbing;
+    z-index: 1000;
+  }
+
+  .image-group.drag-over {
+    transform: scale(1.15);
+    border: 2px solid #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+    transform: scale(1.05);
+    z-index: 10;
+    transition: all 0.2s ease;
+  }
+
+  .image-group-uploader {
+    width: 180px;
+    height: 100px;
+    flex-shrink: 0;
+  }
+
+  .image-group-uploader .el-upload {
+    border: 2px dashed #c0c4cc;
+    width: 100% !important;
+    height: 96px !important;
+    margin: 0 !important;
+    border-radius: 6px;
+  }
+
+  .el-upload:hover {
+    border-color: #409eff;
+    background: #f0f7ff;
+    color: #409eff;
+  }
+
+  .image-group-uploader .el-upload-dragger {
+    width: 100% !important;
+    height: 100% !important;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .el-icon--upload {
+    width: 54px;
+    height: 54px;
+    margin-top: 0;
+  }
+
+  .upload-text {
+    font-size: 12px;
+    margin-top: -20px;
+    text-align: center;
+  }
+}
+
+.base-free-tabs {
+  /* Tab 组件样式 */
 }
 </style>
