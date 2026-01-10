@@ -241,7 +241,7 @@ const tabs = [
     <!-- 自定义按钮区域 -->
     <template #buttons="{ save, cancel, mode, saveLoading }">
       <div class="custom-buttons">
-        <PrompInfo ref="prompInfoRef" />
+        <PromptInfo ref="prompInfoRef" />
         <ElButton @click="handlePreview">预览</ElButton>
         <ElButton 
           v-if="mode !== 'view'"

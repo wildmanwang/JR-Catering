@@ -12,7 +12,7 @@ import { ElMessageBox } from 'element-plus'
 import TableGrid from '@/components/TableGrid'
 import type { TableGridColumn } from '@/components/TableGrid'
 import { ButtonPlus } from '@/components/ButtonPlus'
-import { PrompInfo } from '@/components/PrompInfo'
+import { PromptInfo } from '@/components/PromptInfo'
 import { StatusStoragePlus, type StatusStoreItem } from '@/components/StatusStoragePlus'
 import { formatDataItem } from '@/utils/dsOptions'
 import { cleanImageArray, ImageQuerySuffix, normalizeImageUrl, processImageList } from '@/utils/imageList'
@@ -346,7 +346,7 @@ const stateStores = computed<StatusStoreItem[]>(() => [
   }
 ])
 const currentRowIndex = ref<number | null>(null)
-const prompInfoRef = ref<InstanceType<typeof PrompInfo>>()
+const prompInfoRef = ref<InstanceType<typeof PromptInfo>>()
 const saveLoading = ref(false)
 const refreshLoading = ref(false)
 const tableGridRef = ref<InstanceType<typeof TableGrid>>()
@@ -1579,7 +1579,7 @@ defineExpose({
         </template>
       </div>
       <div class="toolbar-info">
-        <PrompInfo ref="prompInfoRef" />
+        <PromptInfo ref="prompInfoRef" />
       </div>
       <div class="toolbar-right">
         <template v-for="(btn, index) in toolbarButtons" :key="`right-${index}`">

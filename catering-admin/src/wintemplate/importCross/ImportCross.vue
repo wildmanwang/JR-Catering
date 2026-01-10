@@ -8,7 +8,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import TableCross, { type TableCrossRow, type TableCrossColumn, type TableCrossDataConfigs } from '@/components/TableCross/src/TableCross.vue'
 import { ButtonPlus } from '@/components/ButtonPlus'
-import { PrompInfo } from '@/components/PrompInfo'
+import { PromptInfo } from '@/components/PromptInfo'
 import { ElSelect, ElOption, ElRadioGroup, ElRadioButton } from 'element-plus'
 import { getBranchListApi } from '@/api/vadmin/system/branch'
 
@@ -126,7 +126,7 @@ const crossData = ref<{
 })
 
 // ==================== 组件引用 ====================
-const prompInfoRef = ref<InstanceType<typeof PrompInfo>>()
+const prompInfoRef = ref<InstanceType<typeof PromptInfo>>()
 const tableCrossRef = ref<InstanceType<typeof TableCross>>()
 
 // 为了在模板中使用
@@ -685,7 +685,7 @@ defineExpose({
       
       <!-- PromptInfo组件 -->
       <div class="toolbar-info">
-        <PrompInfo ref="prompInfoRef" />
+        <PromptInfo ref="prompInfoRef" />
       </div>
       
       <!-- 右侧按钮组 -->

@@ -188,7 +188,7 @@ const tabs: FreeTab[] = [
     <template #buttons="{ save, cancel, mode, saveLoading }">
       <div class="custom-buttons-wrapper">
         <div class="buttons-left">
-          <PrompInfo ref="prompInfoRef" />
+          <PromptInfo ref="prompInfoRef" />
         </div>
         <div class="buttons-right">
           <!-- 额外的预览按钮 -->
@@ -286,7 +286,7 @@ const handleCopy = () => {
     <!-- 自定义按钮区域 -->
     <template #buttons="{ save, cancel, mode }">
       <div class="custom-buttons">
-        <PrompInfo ref="prompInfoRef" />
+        <PromptInfo ref="prompInfoRef" />
         <ElButton v-if="mode === 'edit'" @click="handleCopy">复制</ElButton>
         <ButtonPlus v-if="mode !== 'view'" stype="save" @click="save" />
         <ButtonPlus stype="return" @click="cancel" />

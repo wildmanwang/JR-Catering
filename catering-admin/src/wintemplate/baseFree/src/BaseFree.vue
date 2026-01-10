@@ -2,7 +2,7 @@
 import { computed, ref, watch, nextTick } from 'vue'
 import { ElDrawer, ElScrollbar, ElTabs, ElTabPane, ElMessage, ElMessageBox } from 'element-plus'
 import { ButtonPlus } from '@/components/ButtonPlus'
-import { PrompInfo } from '@/components/PrompInfo'
+import { PromptInfo } from '@/components/PromptInfo'
 import { Form, FormSchema } from '@/components/Form'
 import { useForm } from '@/hooks/web/useForm'
 import { ImagePlus } from '@/components/ImagePlus'
@@ -792,9 +792,9 @@ const resetFormToInitial = async () => {
  * 1. 等待表单注册完成
  * 2. 数据校验（失败则中断，返回 null）
  * 3. 获取表单数据
- * 4. 图片上传处理（失败则中断，在 PrompInfo 中显示错误信息，返回 null）
- * 5. 提交前钩子处理（失败则中断，在 PrompInfo 中显示错误信息，返回 null）
- * 6. 数据提交（失败则中断，在 PrompInfo 中显示错误信息，返回 null）
+ * 4. 图片上传处理（失败则中断，在 PromptInfo 中显示错误信息，返回 null）
+ * 5. 提交前钩子处理（失败则中断，在 PromptInfo 中显示错误信息，返回 null）
+ * 6. 数据提交（失败则中断，在 PromptInfo 中显示错误信息，返回 null）
  * 7. 保存成功后：重置修改标记，触发 success 事件，执行成功回调
  * 
  * 使用场景：
@@ -883,7 +883,7 @@ const processSaveData = async (onSuccess?: (formData: any) => Promise<void> | vo
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : '图片上传失败'
-    // 在 PrompInfo 中显示错误信息
+    // 在 PromptInfo 中显示错误信息
     showInfo('error', errorMessage)
     return null
   }
@@ -893,7 +893,7 @@ const processSaveData = async (onSuccess?: (formData: any) => Promise<void> | vo
     try {
       formData = await props.beforeSubmit(formData) || formData
     } catch (error) {
-      // 如果钩子抛出错误，在 PrompInfo 中显示错误信息
+      // 如果钩子抛出错误，在 PromptInfo 中显示错误信息
       const errorMessage = error instanceof Error ? error.message : '数据处理失败'
       showInfo('error', errorMessage)
       return null
@@ -928,7 +928,7 @@ const processSaveData = async (onSuccess?: (formData: any) => Promise<void> | vo
       
       return formData
     } catch (error) {
-      // 保存失败，不关闭窗口，在 PrompInfo 中显示错误信息
+      // 保存失败，不关闭窗口，在 PromptInfo 中显示错误信息
       const errorMessage = error instanceof Error ? error.message : '保存失败'
       showInfo('error', errorMessage)
       return null
@@ -952,7 +952,7 @@ const processSaveData = async (onSuccess?: (formData: any) => Promise<void> | vo
  * 1. 数据校验（失败则中断）
  * 2. 图片上传处理（失败则中断）
  * 3. 提交前钩子处理（失败则中断）
- * 4. 数据保存（失败则中断，在 PrompInfo 中显示错误信息）
+ * 4. 数据保存（失败则中断，在 PromptInfo 中显示错误信息）
  * 5. 保存成功后：显示成功消息并关闭窗口
  * 
  * 使用场景：
@@ -1219,7 +1219,7 @@ const resetFormToCopyNew = async (savedData: any) => {
  * 1. 数据校验（失败则中断）
  * 2. 图片上传处理（失败则中断）
  * 3. 提交前钩子处理（失败则中断）
- * 4. 数据保存（失败则中断，在 PrompInfo 中显示错误信息）
+ * 4. 数据保存（失败则中断，在 PromptInfo 中显示错误信息）
  * 5. 保存成功后：重置表单为新增状态，显示成功提示
  * 
  * 使用场景：
@@ -1253,7 +1253,7 @@ const handleContinueNew = async () => {
  * 2. 数据校验（失败则中断）
  * 3. 图片上传处理（失败则中断）
  * 4. 提交前钩子处理（失败则中断）
- * 5. 数据保存（失败则中断，在 PrompInfo 中显示错误信息）
+ * 5. 数据保存（失败则中断，在 PromptInfo 中显示错误信息）
  * 6. 保存成功后：切换模式为新增，重置表单为拷贝新增状态，保留标记字段的值，显示成功提示
  * 
  * 使用场景：
@@ -1313,7 +1313,7 @@ const handleCancel = () => {
 type InfoType = 'info' | 'warn' | 'error'
 
 /** 信息提示组件引用 */
-const prompInfoRef = ref<InstanceType<typeof PrompInfo>>()
+const prompInfoRef = ref<InstanceType<typeof PromptInfo>>()
 
 /**
  * 显示信息提示
@@ -1366,7 +1366,7 @@ defineExpose({
             <slot name="buttons" :save="handleSave" :cancel="handleCancel" :continue-new="handleContinueNew" :copy-new="handleCopyNew" :mode="props.mode" :save-loading="props.saveLoading" :show-continue-new="showContinueNewButton" :show-copy-new="showCopyNewButton">
               <div class="response-buttons-wrapper">
                 <div class="response-buttons-info">
-                  <PrompInfo ref="prompInfoRef" />
+                  <PromptInfo ref="prompInfoRef" />
                 </div>
                 <div class="response-buttons">
                   <ButtonPlus

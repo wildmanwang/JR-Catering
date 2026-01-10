@@ -6,7 +6,7 @@ import { Table, TableColumn } from '@/components/Table'
 import { ElCard, ElMenu, ElMenuItem, ElMessage } from 'element-plus'
 import { BaseButton } from '@/components/Button'
 import { ButtonPlus } from '@/components/ButtonPlus'
-import { PrompInfo } from '@/components/PrompInfo'
+import { PromptInfo } from '@/components/PromptInfo'
 import { QueryBar, type QueryCondition } from '@/components/QueryBar'
 import { StatusStoragePlus, type StatusStoreItem } from '@/components/StatusStoragePlus'
 import { ImageSingle } from '@/components/ImageSingle'
@@ -1207,7 +1207,7 @@ watch(
 type InfoType = 'info' | 'warn' | 'error'
 
 /** 信息提示组件引用 */
-const prompInfoRef = ref<InstanceType<typeof PrompInfo>>()
+const prompInfoRef = ref<InstanceType<typeof PromptInfo>>()
 
 /**
  * 显示信息提示
@@ -2178,7 +2178,7 @@ defineExpose({
             </div>
 
             <div class="base-grid-toolbar-info">
-              <PrompInfo ref="prompInfoRef" />
+              <PromptInfo ref="prompInfoRef" />
             </div>
           </div>
           <slot name="toolbar"></slot>
@@ -2218,7 +2218,7 @@ defineExpose({
         </div>
 
         <div class="base-grid-toolbar-info">
-          <PrompInfo ref="prompInfoRef" />
+          <PromptInfo ref="prompInfoRef" />
         </div>
       </div>
       <slot name="toolbar"></slot>

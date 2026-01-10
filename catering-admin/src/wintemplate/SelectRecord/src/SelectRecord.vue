@@ -2,7 +2,7 @@
 import { computed, ref, watch, unref, nextTick } from 'vue'
 import { ElDrawer, ElScrollbar, ElTabs, ElTabPane, ElCard, ElMenu, ElMenuItem, ElMessage } from 'element-plus'
 import { ButtonPlus } from '@/components/ButtonPlus'
-import { PrompInfo } from '@/components/PrompInfo'
+import { PromptInfo } from '@/components/PromptInfo'
 import { Search } from '@/components/Search'
 import { FormSchema } from '@/components/Form'
 import { Table, TableColumn } from '@/components/Table'
@@ -364,7 +364,7 @@ const handleDragEnd = () => {
 
 // ==================== 信息提示 ====================
 /** 信息提示组件引用 */
-const prompInfoRef = ref<InstanceType<typeof PrompInfo>>()
+const prompInfoRef = ref<InstanceType<typeof PromptInfo>>()
 
 /**
  * 显示信息提示
@@ -404,7 +404,7 @@ defineExpose({
     <!-- 顶部工具栏 -->
     <div class="select-record-toolbar">
       <div class="toolbar-left">
-        <PrompInfo ref="prompInfoRef" />
+        <PromptInfo ref="prompInfoRef" />
       </div>
       <div class="toolbar-right">
         <ButtonPlus stype="ok" @click="handleConfirm" />

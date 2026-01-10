@@ -4,7 +4,7 @@
   功能：提供标准化的抽屉弹窗模板，参考 BaseFree 布局
   特点：
   - 抽屉宽度与 BaseFree 一致
-  - 顶部工具栏：左侧 PrompInfo，右侧返回按钮，中间可配置其他按钮
+  - 顶部工具栏：左侧 PromptInfo，右侧返回按钮，中间可配置其他按钮
   - 分割线：深灰色横线，上下各 10px 间距
   - 内容区：宽度同工具栏，高度 flex，深灰色边框
 -->
@@ -12,7 +12,7 @@
 import { computed, ref, watch, nextTick, onMounted } from 'vue'
 import { ElDrawer, ElScrollbar } from 'element-plus'
 import { ButtonPlus } from '@/components/ButtonPlus'
-import { PrompInfo } from '@/components/PrompInfo'
+import { PromptInfo } from '@/components/PromptInfo'
 
 defineOptions({
   name: 'ResponseDrawer'
@@ -138,8 +138,8 @@ const setPaddingZero = (element: HTMLElement) => {
 }
 
 // ==================== 暴露方法 ====================
-/** PrompInfo 组件引用 */
-const prompInfoRef = ref<InstanceType<typeof PrompInfo>>()
+/** PromptInfo 组件引用 */
+const prompInfoRef = ref<InstanceType<typeof PromptInfo>>()
 
 defineExpose({
   /** 显示信息提示 */
@@ -156,7 +156,7 @@ defineExpose({
       prompInfoRef.value?.err(message)
     }
   },
-  /** 获取 PrompInfo 组件引用 */
+  /** 获取 PromptInfo 组件引用 */
   getPrompInfoRef: () => prompInfoRef.value
 })
 
@@ -197,9 +197,9 @@ onMounted(() => {
   >
     <!-- 顶部工具栏 -->
     <div class="response-drawer-toolbar">
-      <!-- 工具栏左侧：PrompInfo 组件 -->
-      <div class="toolbar-left">
-        <PrompInfo ref="prompInfoRef" />
+            <!-- 工具栏左侧：PromptInfo 组件 -->
+            <div class="toolbar-left">
+              <PromptInfo ref="prompInfoRef" />
       </div>
 
       <!-- 工具栏右侧：其他按钮 + 返回按钮 -->

@@ -178,7 +178,7 @@ service.interceptors.response.use(
     ElMessage.error(message)
     
     // 返回包含详细错误信息的 Error 对象，让调用方能够捕获并处理
-    // 这样 BaseFree.vue 等组件可以在 PrompInfo 中显示详细的错误信息
+    // 这样 BaseFree.vue 等组件可以在 PromptInfo 中显示详细的错误信息
     return Promise.reject(new Error(message))
   }
 )

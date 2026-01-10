@@ -945,7 +945,7 @@ fetchKitchens()
     <div style="padding: 20px">
       <h2>这是测试抽屉弹窗的内容区</h2>
       <p>您可以在内容区添加任何需要的内容。</p>
-      <p>工具栏左侧显示 PrompInfo 组件，右侧显示返回按钮和其他可配置的按钮。</p>
+      <p>工具栏左侧显示 PromptInfo 组件，右侧显示返回按钮和其他可配置的按钮。</p>
     </div>
   </ResponseDrawer>
 </template>
