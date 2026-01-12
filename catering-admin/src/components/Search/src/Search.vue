@@ -66,36 +66,40 @@ const newSchema = computed(() => {
     })
   }
   if (propsComputed.layout === 'inline') {
-    schema = schema.concat([
-      {
-        field: 'action',
-        formItemProps: {
-          labelWidth: '0px',
-          slots: {
-            default: () => {
-              return (
-                <div>
-                  <ActionButton
-                    showSearch={propsComputed.showSearch}
-                    showReset={propsComputed.showReset}
-                    showExpand={propsComputed.showExpand}
-                    searchLoading={propsComputed.searchLoading}
-                    resetLoading={propsComputed.resetLoading}
-                    visible={visible.value}
-                    onExpand={setVisible}
-                    onReset={reset}
-                    onSearch={search}
-                  />
-                </div>
-              )
-            },
-            label: () => {
-              return <span>&nbsp;</span>
+    // 只有当至少需要显示一个按钮时才添加 action 字段
+    const needActionButton = propsComputed.showSearch || propsComputed.showReset || propsComputed.showExpand
+    if (needActionButton) {
+      schema = schema.concat([
+        {
+          field: 'action',
+          formItemProps: {
+            labelWidth: '0px',
+            slots: {
+              default: () => {
+                return (
+                  <div>
+                    <ActionButton
+                      showSearch={propsComputed.showSearch}
+                      showReset={propsComputed.showReset}
+                      showExpand={propsComputed.showExpand}
+                      searchLoading={propsComputed.searchLoading}
+                      resetLoading={propsComputed.resetLoading}
+                      visible={visible.value}
+                      onExpand={setVisible}
+                      onReset={reset}
+                      onSearch={search}
+                    />
+                  </div>
+                )
+              },
+              label: () => {
+                return <span>&nbsp;</span>
+              }
             }
           }
         }
-      }
-    ])
+      ])
+    }
   }
   return schema
 })
