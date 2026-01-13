@@ -12,7 +12,6 @@
 import { computed, ref, watch, nextTick, onMounted } from 'vue'
 import { ElDrawer, ElScrollbar } from 'element-plus'
 import { ButtonPlus } from '@/components/ButtonPlus'
-import { PromptInfo } from '@/components/PromptInfo'
 
 defineOptions({
   name: 'ResponseDrawer'
@@ -122,6 +121,12 @@ const handleToolbarButtonClick = async (btn: ToolbarButton) => {
 /** ElDrawer 组件引用 */
 const drawerRef = ref<InstanceType<typeof ElDrawer>>()
 
+/** 内容区引用 */
+const contentRef = ref<HTMLElement>()
+
+/** 分割线引用 */
+const dividerRef = ref<HTMLElement>()
+
 /**
  * 强制设置 el-drawer__body 的 padding 为 0
  * 通过查找所有 .el-drawer__body，然后检查其内部是否有 response-drawer-toolbar 类
@@ -149,40 +154,47 @@ const setPaddingZero = (element: HTMLElement) => {
   }
 }
 
-// ==================== 暴露方法 ====================
-/** PromptInfo 组件引用 */
-const prompInfoRef = ref<InstanceType<typeof PromptInfo>>()
-
-defineExpose({
-  /** 显示信息提示 */
-  showInfo: (type?: 'info' | 'warn' | 'error' | null, message?: string | null) => {
-    if (!type || !message) {
-      prompInfoRef.value?.ready()
+/**
+ * 计算并设置内容区高度
+ * 高度 = 窗口高度 - 分割线y坐标 - 20px
+ */
+const calculateContentHeight = () => {
+  nextTick(() => {
+    if (!contentRef.value || !dividerRef.value) {
       return
     }
-    if (type === 'info') {
-      prompInfoRef.value?.info(message)
-    } else if (type === 'warn') {
-      prompInfoRef.value?.warn(message)
-    } else if (type === 'error') {
-      prompInfoRef.value?.err(message)
+    
+    const windowHeight = window.innerHeight
+    const dividerRect = dividerRef.value.getBoundingClientRect()
+    const dividerY = dividerRect.top + dividerRect.height
+    const contentHeight = windowHeight - dividerY - 20
+    
+    if (contentHeight > 0) {
+      contentRef.value.style.height = `${contentHeight}px`
     }
-  },
-  /** 获取 PromptInfo 组件引用 */
-  getPrompInfoRef: () => prompInfoRef.value
-})
+  })
+}
+
+// ==================== 暴露方法 ====================
+defineExpose({})
 
 // ==================== 监听和生命周期 ====================
-/** 监听抽屉显示状态，当打开时强制设置 padding */
+/** 监听抽屉显示状态，当打开时强制设置 padding 和内容区高度 */
 watch(drawerVisible, (visible) => {
   if (visible) {
     // 使用 nextTick 和 setTimeout 确保 DOM 完全渲染后设置
     nextTick(() => {
       forceSetDrawerBodyPadding()
+      calculateContentHeight()
       // 延迟设置，确保 Element Plus 的动画完成
       setTimeout(() => {
         forceSetDrawerBodyPadding()
+        calculateContentHeight()
       }, 100)
+      // 再次延迟，确保动画完全完成
+      setTimeout(() => {
+        calculateContentHeight()
+      }, 300)
     })
   }
 })
@@ -190,6 +202,7 @@ watch(drawerVisible, (visible) => {
 onMounted(() => {
   if (drawerVisible.value) {
     forceSetDrawerBodyPadding()
+    calculateContentHeight()
   }
 })
 </script>
@@ -206,13 +219,13 @@ onMounted(() => {
     :before-close="props.beforeClose"
     destroy-on-close
     class="response-drawer"
-    @opened="forceSetDrawerBodyPadding"
+    @opened="() => { forceSetDrawerBodyPadding(); calculateContentHeight(); }"
   >
     <!-- 顶部工具栏 -->
     <div class="response-drawer-toolbar">
-            <!-- 工具栏左侧：PromptInfo 组件 -->
-            <div class="toolbar-left">
-              <PromptInfo ref="prompInfoRef" />
+      <!-- 工具栏左侧：空（由子组件填充） -->
+      <div class="toolbar-left">
+        <slot name="toolbar-left"></slot>
       </div>
 
       <!-- 工具栏右侧：其他按钮 + 返回按钮 -->
@@ -234,10 +247,10 @@ onMounted(() => {
     </div>
 
     <!-- 分割线：直接放在抽屉下一级，贯穿左右 -->
-    <div class="response-drawer-divider"></div>
+    <div ref="dividerRef" class="response-drawer-divider"></div>
 
     <!-- 内容区 -->
-    <div class="response-drawer-content">
+    <div ref="contentRef" class="response-drawer-content">
       <ElScrollbar class="content-scrollbar">
         <div class="content-inner">
           <!-- 默认插槽：内容区内容 -->
@@ -254,8 +267,8 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 10px;
-  width: 760px;
-  max-width: 760px;
+  width: 800px;
+  max-width: 800px;
   margin: 0;
   padding: 0;
   padding-top: 0;
@@ -289,28 +302,37 @@ onMounted(() => {
 
 /* 内容区 */
 .response-drawer-content {
-  flex: 1;
-  min-height: 0;
-  width: 760px;
-  max-width: 760px;
+  width: 800px;
+  max-width: 800px;
   margin: 0;
   padding: 0;
   border: none;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative; /* 为绝对定位的子元素提供定位上下文 */
 
   .content-scrollbar {
-    flex: 1;
-    min-height: 0;
+    position: absolute; /* 绝对定位，确保占据整个内容区 */
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    overflow: hidden;
 
     :deep(.el-scrollbar__wrap) {
       overflow-x: hidden;
+      overflow-y: auto; /* 确保纵向滚动 */
+      height: 100%; /* 确保滚动容器高度正确 */
+    }
+
+    :deep(.el-scrollbar__view) {
+      /* 让内容自然高度，不需要设置 height */
     }
 
     .content-inner {
       padding: 10px 0 0 20px;
-      min-height: 100%;
+      box-sizing: border-box;
     }
   }
 }
@@ -329,10 +351,24 @@ onMounted(() => {
 
 /* 抽屉样式（参考 BaseFree 的实现方式） */
 .response-drawer {
+  :deep(.el-drawer) {
+    overflow: hidden !important; /* 防止整个 drawer 滚动 */
+    display: flex !important;
+    flex-direction: column !important;
+  }
+  
+  :deep(.el-drawer__container) {
+    overflow: hidden !important;
+    display: flex !important;
+    flex-direction: column !important;
+    height: 100vh !important; /* 确保容器高度为视口高度 */
+  }
+
   :deep(.el-drawer__header) {
     margin-bottom: 0;
     padding: 15px 20px;
     border-bottom: 1px solid var(--el-border-color);
+    flex-shrink: 0; /* 防止 header 被压缩 */
   }
 
   :deep(.el-drawer__body) {
@@ -340,6 +376,9 @@ onMounted(() => {
     display: flex !important;
     flex-direction: column !important;
     overflow: hidden !important;
+    flex: 1 !important; /* 占据剩余空间 */
+    min-height: 0 !important; /* 允许缩小 */
+    box-sizing: border-box;
   }
 
   :deep(.el-drawer__body > .response-drawer-divider) {

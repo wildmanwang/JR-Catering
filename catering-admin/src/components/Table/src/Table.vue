@@ -350,6 +350,11 @@ export default defineComponent({
       delete bindValue.columns
       delete bindValue.data
       delete bindValue.align
+      // 将 rowClassName 转换为 row-class-name（Element Plus 需要 kebab-case）
+      if (bindValue.rowClassName !== undefined) {
+        bindValue['row-class-name'] = bindValue.rowClassName
+        delete bindValue.rowClassName
+      }
       return bindValue
     })
 

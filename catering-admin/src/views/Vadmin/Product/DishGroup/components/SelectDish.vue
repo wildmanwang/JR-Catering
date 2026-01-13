@@ -1,5 +1,5 @@
 <script setup lang="tsx">
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { SelectRecord, type SelectTab } from '@/wintemplate/SelectRecord'
 import { getDishListApi } from '@/api/vadmin/product/dish'
 import { FormSchema } from '@/components/Form'
@@ -24,12 +24,9 @@ const searchSchema = reactive<FormSchema[]>([
     field: 'status',
     label: '状态',
     component: 'Select',
-    colProps: {
-      span: 8
-    },
     componentProps: {
       style: {
-        width: '100%'
+        width: '200px'
       },
       placeholder: '请选择状态',
       clearable: true
@@ -43,12 +40,9 @@ const searchSchema = reactive<FormSchema[]>([
     field: 'fuzzy_query_str',
     label: '模糊查询',
     component: 'Input',
-    colProps: {
-      span: 8
-    },
     componentProps: {
       style: {
-        width: '100%'
+        width: '100%' // Input 组件设置为 100%，SelectRecord 会处理为 flex 填充剩余空间
       },
       placeholder: '请输入名称或显示名称',
       clearable: true
@@ -121,29 +115,35 @@ interface SelectDishProps {
   selectType?: 'row' | 'column' // 选择类型
 }
 
+// 使用方的配置：selectMode 可能是 'single'、'multiple'，也可能不配置（undefined）
+// 如果不配置，SelectRecord 模板会使用默认值 'single'
 const selectDishProps = withDefaults(defineProps<SelectDishProps>(), {
   selectedRecords: () => [],
-  selectMode: 'multiple',
+  // selectMode 不设置默认值，由使用方配置或父组件传递
+  // 如果未配置，SelectRecord 模板会使用默认值 'single'
   defaultSearchParams: () => ({}),
   selectType: 'row'
 })
 
 // ==================== Tab 配置 ====================
-const tabs = ref<SelectTab[]>([
-  {
-    label: '选择菜品',
-    name: 'select',
-    searchSchema: searchSchema,
-    fetchDataApi: getDishListApi,
-    tableColumns: tableColumns,
-    rowKey: 'id',
-    displayField: (row: any) => {
-      return row.name_unique || row.name_display || String(row.id || '')
-    },
-    selectMode: selectDishProps.selectMode,
-    defaultSearchParams: selectDishProps.defaultSearchParams
-  }
-])
+// 使用 computed 确保 selectMode 和 defaultSearchParams 能够响应式更新
+const tabs = computed<SelectTab[]>(() => {
+  return [
+    {
+      label: '选择菜品',
+      name: 'select',
+      searchSchema: searchSchema,
+      fetchDataApi: getDishListApi,
+      tableColumns: tableColumns,
+      rowKey: 'id',
+      displayField: (row: any) => {
+        return row.name_unique || row.name_display || String(row.id || '')
+      },
+      selectMode: selectDishProps.selectMode, // 使用使用方配置的值，如果未配置则为 undefined，SelectRecord 会使用默认值 'single'
+      defaultSearchParams: selectDishProps.defaultSearchParams
+    }
+  ]
+})
 
 // ==================== 事件处理 ====================
 const handleConfirm = (records: any[]) => {

@@ -7,6 +7,7 @@ import { useForm } from '@/hooks/web/useForm'
 import { ImagePlus } from '@/components/ImagePlus'
 import { processImageFields, ImageQuerySuffix, getImageUrlWithSuffix } from '@/utils/imageList'
 import { formatDataItem } from '@/utils/dsOptions'
+import { PromptInfo } from '@/components/PromptInfo'
 
 defineOptions({
   name: 'BaseFree'
@@ -1354,14 +1355,24 @@ type InfoType = 'info' | 'warn' | 'error'
  * @param message 提示信息，为空时显示就绪状态
  */
 const showInfo = (type?: InfoType | null, message?: string | null) => {
-  // 通过 ResponseDrawer 的 showInfo 方法显示提示信息
-  if (responseDrawerRef.value) {
-    responseDrawerRef.value.showInfo(type || null, message || null)
+  if (!type || !message) {
+    prompInfoRef.value?.ready()
+    return
+  }
+  if (type === 'info') {
+    prompInfoRef.value?.info(message)
+  } else if (type === 'warn') {
+    prompInfoRef.value?.warn(message)
+  } else if (type === 'error') {
+    prompInfoRef.value?.err(message)
   }
 }
 
 // ==================== ResponseDrawer 引用 ====================
 const responseDrawerRef = ref<InstanceType<typeof ResponseDrawer>>()
+
+// ==================== PromptInfo 引用 ====================
+const prompInfoRef = ref<InstanceType<typeof PromptInfo>>()
 
 // ==================== 暴露方法 ====================
 defineExpose({
@@ -1370,7 +1381,7 @@ defineExpose({
   setValues,
   getElFormExpose,
   showInfo, // 显示信息提示
-  getPrompInfoRef: () => responseDrawerRef.value?.getPrompInfoRef() // 获取 PromptInfo 引用
+  getPrompInfoRef: () => prompInfoRef.value // 获取 PromptInfo 引用
 })
 </script>
 
@@ -1386,6 +1397,10 @@ defineExpose({
     @close="handleCancel"
     @cancel="handleCancel"
   >
+    <!-- 工具栏左侧：PromptInfo 组件 -->
+    <template #toolbar-left>
+      <PromptInfo ref="prompInfoRef" />
+    </template>
     <!-- 内容区：Tab 组件和表单 -->
     <div class="base-free-content">
       <!-- ==================== 扩展点6：按钮区域自定义（已移至 ResponseDrawer 工具栏） ==================== -->
