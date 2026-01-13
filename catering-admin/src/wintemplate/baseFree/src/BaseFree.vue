@@ -1,7 +1,7 @@
 <script setup lang="tsx">
 import { computed, ref, watch, nextTick } from 'vue'
 import { ElScrollbar, ElTabs, ElTabPane, ElMessage, ElMessageBox } from 'element-plus'
-import { ResponseDrawer, type ToolbarButton } from '@/wintemplate/ResponseDrawer'
+import { WinDrawer, type ToolbarButton } from '@/wintemplate/WinDrawer'
 import { Form, FormSchema } from '@/components/Form'
 import { useForm } from '@/hooks/web/useForm'
 import { ImagePlus } from '@/components/ImagePlus'
@@ -309,7 +309,7 @@ const handleBeforeClose = async (done: () => void) => {
   }
 }
 
-/** 计算工具栏按钮配置（用于传递给 ResponseDrawer） */
+/** 计算工具栏按钮配置（用于传递给 WinDrawer） */
 const toolbarButtons = computed<ToolbarButton[]>(() => {
   const buttons: ToolbarButton[] = []
   
@@ -1368,8 +1368,8 @@ const showInfo = (type?: InfoType | null, message?: string | null) => {
   }
 }
 
-// ==================== ResponseDrawer 引用 ====================
-const responseDrawerRef = ref<InstanceType<typeof ResponseDrawer>>()
+// ==================== WinDrawer 引用 ====================
+const responseDrawerRef = ref<InstanceType<typeof WinDrawer>>()
 
 // ==================== PromptInfo 引用 ====================
 const prompInfoRef = ref<InstanceType<typeof PromptInfo>>()
@@ -1386,7 +1386,7 @@ defineExpose({
 </script>
 
 <template>
-  <ResponseDrawer
+  <WinDrawer
     ref="responseDrawerRef"
     v-model="drawerVisible"
     :title="drawerTitle"
@@ -1403,10 +1403,10 @@ defineExpose({
     </template>
     <!-- 内容区：Tab 组件和表单 -->
     <div class="base-free-content">
-      <!-- ==================== 扩展点6：按钮区域自定义（已移至 ResponseDrawer 工具栏） ==================== -->
-      <!-- 保留此插槽以保持向后兼容，但建议直接使用 ResponseDrawer 的 toolbarButtons -->
+      <!-- ==================== 扩展点6：按钮区域自定义（已移至 WinDrawer 工具栏） ==================== -->
+      <!-- 保留此插槽以保持向后兼容，但建议直接使用 WinDrawer 的 toolbarButtons -->
       <slot name="buttons" :save="handleSave" :cancel="handleCancel" :continue-new="handleContinueNew" :copy-new="handleCopyNew" :mode="props.mode" :save-loading="props.saveLoading" :show-continue-new="showContinueNewButton" :show-copy-new="showCopyNewButton">
-        <!-- 默认按钮已由 ResponseDrawer 的 toolbarButtons 处理 -->
+        <!-- 默认按钮已由 WinDrawer 的 toolbarButtons 处理 -->
       </slot>
       
       <!-- Tab 组件 -->
@@ -1437,13 +1437,13 @@ defineExpose({
         </ElTabPane>
       </ElTabs>
     </div>
-  </ResponseDrawer>
+  </WinDrawer>
 </template>
 
 <style lang="less" scoped>
 /* BaseFree 内容区样式 */
 .base-free-content {
-  /* 内容区已在 ResponseDrawer 的插槽中，不需要额外的滚动容器 */
+  /* 内容区已在 WinDrawer 的插槽中，不需要额外的滚动容器 */
   /* 保持表单内容的样式 */
   
   :deep(.el-tabs) {

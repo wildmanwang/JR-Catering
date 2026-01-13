@@ -13,7 +13,7 @@ import TableGrid from '@/components/TableGrid'
 import type { TableGridColumn } from '@/components/TableGrid'
 import { ButtonPlus } from '@/components/ButtonPlus'
 import { PromptInfo } from '@/components/PromptInfo'
-import { StatusStoragePlus, type StatusStoreItem } from '@/components/StatusStoragePlus'
+import { WinSheet, type StatusStoreItem } from '@/wintemplate/WinSheet'
 import { formatDataItem } from '@/utils/dsOptions'
 import { cleanImageArray, ImageQuerySuffix, normalizeImageUrl, processImageList } from '@/utils/imageList'
 
@@ -185,8 +185,8 @@ const isRestoring = ref(false)
 const dataList = ref<any[]>([])
 const originalData = ref<any[]>([])
 
-// StatusStoragePlus 组件引用
-const statusStoragePlusRef = ref<InstanceType<typeof StatusStoragePlus>>()
+// WinSheet 组件引用
+const winSheetRef = ref<InstanceType<typeof WinSheet>>()
 
 // ==================== 选项数据管理 ====================
 /** 存储各字段的选项数据（字段名 -> 选项数组） */
@@ -1481,7 +1481,7 @@ onMounted(async () => {
     const loaded = await loadDataFromStorage()
     if (loaded) {
       // 清除状态数据，因为使用了新的手选数据
-      statusStoragePlusRef.value?.clearState()
+      winSheetRef.value?.clearState()
     }
     // 如果没有加载数据，不插入空行
     if (prompInfoRef.value && !loaded) {
@@ -1497,7 +1497,7 @@ onMounted(async () => {
     await nextTick()
     
     // 检查是否有保存的状态（通过 StatusStoragePlus 的 waitForRestore 方法）
-    const hasSavedState = await statusStoragePlusRef.value?.waitForRestore()
+    const hasSavedState = await winSheetRef.value?.waitForRestore()
     
     if (!hasSavedState) {
       // 没有保存的状态，也没有手选数据，不自动插入空行（由用户手动添加）
@@ -1551,10 +1551,11 @@ defineExpose({
 </script>
 
 <template>
-  <StatusStoragePlus
-    ref="statusStoragePlusRef"
+  <WinSheet
+    ref="winSheetRef"
+    :window-id="props.windowId || 'IMPORT_GRID'"
     :stores="stateStores"
-    :storage-prefix="props.windowId || 'IMPORT_GRID_STATE_'"
+    :storage-prefix="props.windowId ? `${props.windowId}_STATE_` : 'IMPORT_GRID_STATE_'"
     :on-restore-complete="handleRestoreComplete"
   >
     <div class="import-grid-container">
@@ -1624,7 +1625,7 @@ defineExpose({
       />
       </div>
     </div>
-  </StatusStoragePlus>
+  </WinSheet>
 </template>
 
 <style lang="less" scoped>

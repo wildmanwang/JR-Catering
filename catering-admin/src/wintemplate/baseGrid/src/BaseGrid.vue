@@ -8,7 +8,7 @@ import { BaseButton } from '@/components/Button'
 import { ButtonPlus } from '@/components/ButtonPlus'
 import { PromptInfo } from '@/components/PromptInfo'
 import { QueryBar, type QueryCondition } from '@/components/QueryBar'
-import { StatusStoragePlus, type StatusStoreItem } from '@/components/StatusStoragePlus'
+import { WinSheet, type StatusStoreItem } from '@/wintemplate/WinSheet'
 import { ImageSingle } from '@/components/ImageSingle'
 import { BaseFree, type FreeFormField, type FreeTab } from '@/wintemplate/BaseFree'
 import { formatDataItem } from '@/utils/dsOptions'
@@ -602,8 +602,8 @@ const currentRow = ref<any>(null)
 /** 保存按钮加载状态 */
 const saveLoading = ref(false)
 
-/** StatusStoragePlus 组件引用 */
-const statusStoragePlusRef = ref<InstanceType<typeof StatusStoragePlus>>()
+/** WinSheet 组件引用 */
+const winSheetRef = ref<InstanceType<typeof WinSheet>>()
 
 /** QueryBar 组件引用 */
 const queryBarRef = ref<InstanceType<typeof QueryBar>>()
@@ -640,7 +640,7 @@ const handleSearch = async (data: any) => {
   formDisplayParams.value = filteredParams
   
   currentPage.value = 1
-  statusStoragePlusRef.value?.saveState()
+  winSheetRef.value?.saveState()
   getList()
 }
 
@@ -674,7 +674,7 @@ const handleQueryBarFieldChange = (field: string, value: any) => {
   }
   
   // 自动保存状态（通过 StatusStoragePlus）
-  statusStoragePlusRef.value?.saveState()
+  winSheetRef.value?.saveState()
 }
 
 /**
@@ -684,7 +684,7 @@ const handleReset = async () => {
   internalSearchParams.value = {}
   formDisplayParams.value = {}
   currentPage.value = 1
-  statusStoragePlusRef.value?.saveState()
+  winSheetRef.value?.saveState()
   getList()
 }
 
@@ -878,7 +878,7 @@ const handleQuickQuerySelect = async (index: string) => {
 
     // 重置到第一页并刷新列表
     currentPage.value = 1
-    statusStoragePlusRef.value?.saveState()
+    winSheetRef.value?.saveState()
     getList()
   }
 }
@@ -1084,7 +1084,7 @@ onMounted(async () => {
   
   // 检查是否有保存的状态（通过 StatusStoragePlus 的 waitForRestore 方法）
   // 如果没有保存的状态，说明是首次打开，需要立即调用 getList()
-  const hasSavedState = await statusStoragePlusRef.value?.waitForRestore()
+    const hasSavedState = await winSheetRef.value?.waitForRestore()
   
   if (!hasSavedState) {
     // 首次打开，没有保存的状态，立即调用 getList()
@@ -1349,7 +1349,7 @@ const handleSelectionChange = async () => {
     } catch (err) {
       currentSelectedIds.value = []
     }
-    statusStoragePlusRef.value?.saveState()
+    winSheetRef.value?.saveState()
   }
 }
 
@@ -2105,10 +2105,11 @@ defineExpose({
 </script>
 
 <template>
-  <StatusStoragePlus
-    ref="statusStoragePlusRef"
+  <WinSheet
+    ref="winSheetRef"
+    :window-id="props.windowId || 'BASE_GRID'"
     :stores="stateStores"
-    :storage-prefix="props.windowId || 'BASE_GRID_STATE_'"
+    :storage-prefix="props.windowId ? `${props.windowId}_STATE_` : 'BASE_GRID_STATE_'"
     :on-restore-complete="handleRestoreComplete"
   >
     <div class="base-grid-wrapper" v-show="pageReady">
@@ -2241,7 +2242,7 @@ defineExpose({
     @success="handleSuccess"
     @cancel="handleCancel"
   />
-  </StatusStoragePlus>
+  </WinSheet>
 </template>
 
 <style scoped>

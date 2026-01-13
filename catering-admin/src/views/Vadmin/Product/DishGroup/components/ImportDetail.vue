@@ -187,7 +187,7 @@ const handleSave = async (_data: any) => {
     <SelectDish
       v-model="selectDishVisible"
       :selected-records="selectedDishes"
-      select-mode="single"
+      select-mode="multiple"
       select-type="row"
       @confirm="handleSelectDishConfirm"
       @cancel="handleSelectDishCancel"

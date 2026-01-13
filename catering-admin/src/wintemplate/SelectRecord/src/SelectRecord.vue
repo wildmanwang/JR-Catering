@@ -76,7 +76,7 @@
 <script setup lang="tsx">
 import { computed, ref, watch, unref, nextTick } from 'vue'
 import { ElScrollbar, ElCard, ElMenu, ElMenuItem, ElMessage } from 'element-plus'
-import { ResponseDrawer, type ToolbarButton } from '@/wintemplate/ResponseDrawer'
+import { WinDrawer, type ToolbarButton } from '@/wintemplate/WinDrawer'
 import { Search } from '@/components/Search'
 import { FormSchema } from '@/components/Form'
 import { Table, TableColumn } from '@/components/Table'
@@ -158,7 +158,7 @@ const drawerWidth = computed(() => {
   return defaultWidth
 })
 
-/** 计算工具栏按钮配置（用于传递给 ResponseDrawer） */
+/** 计算工具栏按钮配置（用于传递给 WinDrawer） */
 const toolbarButtons = computed<ToolbarButton[]>(() => {
   const buttons: ToolbarButton[] = []
   
@@ -774,8 +774,8 @@ const handleDragEnd = () => {
   // 拖拽结束后可以在这里处理排序逻辑
 }
 
-// ==================== ResponseDrawer 引用 ====================
-const responseDrawerRef = ref<InstanceType<typeof ResponseDrawer>>()
+// ==================== WinDrawer 引用 ====================
+const responseDrawerRef = ref<InstanceType<typeof WinDrawer>>()
 
 // ==================== 暴露方法 ====================
 defineExpose({
@@ -791,7 +791,7 @@ defineExpose({
 </script>
 
 <template>
-  <ResponseDrawer
+  <WinDrawer
     ref="responseDrawerRef"
     v-model="drawerVisible"
     :title="drawerTitle"
@@ -907,7 +907,7 @@ defineExpose({
         </div>
       </div>
     </div>
-  </ResponseDrawer>
+  </WinDrawer>
 </template>
 
 <style lang="less" scoped>

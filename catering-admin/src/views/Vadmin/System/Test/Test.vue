@@ -21,7 +21,7 @@ import Response from './components/Response.vue'
 import { BaseButton } from '@/components/Button'
 import { useRouter } from 'vue-router'
 import { ImagePlus } from '@/components/ImagePlus'
-import { ResponseDrawer } from '@/wintemplate/ResponseDrawer'
+import { WinDrawer } from '@/wintemplate/WinDrawer'
 
 defineOptions({
   name: 'ProductDish'
@@ -72,7 +72,7 @@ const imagePlusHelperRef = ref<InstanceType<typeof ImagePlus>>()
 /** 测试抽屉显示状态 */
 const testDrawerVisible = ref(false)
 /** 测试抽屉组件引用 */
-const testDrawerRef = ref<InstanceType<typeof ResponseDrawer>>()
+const testDrawerRef = ref<InstanceType<typeof WinDrawer>>()
 
 /**
  * 打开测试抽屉
@@ -935,7 +935,7 @@ fetchKitchens()
   </div>
 
   <!-- 测试抽屉弹窗 -->
-  <ResponseDrawer
+  <WinDrawer
     ref="testDrawerRef"
     v-model="testDrawerVisible"
     title="测试抽屉弹窗"
@@ -947,7 +947,7 @@ fetchKitchens()
       <p>您可以在内容区添加任何需要的内容。</p>
       <p>工具栏左侧显示 PromptInfo 组件，右侧显示返回按钮和其他可配置的按钮。</p>
     </div>
-  </ResponseDrawer>
+  </WinDrawer>
 </template>
 
 <style scoped>

@@ -8,7 +8,9 @@
   - 支持从源窗口自动读取数据
 -->
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick, toRaw } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
+import { WinSheet, type StatusStoreItem } from '@/wintemplate/WinSheet'
 import TableCross, { type TableCrossRow, type TableCrossColumn, type TableCrossDataConfigs } from '@/components/TableCross/src/TableCross.vue'
 import { ButtonPlus } from '@/components/ButtonPlus'
 import { PromptInfo } from '@/components/PromptInfo'
@@ -120,6 +122,7 @@ const crossData = ref<{
 // ==================== 组件引用 ====================
 const prompInfoRef = ref<InstanceType<typeof PromptInfo>>()
 const tableCrossRef = ref<InstanceType<typeof TableCross>>()
+const winSheetRef = ref<InstanceType<typeof WinSheet>>()
 
 // 为了在模板中使用
 const dataConfigs = computed(() => props.dataConfigs ?? [])
@@ -245,12 +248,28 @@ const loadDataFromSource = () => {
 
 /**
  * 从sessionStorage加载数据
+ * @param shouldRestore - 是否应该恢复缓存（窗口切换时为 true，窗口打开时为 false）
  */
-const loadDataFromStorage = () => {
-  if (!props.storageKey) return
+const loadDataFromStorage = (shouldRestore: boolean = false) => {
+  if (!props.storageKey) {
+    return
+  }
   
+  // 窗口打开场景：清空缓存，不恢复
+  if (!shouldRestore) {
+    try {
+      sessionStorage.removeItem(props.storageKey)
+    } catch (error) {
+      // 静默处理
+    }
+    // 清空后直接返回，不加载数据
+    return
+  }
+  
+  // 窗口切换场景：恢复缓存
   try {
     const storageData = sessionStorage.getItem(props.storageKey)
+    
     if (storageData) {
       const data = JSON.parse(storageData)
       
@@ -285,7 +304,9 @@ const loadDataFromStorage = () => {
  * 保存数据到sessionStorage
  */
 const saveDataToStorage = () => {
-  if (!props.storageKey) return
+  if (!props.storageKey) {
+    return
+  }
   
   try {
     const data = {
@@ -510,6 +531,50 @@ watch(() => props.dataConfigs, (configs) => {
   }
 }, { immediate: true })
 
+// ==================== 状态存储配置（用于 WinSheet） ====================
+/**
+ * 配置状态存储（用于 WinSheet 的 StatusStoragePlus）
+ */
+const stateStores = computed<StatusStoreItem[]>(() => {
+  const stores: StatusStoreItem[] = [
+    {
+      name: 'importCross',
+      getState: () => {
+        return {
+          branchId: branchId.value,
+          currentDataConfigIndex: currentDataConfigIndex.value,
+          dataType: dataType.value
+        }
+      },
+      setState: async (state: any) => {
+        if (state.branchId !== undefined) {
+          branchId.value = state.branchId
+        }
+        if (state.currentDataConfigIndex !== undefined) {
+          currentDataConfigIndex.value = state.currentDataConfigIndex
+        }
+        if (state.dataType) {
+          dataType.value = state.dataType
+        }
+      }
+    }
+  ]
+  return stores
+})
+
+/**
+ * 状态恢复完成回调
+ */
+const handleRestoreComplete = async (restored: boolean) => {
+  if (restored) {
+    // 状态已恢复，可以加载 sessionStorage 中的数据（窗口切换场景）
+    loadDataFromStorage(true)
+  } else {
+    // 窗口打开场景，清空 sessionStorage 缓存
+    loadDataFromStorage(false)
+  }
+}
+
 // ==================== 监听源窗口数据变化 ====================
 /**
  * 使用 StorageEvent 监听 sessionStorage 变化（跨标签页）
@@ -531,6 +596,18 @@ const handleWindowFocus = () => {
   }
 }
 
+/**
+ * 路由守卫：离开页面前保存 sessionStorage 数据
+ * 注意：状态缓存由 WinSheet 的 StatusStoragePlus 自动处理
+ */
+onBeforeRouteLeave((_to, _from, next) => {
+  // 保存数据到 sessionStorage（用于窗口间传递数据）
+  if (props.storageKey) {
+    saveDataToStorage()
+  }
+  next()
+})
+
 // ==================== 生命周期 ====================
 onMounted(async () => {
   await loadBranchList()
@@ -545,8 +622,9 @@ onMounted(async () => {
     window.addEventListener('focus', handleWindowFocus)
   }
   
-  // 再加载本地存储的数据
-  loadDataFromStorage()
+  // 等待 WinSheet 的状态恢复完成
+  // WinSheet 会在状态恢复完成后调用 handleRestoreComplete
+  // 在 handleRestoreComplete 中根据 restored 参数决定是否加载 sessionStorage 数据
   
   if (prompInfoRef.value) {
     prompInfoRef.value.info('就绪')
@@ -559,6 +637,9 @@ onBeforeUnmount(() => {
     window.removeEventListener('storage', handleStorageChange)
     window.removeEventListener('focus', handleWindowFocus)
   }
+  
+  // 窗口关闭时的 sessionStorage 清理由 WinSheet 的 StatusStoragePlus 自动处理
+  // 这里只需要清理事件监听器
 })
 
 // ==================== 暴露方法 ====================
@@ -578,7 +659,14 @@ defineExpose({
 </script>
 
 <template>
-  <div class="import-cross-container">
+  <WinSheet
+    ref="winSheetRef"
+    :window-id="props.windowId || 'ImportCross'"
+    :stores="stateStores"
+    :storage-prefix="props.windowId ? `${props.windowId}_STATE_` : 'IMPORT_CROSS_STATE_'"
+    :on-restore-complete="handleRestoreComplete"
+  >
+    <div class="import-cross-container">
     <!-- 顶部工具栏 -->
     <div class="import-cross-toolbar">
       <div class="toolbar-left">
@@ -673,6 +761,7 @@ defineExpose({
       />
     </div>
   </div>
+  </WinSheet>
 </template>
 
 <style lang="less" scoped>

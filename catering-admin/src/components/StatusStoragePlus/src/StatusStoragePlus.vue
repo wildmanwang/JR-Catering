@@ -40,14 +40,14 @@ const localStorageAdapter: StorageAdapter = {
     try {
       localStorage.setItem(key, value)
     } catch (err) {
-      console.error('存储数据失败：', err)
+      // 存储数据失败，静默处理
     }
   },
   removeItem: (key: string) => {
     try {
       localStorage.removeItem(key)
     } catch (err) {
-      console.error('删除存储数据失败：', err)
+      // 删除存储数据失败，静默处理
     }
   }
 }
@@ -67,14 +67,14 @@ const sessionStorageAdapter: StorageAdapter = {
     try {
       sessionStorage.setItem(key, value)
     } catch (err) {
-      console.error('存储数据失败：', err)
+      // 存储数据失败，静默处理
     }
   },
   removeItem: (key: string) => {
     try {
       sessionStorage.removeItem(key)
     } catch (err) {
-      console.error('删除存储数据失败：', err)
+      // 删除存储数据失败，静默处理
     }
   }
 }
@@ -304,7 +304,7 @@ const savePageState = async () => {
         const stateData = store.getState()
         state[store.name] = deepClone(stateData)
       } catch (err) {
-        console.error(`[StatusStoragePlus] 保存状态 "${store.name}" 失败：`, err)
+        // 保存状态失败，静默处理
       }
     }
     
@@ -316,7 +316,7 @@ const savePageState = async () => {
     
     storage.value.setItem(PAGE_STATE_KEY.value, JSON.stringify(statePayload))
   } catch (err) {
-    console.error('[StatusStoragePlus] 保存页面状态失败：', err)
+    // 保存页面状态失败，静默处理
   }
 }
 
@@ -326,6 +326,7 @@ const savePageState = async () => {
 const restorePageState = async (): Promise<boolean> => {
   try {
     const savedState = storage.value.getItem(PAGE_STATE_KEY.value)
+    
     if (!savedState) {
       return false
     }
@@ -335,6 +336,7 @@ const restorePageState = async (): Promise<boolean> => {
     // 检查时间戳是否过期
     const now = Date.now()
     const elapsed = now - statePayload.timestamp
+    
     if (elapsed > props.maxAge) {
       storage.value.removeItem(PAGE_STATE_KEY.value)
       return false
@@ -373,7 +375,7 @@ const restorePageState = async (): Promise<boolean> => {
                 const params = getRestoreParams ? getRestoreParams(stateData) : stateData
                 await ref.value[methodName](params)
               } catch (err) {
-                console.error(`[StatusStoragePlus] 通过组件方法 "${methodName}" 恢复状态 "${store.name}" 失败：`, err)
+                // 通过组件方法恢复状态失败，静默处理
               }
             }
             
@@ -386,7 +388,7 @@ const restorePageState = async (): Promise<boolean> => {
           }
         }
       } catch (err) {
-        console.error(`[StatusStoragePlus] 恢复状态 "${store.name}" 失败：`, err)
+        // 恢复状态失败，静默处理
       }
     }
     
@@ -396,7 +398,7 @@ const restorePageState = async (): Promise<boolean> => {
     
     return true
   } catch (err) {
-    console.error('[StatusStoragePlus] 恢复页面状态失败：', err)
+    // 恢复页面状态失败，静默处理
     isRestoring.value = false
     return false
   }
@@ -411,8 +413,10 @@ const clearPageState = (stateKey?: string, fullPath?: string) => {
   
   try {
     const savedState = storage.value.getItem(keyToRemove)
+    
     if (savedState) {
       const state = JSON.parse(savedState)
+      
       if (state.fullPath === pathToCheck) {
         storage.value.removeItem(keyToRemove)
       }
@@ -423,10 +427,10 @@ const clearPageState = (stateKey?: string, fullPath?: string) => {
     try {
       sessionStorageAdapter.removeItem(flagKey)
     } catch (err) {
-      // 静默处理
+      // 删除恢复标记失败，静默处理
     }
   } catch (err) {
-    console.error('[StatusStoragePlus] 清空页面状态失败：', err)
+    // 清空页面状态失败，静默处理
   }
 }
 
@@ -435,17 +439,20 @@ const clearPageState = (stateKey?: string, fullPath?: string) => {
  */
 onBeforeRouteLeave((_to, _from, next) => {
   // 检查是否是关闭页签的操作
-  const isClosing = !tagsViewStore.getVisitedViews.some(
+  // 注意：此时页签可能还没有从 visitedViews 中移除，所以需要检查目标路由
+  // 如果目标路由是关闭操作（不在 visitedViews 中，且不是新打开的路由），则可能是关闭
+  const visitedViews = tagsViewStore.getVisitedViews
+  const isFromInVisitedViews = visitedViews.some(
     view => view.fullPath === _from.fullPath || view.path === _from.path
   )
   
-  if (isClosing) {
-    // 页签关闭由 onBeforeUnmount 处理，这里直接允许
-    next()
-    return
-  }
+  // 如果当前路由不在 visitedViews 中，说明可能是关闭操作
+  // 但为了安全起见，我们仍然保存状态（以防判断错误）
+  // 真正的清空逻辑在 onBeforeUnmount 中处理
+  const isLikelyClosing = !isFromInVisitedViews
   
-  // 如果启用了自动保存，在路由跳转（切换窗口）时保存状态并设置恢复标记
+  // 如果启用了自动保存，在路由跳转（切换窗口）时保存状态
+  // 注意：即使是关闭，也先保存，然后在 onBeforeUnmount 中清空
   if (props.autoSave) {
     if (saveStateTimer) {
       clearTimeout(saveStateTimer)
@@ -453,11 +460,15 @@ onBeforeRouteLeave((_to, _from, next) => {
     }
     savePageState()
     
-    // 设置恢复标记，表示该路由有保存的状态，可以恢复（使用 sessionStorage）
-    try {
-      sessionStorageAdapter.setItem(PAGE_RESTORE_FLAG_KEY.value, '1')
-    } catch (err) {
-      console.error('[StatusStoragePlus] 设置恢复标记失败：', err)
+    // 只有在窗口切换时（不是关闭）才设置恢复标记
+    // 窗口关闭时，onBeforeUnmount 会清空缓存和恢复标记
+    if (!isLikelyClosing) {
+      // 设置恢复标记，表示该路由有保存的状态，可以恢复（使用 sessionStorage）
+      try {
+        sessionStorageAdapter.setItem(PAGE_RESTORE_FLAG_KEY.value, '1')
+      } catch (err) {
+        // 设置恢复标记失败，静默处理
+      }
     }
   }
   
@@ -489,19 +500,51 @@ onMounted(async () => {
   mountedRoutePath = router.currentRoute.value.path
   mountedRouteFullPath = router.currentRoute.value.fullPath
   
-  // 检查是否是首次打开还是切换回来
-  // 通过检查 sessionStorage 中的恢复标记来判断
+  // 严格区分窗口打开和窗口切换场景
+  // 1. 窗口打开：没有恢复标记 -> 不恢复状态，清空可能存在的缓存
+  // 2. 窗口切换：有恢复标记，且当前路由已在 visitedViews 中 -> 恢复状态
   let shouldRestore = false
+  
   try {
+    // 等待 nextTick，确保 tagsViewStore 已更新
+    await nextTick()
+    
+    // 检查是否有恢复标记（这是判断窗口切换的主要依据）
     const restoreFlag = sessionStorageAdapter.getItem(PAGE_RESTORE_FLAG_KEY.value)
-    if (restoreFlag === '1') {
-      // 有恢复标记，说明是切换回来，应该恢复状态
-      shouldRestore = true
-      // 清除标记，避免下次误判
-      sessionStorageAdapter.removeItem(PAGE_RESTORE_FLAG_KEY.value)
+    const hasRestoreFlag = restoreFlag === '1'
+    
+    if (hasRestoreFlag) {
+      // 有恢复标记，进一步验证是否是窗口切换场景
+      // 检查当前路由是否已经在 visitedViews 中（确保不是首次打开但误设置了标记）
+      const visitedViews = tagsViewStore.getVisitedViews
+      const isInVisitedViews = visitedViews.some(
+        view => view.fullPath === mountedRouteFullPath || view.path === mountedRoutePath
+      )
+      
+      if (isInVisitedViews) {
+        // 窗口切换场景：恢复状态
+        shouldRestore = true
+        // 清除标记，避免下次误判
+        sessionStorageAdapter.removeItem(PAGE_RESTORE_FLAG_KEY.value)
+      } else {
+        // 有恢复标记但不在 visitedViews 中，可能是异常情况，清空缓存和标记
+        clearPageState()
+        sessionStorageAdapter.removeItem(PAGE_RESTORE_FLAG_KEY.value)
+      }
+    } else {
+      // 窗口打开场景：没有恢复标记，不恢复状态，清空可能存在的缓存数据
+      // 即使有缓存数据，也忽略它（清空缓存）
+      clearPageState()
     }
   } catch (err) {
-    console.error('[StatusStoragePlus] 检查恢复标记失败：', err)
+    // 出错时，为了安全起见，不恢复状态，清空缓存
+    clearPageState()
+    // 清除可能存在的恢复标记
+    try {
+      sessionStorageAdapter.removeItem(PAGE_RESTORE_FLAG_KEY.value)
+    } catch {
+      // 静默处理
+    }
   }
   
   await nextTick()
@@ -518,7 +561,7 @@ onMounted(async () => {
     try {
       await props.onRestoreComplete(restored)
     } catch (err) {
-      console.error('[StatusStoragePlus] 恢复完成回调执行失败：', err)
+      // 恢复完成回调执行失败，静默处理
     }
   }
 })

@@ -1,5 +1,5 @@
 <!--
-  ResponseDrawer - 抽屉模板弹窗
+  WinDrawer - 抽屉模板弹窗
   
   功能：提供标准化的抽屉弹窗模板，参考 BaseFree 布局
   特点：
@@ -14,7 +14,7 @@ import { ElDrawer, ElScrollbar } from 'element-plus'
 import { ButtonPlus } from '@/components/ButtonPlus'
 
 defineOptions({
-  name: 'ResponseDrawer'
+  name: 'WinDrawer'
 })
 
 // ==================== 类型定义 ====================
