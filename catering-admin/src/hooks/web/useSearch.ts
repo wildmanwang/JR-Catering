@@ -80,6 +80,29 @@ export const useSearch = () => {
      */
     getFormData: async <T = Recordable>(): Promise<T> => {
       const search = await getSearch()
+      if (!search) {
+        return {} as T
+      }
+      // 使用 Search 组件暴露的 getFormData 方法，它会从 Form 组件获取实际的 formModel
+      // 因为 Form 组件内部的 formModel 会随着用户输入而更新
+      if (search.getFormData && typeof search.getFormData === 'function') {
+        try {
+          const formData = await search.getFormData(false) as T
+          return formData
+        } catch (error) {
+          console.error('useSearch: Failed to get form data from Search.getFormData:', error)
+        }
+      }
+      // 如果 Search 组件没有 getFormData 方法，尝试从 Form 组件获取
+      try {
+        const formExpose = await search.getElFormExpose()
+        if (formExpose && formExpose.formModel) {
+          return JSON.parse(JSON.stringify(formExpose.formModel)) as T
+        }
+      } catch (error) {
+        console.error('useSearch: Failed to get form data from Form component:', error)
+      }
+      // 如果都失败，返回 Search 组件的 formModel（向后兼容）
       return search?.formModel as T
     }
   }

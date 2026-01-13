@@ -1,15 +1,15 @@
 <!--
-  SelectDishgroup - 选择菜品分组组件
+  SelectDish - 选择菜品组件
   
   功能说明：
-  这是一个封装了 SelectRecord 的菜品分组选择组件，用于选择菜品分组记录。
-  默认多选模式，可通过 select-mode prop 修改为单选模式。
+  这是一个封装了 SelectRecord 的菜品选择组件，用于选择菜品记录。
+  默认单选模式，可通过 select-mode prop 修改为多选模式。
   
   使用方式：
-  <SelectDishgroup
+  <SelectDish
     v-model="drawerVisible"
-    :selected-records="selectedDishgroups"
-    select-mode="multiple"
+    :selected-records="selectedDishes"
+    select-mode="single"
     @confirm="handleConfirm"
     @cancel="handleCancel"
     @select="handleSelect"
@@ -18,16 +18,33 @@
 <script setup lang="tsx">
 import { reactive, useAttrs, computed } from 'vue'
 import { SelectRecord } from '@/wintemplate/SelectRecord'
-import { getDishGroupListApi } from '@/api/vadmin/product/dishGroup'
+import { getDishListApi, getDishStatusOptionsApi } from '@/api/vadmin/product/dish'
 import { FormSchema } from '@/components/Form'
 import { TableColumn } from '@/components/Table'
 
 defineOptions({
-  name: 'SelectDishgroup'
+  name: 'SelectDish'
 })
 
 // ==================== 查询条件配置 ====================
 const searchSchema = reactive<FormSchema[]>([
+  {
+    field: 'status',
+    label: '状态',
+    component: 'Select',
+    value: 1,
+    componentProps: {
+      style: {
+        width: '200px'
+      },
+      placeholder: '请选择状态',
+      clearable: true
+    },
+    optionApi: async () => {
+      const res = await getDishStatusOptionsApi()
+      return res.data || []
+    }
+  },
   {
     field: 'fuzzy_query_str',
     label: '模糊查询',
@@ -42,6 +59,7 @@ const searchSchema = reactive<FormSchema[]>([
     }
   }
 ])
+
 
 // ==================== 表格列配置 ====================
 const tableColumns = reactive<TableColumn[]>([
@@ -64,21 +82,43 @@ const tableColumns = reactive<TableColumn[]>([
     minWidth: '200px'
   },
   {
-    field: 'stype',
-    label: '类型',
+    field: 'kitchen_name_unique',
+    label: '厨部',
+    show: true,
+    width: '150px'
+  },
+  {
+    field: 'spec',
+    label: '规格',
+    show: true,
+    width: '150px'
+  },
+  {
+    field: 'price',
+    label: '基础售价',
     show: true,
     width: '120px'
   },
   {
-    field: 'order_number',
-    label: '排序号',
+    field: 'status',
+    label: '状态',
     show: true,
-    width: '100px'
+    width: '100px',
+    slots: {
+      default: (data: any) => {
+        const row = data.row
+        return (
+          <>
+            <span>{row.status === 1 ? '启用' : '禁用'}</span>
+          </>
+        )
+      }
+    }
   }
 ])
 
 // ==================== Props ====================
-interface selectDishgroupProps {
+interface selectRecProps {
   modelValue: boolean
   selectedRecords?: any[]
   selectMode?: 'single' | 'multiple' // 选择模式
@@ -89,17 +129,18 @@ interface selectDishgroupProps {
   displayField?: string | ((row: any) => string) // 显示字段或函数
 }
 
-const selectDishgroupProps = withDefaults(defineProps<selectDishgroupProps>(), {
+const selectRecProps = withDefaults(defineProps<selectRecProps>(), {
   selectedRecords: () => [],
-  selectMode: 'multiple', // 默认值：多选模式（如果父组件没有传递，则使用此默认值）
-  selectType: 'column',
-  title: '选择菜品分组',
-  fetchDataApi: () => getDishGroupListApi,
+  selectMode: 'single', // 默认值：单选模式（如果父组件没有传递，则使用此默认值）
+  selectType: 'row',
+  title: '选择菜品',
+  fetchDataApi: () => getDishListApi,
   rowKey: 'id',
   displayField: () => (row: any) => row.name_unique
 })
 
 // 获取 $attrs，但排除 select-mode 和 select-type，因为它们已经在 props 中定义了
+// 这样可以确保显式传递的 props 优先级高于 $attrs 中的值
 const attrs = useAttrs()
 const filteredAttrs = computed(() => {
   const { 'select-mode': _, 'select-type': __, ...rest } = attrs
@@ -115,19 +156,20 @@ const filteredAttrs = computed(() => {
     由 SelectRecord 统一管理和触发，无需在此重复定义
   -->
   <SelectRecord
-    :model-value="selectDishgroupProps.modelValue"
-    :title="selectDishgroupProps.title"
+    :model-value="selectRecProps.modelValue"
+    :title="selectRecProps.title"
     :search-schema="searchSchema"
-    :fetch-data-api="selectDishgroupProps.fetchDataApi"
+    :fetch-data-api="selectRecProps.fetchDataApi"
     :table-columns="tableColumns"
-    :row-key="selectDishgroupProps.rowKey"
-    :display-field="selectDishgroupProps.displayField"
-    :selected-records="selectDishgroupProps.selectedRecords"
-    :select-mode="selectDishgroupProps.selectMode"
-    :select-type="selectDishgroupProps.selectType"
+    :row-key="selectRecProps.rowKey"
+    :display-field="selectRecProps.displayField"
+    :selected-records="selectRecProps.selectedRecords"
+    :select-mode="selectRecProps.selectMode"
+    :select-type="selectRecProps.selectType"
     v-bind="filteredAttrs"
   />
 </template>
 
 <style lang="less" scoped>
 </style>
+

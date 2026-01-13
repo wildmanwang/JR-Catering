@@ -225,11 +225,13 @@ const addSchema = (formSchema: FormSchema, index?: number) => {
 
 const defaultExpose = {
   getElFormExpose,
+  getFormData,
   setProps,
   setSchema,
   setValues,
   delSchema,
-  addSchema
+  addSchema,
+  formModel
 }
 
 onMounted(() => {

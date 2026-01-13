@@ -12,7 +12,7 @@ import { ContentWrap } from '@/components/ContentWrap'
 import { ImportCross } from '@/wintemplate/ImportCross'
 import type { ImportCross as ImportCrossType } from '@/wintemplate/ImportCross'
 import type { TableCrossDataConfigs } from '@/components/TableCross/src/TableCross.vue'
-import SelectDish from './SelectDish.vue'
+import SelectDish from '@/views/Vadmin/Product/Dish/components/SelectDish.vue'
 import SelectDishgroup from './SelectDishgroup.vue'
 
 defineOptions({
@@ -187,7 +187,7 @@ const handleSave = async (_data: any) => {
     <SelectDish
       v-model="selectDishVisible"
       :selected-records="selectedDishes"
-      select-mode="multiple"
+      select-mode="single"
       select-type="row"
       @confirm="handleSelectDishConfirm"
       @cancel="handleSelectDishCancel"

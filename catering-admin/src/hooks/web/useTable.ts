@@ -48,11 +48,13 @@ export const useTable = (config: UseTableConfig) => {
     }
   )
 
-  onMounted(() => {
-    if (immediate) {
+  // 只有在 immediate 为 true 时才注册 onMounted 钩子
+  // 这样可以避免在非 setup 上下文中调用 onMounted 时产生警告
+  if (immediate) {
+    onMounted(() => {
       methods.getList()
-    }
-  })
+    })
+  }
 
   // Table实例
   const tableRef = ref<typeof Table & TableExpose>()
