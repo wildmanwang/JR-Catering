@@ -14,7 +14,7 @@
 -->
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
-import { ElTable, ElTableColumn, ElInputNumber, ElIcon } from 'element-plus'
+import { ElTable, ElTableColumn, ElInputNumber, ElInput, ElCheckbox, ElRadioGroup, ElRadio, ElIcon, ElLink } from 'element-plus'
 import { Rank } from '@element-plus/icons-vue'
 
 /**
@@ -51,6 +51,10 @@ export interface TableCrossDataConfig {
   format?: string
   /** 是否为主配置（只有第一个元素有效）：当为true时，如果第一套数据配置了值，其他数据才可以配置 */
   primary?: boolean
+  /** 编辑组件类型：'NumberInput' | 'Input' | 'Checkbox' | 'RadioBox'，默认根据type自动推断 */
+  component?: 'NumberInput' | 'Input' | 'Checkbox' | 'RadioBox'
+  /** RadioBox选项（当component为'RadioBox'时必填） */
+  radioOptions?: Array<{ label: string; value: any }>
 }
 
 /**
@@ -80,6 +84,10 @@ export interface TableCrossProps {
   dataConfigs?: TableCrossDataConfigs
   /** 当前选中的数据配置索引（从0开始） */
   currentDataConfigIndex?: number
+  /** 是否允许删除行（当为 true 时，在行小计列之后添加操作列） */
+  allowDeleteRow?: boolean
+  /** 是否允许删除列（当为 true 时，在列小计行之后添加操作行） */
+  allowDeleteColumn?: boolean
 }
 
 /**
@@ -98,6 +106,8 @@ export interface TableCrossEmits {
   (e: 'column-select', columnIndex: number): void
   (e: 'row-order-change', newRows: TableCrossRow[]): void
   (e: 'column-order-change', newColumns: TableCrossColumn[]): void
+  (e: 'row-delete', rowIndex: number): void
+  (e: 'column-delete', columnIndex: number): void
 }
 
 const props = withDefaults(defineProps<TableCrossProps>(), {
@@ -107,7 +117,9 @@ const props = withDefaults(defineProps<TableCrossProps>(), {
   dataColumnWidth: 160,
   sumColumnWidth: 120,
   dataConfigs: () => [],
-  currentDataConfigIndex: 0
+  currentDataConfigIndex: 0,
+  allowDeleteRow: false,
+  allowDeleteColumn: false
 })
 
 const emit = defineEmits<TableCrossEmits>()
@@ -237,6 +249,13 @@ const handleColumnDrop = (event: DragEvent, targetColumnIndex: number) => {
  * 处理行拖拽开始
  */
 const handleRowDragStart = (event: DragEvent, rowIndex: number) => {
+  // 检查是否是汇总行或操作行，不允许拖拽
+  const row = tableData.value[rowIndex]
+  if (row && (row.__row_type__ === 'sum' || row.__row_type__ === 'action')) {
+    event.preventDefault()
+    return
+  }
+  
   draggingRowIndex.value = rowIndex
   if (event.dataTransfer) {
     event.dataTransfer.effectAllowed = 'move'
@@ -273,6 +292,13 @@ const handleRowDragEnter = (event: DragEvent, targetRowIndex: number) => {
   if (draggingRowIndex.value === null || draggingRowIndex.value === targetRowIndex) {
     return
   }
+  
+  // 检查目标行是否是汇总行或操作行，不允许拖拽到这些行
+  const targetRow = tableData.value[targetRowIndex]
+  if (targetRow && (targetRow.__row_type__ === 'sum' || targetRow.__row_type__ === 'action')) {
+    return
+  }
+  
   if (event.target) {
     (event.target as HTMLElement).classList.add('drag-over')
   }
@@ -298,29 +324,60 @@ const handleRowDrop = (event: DragEvent, targetRowIndex: number) => {
     return
   }
   
+  // 检查拖拽的行和目标行是否是汇总行或操作行
+  const draggedRow = tableData.value[draggingRowIndex.value]
+  const targetRow = tableData.value[targetRowIndex]
+  
+  if (!draggedRow || !targetRow) {
+    return
+  }
+  
+  // 汇总行和操作行不允许拖拽
+  if (draggedRow.__row_type__ === 'sum' || draggedRow.__row_type__ === 'action') {
+    return
+  }
+  
+  // 不能拖拽到汇总行或操作行的位置
+  if (targetRow.__row_type__ === 'sum' || targetRow.__row_type__ === 'action') {
+    return
+  }
+  
+  // 将 tableData 索引转换为 props.rows 索引
+  // 因为 tableData = props.rows + 汇总行 + 操作行
+  // 所以如果索引 >= props.rows.length，说明是汇总行或操作行
+  const draggedDataRowIndex = draggingRowIndex.value
+  const targetDataRowIndex = targetRowIndex
+  
+  if (draggedDataRowIndex < 0 || draggedDataRowIndex >= props.rows.length) {
+    return
+  }
+  if (targetDataRowIndex < 0 || targetDataRowIndex >= props.rows.length) {
+    return
+  }
+  
   if (event.target) {
     (event.target as HTMLElement).classList.remove('drag-over')
   }
   
   // 重新排序行
   const newRows = [...props.rows]
-  const draggedRow = newRows[draggingRowIndex.value]
-  newRows.splice(draggingRowIndex.value, 1)
-  newRows.splice(targetRowIndex, 0, draggedRow)
+  const draggedRowData = newRows[draggedDataRowIndex]
+  newRows.splice(draggedDataRowIndex, 1)
+  newRows.splice(targetDataRowIndex, 0, draggedRowData)
   
   emit('update:rows', newRows)
   emit('row-order-change', newRows)
   
-  // 更新当前行索引
-  if (currentRowIndex.value === draggingRowIndex.value) {
-    currentRowIndex.value = targetRowIndex
-    emit('update:currentRowIndex', targetRowIndex)
+  // 更新当前行索引（使用数据行索引）
+  if (currentRowIndex.value === draggedDataRowIndex) {
+    currentRowIndex.value = targetDataRowIndex
+    emit('update:currentRowIndex', targetDataRowIndex)
   } else if (currentRowIndex.value !== null) {
     // 调整当前行索引
-    if (draggingRowIndex.value < currentRowIndex.value && targetRowIndex >= currentRowIndex.value) {
+    if (draggedDataRowIndex < currentRowIndex.value && targetDataRowIndex >= currentRowIndex.value) {
       currentRowIndex.value--
       emit('update:currentRowIndex', currentRowIndex.value)
-    } else if (draggingRowIndex.value > currentRowIndex.value && targetRowIndex <= currentRowIndex.value) {
+    } else if (draggedDataRowIndex > currentRowIndex.value && targetDataRowIndex <= currentRowIndex.value) {
       currentRowIndex.value++
       emit('update:currentRowIndex', currentRowIndex.value)
     }
@@ -348,6 +405,20 @@ watch(
     }
   },
   { immediate: true }
+)
+
+// 监听选中状态变化（用于调试）
+watch(
+  () => [currentRowIndex.value, currentColumnIndex.value],
+  ([newRowIndex, newColumnIndex], [oldRowIndex, oldColumnIndex]) => {
+    console.log('[TableCross] 选中状态变化', {
+      oldRowIndex,
+      oldColumnIndex,
+      newRowIndex,
+      newColumnIndex
+    })
+  },
+  { immediate: false }
 )
 
 // ==================== 输入组件引用管理 ====================
@@ -450,10 +521,15 @@ const getCellDataKey = (columnId: string | number, dataConfigIndex: number): str
  * 检查单元格是否可编辑（考虑primary依赖）
  */
 const isCellEditable = (rowIndex: number, columnIndex: number, dataConfigIndex: number): boolean => {
-  // 第一行和第一列不可编辑
-  if (rowIndex === 0 || columnIndex === 0) {
+  // 检查是否是汇总行或操作行
+  const tableRow = tableData.value[rowIndex]
+  if (tableRow && (tableRow.__row_type__ === 'sum' || tableRow.__row_type__ === 'action')) {
     return false
   }
+  
+  // 注意：rowIndex 是 props.rows 的索引，rowIndex=0 对应第一行数据单元（标题行在表头，不在 props.rows 中）
+  // columnIndex 是 props.columns 的索引，columnIndex=0 对应第一列数据单元（名称列不在 props.columns 中）
+  // 所以第一行数据单元（rowIndex=0）和第一列数据单元（columnIndex=0）都应该可编辑
   
   // 如果没有数据配置，使用默认逻辑
   if (!props.dataConfigs || props.dataConfigs.length === 0) {
@@ -473,15 +549,19 @@ const isCellEditable = (rowIndex: number, columnIndex: number, dataConfigIndex: 
   }
   
   // primary为true，需要检查第一套数据是否有值
-  const row = props.rows[rowIndex]
-  const column = props.columns[columnIndex]
-  if (!row || !column) {
+  // 注意：这里需要使用数据行的索引，而不是 tableData 的索引
+  const dataRowIndex = rowIndex >= props.rows.length ? -1 : rowIndex
+  if (dataRowIndex < 0 || dataRowIndex >= props.rows.length) {
     return false
   }
   
-  // 获取第一套数据的值
-  const firstDataKey = getCellDataKey(column.id, 0)
-  const firstValue = row[firstDataKey]
+  const column = props.columns[columnIndex]
+  if (!column) {
+    return false
+  }
+  
+  // 获取第一套数据的值（使用专用函数避免循环调用）
+  const firstValue = getFirstDataValue(dataRowIndex, columnIndex)
   
   // 如果第一套数据有值，其他数据才可以编辑
   return firstValue !== null && firstValue !== undefined && firstValue !== ''
@@ -489,8 +569,10 @@ const isCellEditable = (rowIndex: number, columnIndex: number, dataConfigIndex: 
 
 /**
  * 获取单元格的值（支持多套数据）
+ * 注意：此函数不检查是否可编辑，只负责获取原始值
+ * 可编辑性检查应该在显示层面处理
  */
-const getCellValue = (rowIndex: number, columnIndex: number, dataConfigIndex?: number): number | null => {
+const getCellValue = (rowIndex: number, columnIndex: number, dataConfigIndex?: number): any => {
   if (rowIndex < 0 || rowIndex >= props.rows.length) return null
   if (columnIndex < 0 || columnIndex >= props.columns.length) return null
   
@@ -499,6 +581,7 @@ const getCellValue = (rowIndex: number, columnIndex: number, dataConfigIndex?: n
   
   // 如果有多套数据配置，使用对应的数据key
   const configIndex = dataConfigIndex ?? props.currentDataConfigIndex ?? 0
+  
   let value: any
   
   if (props.dataConfigs && props.dataConfigs.length > 0) {
@@ -517,46 +600,129 @@ const getCellValue = (rowIndex: number, columnIndex: number, dataConfigIndex?: n
     return null
   }
   
+  // 根据组件类型返回不同的值
+  const config = props.dataConfigs?.[configIndex]
+  const componentType = config?.component
+  
+  if (componentType === 'Checkbox' || componentType === 'RadioBox') {
+    // Checkbox和RadioBox返回原始值
+    return value
+  }
+  
+  // NumberInput和Input返回数字或字符串
   const numValue = Number(value)
-  return isNaN(numValue) ? null : numValue
+  return isNaN(numValue) ? value : numValue
+}
+
+/**
+ * 获取第一套数据的值（用于primary依赖检查，避免循环调用）
+ */
+const getFirstDataValue = (rowIndex: number, columnIndex: number): any => {
+  if (rowIndex < 0 || rowIndex >= props.rows.length) return null
+  if (columnIndex < 0 || columnIndex >= props.columns.length) return null
+  
+  const row = props.rows[rowIndex]
+  const column = props.columns[columnIndex]
+  
+  // 直接获取第一套数据的值，不使用 getCellValue 避免循环
+  if (props.dataConfigs && props.dataConfigs.length > 0) {
+    const dataKey = getCellDataKey(column.id, 0)
+    const value = row[dataKey]
+    if (value !== undefined) {
+      return value
+    }
+    // 如果多套数据中没有找到，尝试使用旧的格式（向后兼容）
+    return row[column.id] ?? null
+  } else {
+    // 没有数据配置，使用旧的格式
+    return row[column.id] ?? null
+  }
 }
 
 /**
  * 获取单元格的格式化显示值
  */
 const getCellDisplayValue = (rowIndex: number, columnIndex: number, dataConfigIndex?: number): string => {
+  const configIndex = dataConfigIndex ?? props.currentDataConfigIndex ?? 0
+  
+  // 检查是否可编辑（考虑primary依赖），如果不可编辑，显示空
+  if (!isCellEditable(rowIndex, columnIndex, configIndex)) {
+    return ''
+  }
+  
   const value = getCellValue(rowIndex, columnIndex, dataConfigIndex)
   if (value === null) return ''
   
-  const configIndex = dataConfigIndex ?? props.currentDataConfigIndex ?? 0
   const config = props.dataConfigs?.[configIndex]
-  const format = config?.format
+  const componentType = config?.component
   
+  // Checkbox显示为"是"/"否"
+  if (componentType === 'Checkbox') {
+    return value ? '是' : '否'
+  }
+  
+  // RadioBox显示为选项的label
+  if (componentType === 'RadioBox' && config?.radioOptions) {
+    const option = config.radioOptions.find(opt => opt.value === value)
+    return option ? option.label : String(value)
+  }
+  
+  const format = config?.format
   return formatValue(value, format)
 }
 
 /**
- * 获取单元格的值（用于输入框，返回 number | undefined）
+ * 获取单元格的值（用于输入框）
  */
-const getCellValueForInput = (rowIndex: number, columnIndex: number, dataConfigIndex?: number): number | undefined => {
+const getCellValueForInput = (rowIndex: number, columnIndex: number, dataConfigIndex?: number): any => {
+  const configIndex = dataConfigIndex ?? props.currentDataConfigIndex ?? 0
+  
+  // 检查是否可编辑（考虑primary依赖），如果不可编辑，返回空值
+  if (!isCellEditable(rowIndex, columnIndex, configIndex)) {
+    const config = props.dataConfigs?.[configIndex]
+    const componentType = config?.component
+    if (componentType === 'NumberInput' || (!componentType && config?.type && /^(int|integer|decimal|float|double|numeric)/i.test(config.type))) {
+      return undefined
+    } else if (componentType === 'Input') {
+      return ''
+    } else if (componentType === 'Checkbox') {
+      return false
+    } else {
+      return undefined
+    }
+  }
+  
   const value = getCellValue(rowIndex, columnIndex, dataConfigIndex)
-  return value === null ? undefined : value
+  const config = props.dataConfigs?.[configIndex]
+  const componentType = config?.component
+  
+  // NumberInput返回number | undefined
+  if (componentType === 'NumberInput' || (!componentType && config?.type && /^(int|integer|decimal|float|double|numeric)/i.test(config.type))) {
+    return value === null ? undefined : (typeof value === 'number' ? value : Number(value))
+  }
+  
+  // 其他类型返回原始值
+  return value === null ? (componentType === 'Input' ? '' : undefined) : value
 }
 
 /**
  * 更新单元格的值（支持多套数据）
  */
-const updateCellValue = (rowIndex: number, columnIndex: number, value: number | null, dataConfigIndex?: number) => {
+const updateCellValue = (rowIndex: number, columnIndex: number, value: any, dataConfigIndex?: number) => {
   if (rowIndex < 0 || rowIndex >= props.rows.length) return
   if (columnIndex < 0 || columnIndex >= props.columns.length) return
   
   const configIndex = dataConfigIndex ?? props.currentDataConfigIndex ?? 0
   const config = props.dataConfigs?.[configIndex]
   
-  // 验证数据类型
-  if (value !== null && config?.type) {
-    if (!validateDataType(value, config.type)) {
-      return // 数据类型不匹配，不更新
+  // 验证数据类型（对于数字类型）
+  if (value !== null && value !== undefined && value !== '' && config?.type) {
+    const componentType = config.component
+    // 只有NumberInput需要验证数字类型
+    if (componentType === 'NumberInput' || (!componentType && config.type && /^(int|integer|decimal|float|double|numeric)/i.test(config.type))) {
+      if (!validateDataType(value, config.type)) {
+        return // 数据类型不匹配，不更新
+      }
     }
   }
   
@@ -587,12 +753,24 @@ const updateCellValue = (rowIndex: number, columnIndex: number, value: number | 
  * 计算汇总行的值（对列的数据汇总，支持多套数据）
  */
 const getRowSum = (rowIndex: number): number => {
-  if (rowIndex < 0 || rowIndex >= props.rows.length) return 0
+  // 如果 rowIndex 超出数据行范围，返回 0
+  // 注意：rowIndex 是 tableData 中的索引，需要转换为 props.rows 中的索引
+  if (rowIndex < 0) return 0
   
+  // 检查是否是汇总行或操作行
+  const row = tableData.value[rowIndex]
+  if (row && (row.__row_type__ === 'sum' || row.__row_type__ === 'action')) {
+    return 0
+  }
+  
+  // 转换为数据行索引
+  const dataRowIndex = rowIndex
+  if (dataRowIndex < 0 || dataRowIndex >= props.rows.length) return 0
+
   const configIndex = props.currentDataConfigIndex ?? 0
   let sum = 0
   props.columns.forEach((_column, colIdx) => {
-    const value = getCellValue(rowIndex, colIdx, configIndex)
+    const value = getCellValue(dataRowIndex, colIdx, configIndex)
     if (value !== null && value > 0) {
       sum += value
     }
@@ -602,12 +780,14 @@ const getRowSum = (rowIndex: number): number => {
 
 /**
  * 计算汇总列的值（对行的数据汇总，支持多套数据）
+ * 注意：只计算数据行，不包括汇总行和操作行
  */
 const getColumnSum = (columnIndex: number): number => {
   if (columnIndex < 0 || columnIndex >= props.columns.length) return 0
   
   const configIndex = props.currentDataConfigIndex ?? 0
   let sum = 0
+  // 只遍历数据行（props.rows），不包括汇总行和操作行
   props.rows.forEach((_row, rowIdx) => {
     const value = getCellValue(rowIdx, columnIndex, configIndex)
     if (value !== null && value > 0) {
@@ -618,18 +798,70 @@ const getColumnSum = (columnIndex: number): number => {
 }
 
 /**
- * 计算表格数据（包含汇总行）
+ * 计算表格数据（包含汇总行和操作行）
  */
-const tableData = ref(props.rows)
+const tableData = computed(() => {
+  const data = [...props.rows]
+  
+  // 添加汇总行（列小计）
+  const sumRow: TableCrossRow = {
+    id: '__sum_row__',
+    name: '列小计',
+    __row_type__: 'sum'
+  }
+  
+  // 为汇总行添加每列的小计值
+  props.columns.forEach((column, colIdx) => {
+    sumRow[String(column.id)] = getColumnSum(colIdx)
+  })
+  
+  // 添加汇总列的汇总值（行小计的汇总）
+  sumRow['__sum__'] = null
+  
+  // 如果允许删除行，添加操作列
+  if (props.allowDeleteRow) {
+    sumRow['__action_column__'] = null
+  }
+  
+  data.push(sumRow)
+  
+  // 如果允许删除列，添加操作行
+  if (props.allowDeleteColumn) {
+    const actionRow: TableCrossRow = {
+      id: '__action_row__',
+      name: '操作',
+      __row_type__: 'action'
+    }
+    
+    // 为操作行添加每列的删除按钮标记
+    props.columns.forEach((column) => {
+      actionRow[String(column.id)] = '__delete_column__'
+    })
+    
+    // 汇总列和操作列不显示内容
+    actionRow['__sum__'] = null
+    if (props.allowDeleteRow) {
+      actionRow['__action_column__'] = null
+    }
+    
+    data.push(actionRow)
+  }
+  
+  return data
+})
 
-// 监听rows变化，更新tableData
-watch(
-  () => props.rows,
-  (newRows) => {
-    tableData.value = newRows
-  },
-  { immediate: true, deep: true }
-)
+/**
+ * 获取行的 CSS 类名
+ */
+const getRowClassName = ({ row }: { row: TableCrossRow; rowIndex: number }): string => {
+  if (row.__row_type__ === 'sum') {
+    return 'sum-row-type'
+  }
+  if (row.__row_type__ === 'action') {
+    return 'action-row-type'
+  }
+  return ''
+}
 
 // 为了在模板中使用，需要暴露columns
 const columns = computed(() => props.columns)
@@ -649,11 +881,33 @@ const needFillColumn = computed(() => {
   if (tableWidth.value <= 0) return false
   
   // 计算当前列的总宽度（包括边框等）
-  // 名称列 + 数据列 + 汇总列
-  const currentWidth = props.nameColumnWidth + (columns.value.length * props.dataColumnWidth) + props.sumColumnWidth
+  // 名称列 + 数据列 + 汇总列 + 操作列（如果存在）
+  let currentWidth = props.nameColumnWidth + (columns.value.length * props.dataColumnWidth) + props.sumColumnWidth
   
-  // 如果当前宽度已经大于等于表格宽度，不需要填充
-  if (currentWidth >= tableWidth.value) return false
+  // 如果允许删除行，添加操作列宽度（100px）
+  if (props.allowDeleteRow) {
+    currentWidth += 100
+  }
+  
+  // 考虑边框宽度：每列之间都有边框，边框宽度约为 1px
+  // 列数 = 名称列(1) + 数据列(columns.length) + 汇总列(1) + 操作列(0或1) = 2 + columns.length + (allowDeleteRow ? 1 : 0)
+  const columnCount = 2 + columns.value.length + (props.allowDeleteRow ? 1 : 0)
+  const borderWidth = columnCount * 1 // 每列左右各0.5px边框，约等于每列1px
+  
+  const totalWidth = currentWidth + borderWidth
+  
+  // 留出安全边距（10px），确保填充列不会导致滚动
+  const safeMargin = 10
+  
+  // 如果当前宽度 + 安全边距已经大于等于表格宽度，不需要填充
+  if (totalWidth + safeMargin >= tableWidth.value) return false
+  
+  // 计算填充列的最小宽度要求（至少5px才显示）
+  const minFillWidth = 5
+  const remainingWidth = tableWidth.value - totalWidth - safeMargin - 1 // 1px 是填充列本身的边框
+  
+  // 如果剩余宽度小于最小要求，不显示填充列
+  if (remainingWidth < minFillWidth) return false
   
   // 只需要1列填充列，让它充满剩余宽度
   return true
@@ -663,14 +917,43 @@ const needFillColumn = computed(() => {
 const fillColumnWidth = computed(() => {
   if (!needFillColumn.value) return 0
   
-  // 计算当前列的总宽度
-  const currentWidth = props.nameColumnWidth + (columns.value.length * props.dataColumnWidth) + props.sumColumnWidth
+  // 计算当前列的总宽度（不包括填充列）
+  let currentWidth = props.nameColumnWidth + (columns.value.length * props.dataColumnWidth) + props.sumColumnWidth
   
-  // 计算剩余宽度（留出一些余量给边框）
-  const remainingWidth = tableWidth.value - currentWidth - 20 // 20px 余量
+  // 如果允许删除行，添加操作列宽度（100px）
+  if (props.allowDeleteRow) {
+    currentWidth += 100
+  }
   
-  // 允许宽度缩小为0，不设置最小宽度限制
-  return Math.max(0, remainingWidth)
+  // 考虑边框宽度（不包括填充列的边框）
+  // 列数 = 名称列(1) + 数据列(columns.length) + 汇总列(1) + 操作列(0或1)
+  const columnCount = 2 + columns.value.length + (props.allowDeleteRow ? 1 : 0)
+  // Element Plus 表格的边框：每列之间1px边框
+  const borderWidth = columnCount * 1
+  
+  const totalWidthWithoutFill = currentWidth + borderWidth
+  
+  // 计算剩余宽度
+  // 填充列本身也会增加一列，所以需要考虑它的边框（+1px）
+  const remainingWidth = tableWidth.value - totalWidthWithoutFill - 1 // 1px 是填充列本身的边框
+  
+  // 确保填充列宽度不会导致横向滚动
+  // 如果剩余宽度小于等于0，返回0（不应该发生，因为 needFillColumn 已经检查过了）
+  // 但为了安全，还是做这个检查
+  if (remainingWidth <= 0) {
+    return 0
+  }
+  
+  // 返回剩余宽度，但不要太大（避免计算误差导致滚动）
+  // 留出 10px 的安全边距，确保不会出现横向滚动
+  const finalWidth = Math.max(0, remainingWidth - 10)
+  
+  // 如果计算出的宽度太小（小于5px），不显示填充列，避免显示一个很窄的列
+  if (finalWidth < 5) {
+    return 0
+  }
+  
+  return finalWidth
 })
 
 /** 更新表格宽度 */
@@ -678,8 +961,29 @@ const updateTableWidth = () => {
   nextTick(() => {
     const tableEl = tableRef.value?.$el as HTMLElement
     if (tableEl) {
-      // 获取表格的实际可见宽度
-      const width = tableEl.clientWidth || tableEl.offsetWidth || 0
+      // 获取表格容器的实际可见宽度（不包括滚动条）
+      // 使用 clientWidth 而不是 offsetWidth，因为 clientWidth 不包括滚动条宽度
+      let width = tableEl.clientWidth || 0
+      
+      // 如果表格有父容器，使用父容器的宽度（更准确）
+      const parentEl = tableEl.parentElement
+      if (parentEl) {
+        const parentWidth = parentEl.clientWidth || 0
+        if (parentWidth > 0) {
+          // 使用父容器的宽度，但要考虑表格的 padding 和 margin
+          const computedStyle = window.getComputedStyle(tableEl)
+          const paddingLeft = parseFloat(computedStyle.paddingLeft) || 0
+          const paddingRight = parseFloat(computedStyle.paddingRight) || 0
+          const marginLeft = parseFloat(computedStyle.marginLeft) || 0
+          const marginRight = parseFloat(computedStyle.marginRight) || 0
+          
+          const availableWidth = parentWidth - paddingLeft - paddingRight - marginLeft - marginRight
+          if (availableWidth > 0) {
+            width = availableWidth
+          }
+        }
+      }
+      
       // 如果宽度发生变化，更新
       if (width > 0 && width !== tableWidth.value) {
         tableWidth.value = width
@@ -795,62 +1099,136 @@ const exitEdit = (rowIndex: number, columnIndex: number): [number, string] => {
  * 退出单元格选中（接口函数）
  */
 const deselectCell = (): [number, string] => {
+  console.log('[TableCross] deselectCell 开始', {
+    editingCell: editingCell.value,
+    currentRowIndex: currentRowIndex.value,
+    currentColumnIndex: currentColumnIndex.value
+  })
+  
   if (editingCell.value) {
     endEdit()
   }
   
+  // 清除DOM中的选中类（参考TableGrid的实现）
   const tableEl = tableRef.value?.$el as HTMLElement
   if (tableEl) {
     tableEl.querySelectorAll('.el-table__cell.selected-cell').forEach(el => {
       el.classList.remove('selected-cell')
     })
-    tableEl.querySelectorAll('.el-table__cell.editing-cell').forEach(el => {
-      el.classList.remove('editing-cell')
-    })
   }
+  
+  // 清除响应式状态
+  currentRowIndex.value = null
+  currentColumnIndex.value = null
+  emit('update:currentRowIndex', null)
+  emit('update:currentColumnIndex', null)
+  
+  console.log('[TableCross] deselectCell 完成', {
+    currentRowIndex: currentRowIndex.value,
+    currentColumnIndex: currentColumnIndex.value
+  })
   
   return [1, '就绪']
 }
 
 /**
  * 选中单元格（接口函数）
+ * 只有交叉的数据单元格可以选中（排除标题行rowIndex=0、名称列columnIndex=0、汇总行、操作行、汇总列、操作列）
+ * 注意：第一行交叉单元（rowIndex=1）和第一列交叉单元（columnIndex=1）可以选中
  */
 const selectCell = (rowIndex: number, columnIndex: number): [number, string] => {
+  console.log('[TableCross] selectCell 开始', { rowIndex, columnIndex })
+  
   // 参数校验
   if (rowIndex < 0 || rowIndex >= props.rows.length) {
+    console.log('[TableCross] selectCell 错误：行号无效', { rowIndex, rowsLength: props.rows.length })
     return [-1, `行号${rowIndex}无效`]
   }
   
   if (columnIndex < 0 || columnIndex >= props.columns.length) {
+    console.log('[TableCross] selectCell 错误：列号无效', { columnIndex, columnsLength: props.columns.length })
     return [-1, `列号${columnIndex}无效`]
   }
   
+  // 注意：columnIndex 是 props.columns 的索引，columnIndex=0 对应第一列数据单元（名称列不在 props.columns 中）
+  // rowIndex 是 props.rows 的索引，rowIndex=0 对应第一行数据单元（标题行在表头，不在 props.rows 中）
+  // 所以第一行数据单元（rowIndex=0）和第一列数据单元（columnIndex=0）都可以选中
+  
+  console.log('[TableCross] selectCell 当前状态', {
+    editingCell: editingCell.value,
+    currentRowIndex: currentRowIndex.value,
+    currentColumnIndex: currentColumnIndex.value,
+    selectedRowIndex: selectedRowIndex.value,
+    selectedColumnIndex: selectedColumnIndex.value
+  })
+  
   // 退出当前编辑状态
   if (editingCell.value) {
+    console.log('[TableCross] selectCell 退出编辑状态')
     endEdit()
   }
   
   // 取消单元格选中和行/列选择
+  console.log('[TableCross] selectCell 取消其他选中状态')
   deselectCell()
   deselectRow()
   deselectColumn()
   
-  // 选中目标单元格
-  nextTick(() => {
-    const tableEl = tableRef.value?.$el as HTMLElement
-    if (!tableEl) return
-    
-    const cellElement = tableEl.querySelector(
-      `.el-table__body tbody tr:nth-child(${rowIndex + 1}) .el-table__cell:nth-child(${columnIndex + 2})`
-    ) as HTMLElement
-    if (cellElement) {
-      cellElement.classList.add('selected-cell')
-      
-      currentRowIndex.value = rowIndex
-      emit('update:currentRowIndex', rowIndex)
-    }
+  // 更新当前行和列索引（响应式更新，模板会自动更新选中状态）
+  console.log('[TableCross] selectCell 更新选中状态', { rowIndex, columnIndex })
+  currentRowIndex.value = rowIndex
+  currentColumnIndex.value = columnIndex
+  emit('update:currentRowIndex', rowIndex)
+  emit('update:currentColumnIndex', columnIndex)
+  
+  console.log('[TableCross] selectCell 状态已更新', {
+    currentRowIndex: currentRowIndex.value,
+    currentColumnIndex: currentColumnIndex.value
   })
   
+  // 等待DOM更新后直接操作DOM添加选中类（参考TableGrid的实现）
+  nextTick(() => {
+    nextTick(() => {
+      const tableEl = tableRef.value?.$el as HTMLElement
+      if (!tableEl) {
+        console.log('[TableCross] selectCell 错误：找不到表格元素')
+        return
+      }
+      
+      // 注意：columnIndex + 2 是因为第1列是名称列，所以数据列从第2列开始
+      const selector = `.el-table__body tbody tr:nth-child(${rowIndex + 1}) .el-table__cell:nth-child(${columnIndex + 2})`
+      console.log('[TableCross] selectCell 查找单元格', { selector, rowIndex, columnIndex })
+      
+      const cellElement = tableEl.querySelector(selector) as HTMLElement
+      if (cellElement) {
+        // 直接操作DOM添加selected-cell类（参考TableGrid的实现）
+        cellElement.classList.add('selected-cell')
+        console.log('[TableCross] selectCell 添加 selected-cell 类', {
+          cellElement: cellElement,
+          className: cellElement.className,
+          hasSelectedClass: cellElement.classList.contains('selected-cell')
+        })
+        
+        // 确保单元格获得焦点，这样键盘事件才能正确触发
+        const focusElement = cellElement.querySelector('.table-cross-cell') as HTMLElement
+        if (focusElement) {
+          console.log('[TableCross] selectCell 设置焦点')
+          focusElement.focus()
+        } else {
+          console.log('[TableCross] selectCell 警告：找不到 .table-cross-cell 元素')
+        }
+      } else {
+        console.log('[TableCross] selectCell 错误：找不到单元格元素', {
+          selector,
+          tableEl: tableEl,
+          tbody: tableEl.querySelector('.el-table__body tbody'),
+          rows: tableEl.querySelectorAll('.el-table__body tbody tr').length
+        })
+      }
+    })
+  })
+  
+  console.log('[TableCross] selectCell 完成')
   return [1, '就绪']
 }
 
@@ -974,6 +1352,8 @@ const deselectColumn = (): [number, string] => {
 // ==================== 单元格导航 ====================
 /**
  * 计算目标单元格（只计算，不执行实际操作）
+ * 只计算交叉数据单元格（排除标题行rowIndex=0、名称列columnIndex=0）
+ * 注意：第一行交叉单元（rowIndex=1）和第一列交叉单元（columnIndex=1）可以导航
  */
 const calculateTargetCell = (
   target: 
@@ -991,59 +1371,74 @@ const calculateTargetCell = (
   } else {
     // 相对位置
     const direction = target.direction
-    const fromRowIndex = target.fromRowIndex ?? currentRowIndex.value ?? 0
-    const fromColumnIndex = target.fromColumnIndex ?? currentColumnIndex.value ?? 0
+    const fromRowIndex = target.fromRowIndex ?? currentRowIndex.value ?? 0 // 默认从第0行开始（第一行数据单元）
+    const fromColumnIndex = target.fromColumnIndex ?? currentColumnIndex.value ?? 0 // 默认从第0列开始（第一列数据单元）
     
-    let nextRowIndex = fromRowIndex
-    let nextColumnIndex = fromColumnIndex
-    
-    switch (direction) {
-      case 'left':
-        if (nextColumnIndex > 0) {
-          nextColumnIndex = fromColumnIndex - 1
-        } else if (nextRowIndex > 0) {
-          nextRowIndex = fromRowIndex - 1
-          nextColumnIndex = props.columns.length - 1
-        } else {
-          return null
-        }
-        break
-        
-      case 'right':
-      case 'tab':
-      case 'enter':
-        if (nextColumnIndex < props.columns.length - 1) {
-          nextColumnIndex = fromColumnIndex + 1
-        } else if (nextRowIndex < props.rows.length - 1) {
-          nextRowIndex = fromRowIndex + 1
-          nextColumnIndex = 0
-        } else {
-          return null // 超出边界后不会自动增加行或列
-        }
-        break
-        
-      case 'up':
-        if (nextRowIndex > 0) {
-          nextRowIndex = fromRowIndex - 1
-        } else {
-          return null
-        }
-        break
-        
-      case 'down':
-        if (nextRowIndex < props.rows.length - 1) {
-          nextRowIndex = fromRowIndex + 1
-        } else {
-          return null // 超出边界后不会自动增加行或列
-        }
-        break
+    // 确保起始位置在有效范围内
+    if (fromRowIndex < 0 || fromColumnIndex < 0) {
+      // 如果当前不在数据单元格范围内，从第一个数据单元格开始（rowIndex=0, columnIndex=0）
+      targetRowIndex = 0
+      targetColumnIndex = 0
+    } else {
+      let nextRowIndex = fromRowIndex
+      let nextColumnIndex = fromColumnIndex
+      
+      switch (direction) {
+        case 'left':
+          // 向左：如果左边有数据单元格，则移动到左边，否则移动到上一行的最后一个数据单元格
+          if (nextColumnIndex > 0) {
+            nextColumnIndex = fromColumnIndex - 1
+          } else if (nextRowIndex > 0) {
+            nextRowIndex = fromRowIndex - 1
+            nextColumnIndex = props.columns.length - 1
+          } else {
+            return null // 已经是第一个数据单元格（rowIndex=0, columnIndex=0）
+          }
+          break
+          
+        case 'right':
+        case 'tab':
+        case 'enter':
+          // 向右：如果右边有数据单元格，则移动到右边，否则移动到下一行的第一个数据单元格
+          if (nextColumnIndex < props.columns.length - 1) {
+            nextColumnIndex = fromColumnIndex + 1
+          } else if (nextRowIndex < props.rows.length - 1) {
+            nextRowIndex = fromRowIndex + 1
+            nextColumnIndex = 0 // 从第0列开始（第一列数据单元）
+          } else {
+            return null // 已经是最后一个数据单元格
+          }
+          break
+          
+        case 'up':
+          // 向上：移动到上一行同列的数据单元格（可以移动到第一行数据单元rowIndex=0）
+          if (nextRowIndex > 0) {
+            nextRowIndex = fromRowIndex - 1
+          } else {
+            // 如果已经在第一行数据单元，不能再向上
+            return null
+          }
+          break
+          
+        case 'down':
+          // 向下：移动到下一行同列的数据单元格
+          if (nextRowIndex < props.rows.length - 1) {
+            nextRowIndex = fromRowIndex + 1
+          } else {
+            return null // 已经是最后一行数据单元格
+          }
+          break
+      }
+      
+      targetRowIndex = nextRowIndex
+      targetColumnIndex = nextColumnIndex
     }
-    
-    targetRowIndex = nextRowIndex
-    targetColumnIndex = nextColumnIndex
   }
   
   // 校验目标单元格是否合法
+  // 注意：rowIndex 是 props.rows 的索引，rowIndex=0 对应第一行数据单元（标题行在表头，不在 props.rows 中）
+  // columnIndex 是 props.columns 的索引，columnIndex=0 对应第一列数据单元（名称列不在 props.columns 中）
+  // 所以 rowIndex=0 和 columnIndex=0 都是允许的
   if (targetRowIndex < 0 || targetRowIndex >= props.rows.length) {
     return null
   }
@@ -1060,6 +1455,7 @@ const calculateTargetCell = (
 
 /**
  * 导航到单元格（接口函数）
+ * 只导航到交叉数据单元格（排除第一行、第一列）
  */
 const navigateToCell = (
   target: 
@@ -1072,11 +1468,18 @@ const navigateToCell = (
   // 处理编辑状态
   if (editingCell.value) {
     if (validateCurrent) {
-      // 校验当前编辑的单元格值
+      // 校验当前编辑的单元格值（仅对NumberInput类型）
       const { rowIndex, columnIndex } = editingCell.value
-      const value = getCellValue(rowIndex, columnIndex)
-      if (value !== null && value <= 0) {
-        return [-1, '单元格值必须大于0']
+      const configIndex = props.currentDataConfigIndex ?? 0
+      const config = props.dataConfigs?.[configIndex]
+      const componentType = config?.component
+      
+      // 只有NumberInput需要校验值必须大于0
+      if (componentType === 'NumberInput' || (!componentType && config?.type && /^(int|integer|decimal|float|double|numeric)/i.test(config.type))) {
+        const value = getCellValue(rowIndex, columnIndex)
+        if (value !== null && typeof value === 'number' && value <= 0) {
+          return [-1, '单元格值必须大于0']
+        }
       }
     }
     endEdit()
@@ -1103,17 +1506,26 @@ const navigateToCell = (
 }
 
 // ==================== 单元格值更新 ====================
-const handleInputUpdate = (rowIndex: number, columnIndex: number, value: number | null) => {
+const handleInputUpdate = (rowIndex: number, columnIndex: number, value: any) => {
   // 检查是否可编辑（考虑primary依赖）
   const configIndex = props.currentDataConfigIndex ?? 0
   if (!isCellEditable(rowIndex, columnIndex, configIndex)) {
     return
   }
   
-  // 校验值必须大于0（如果没有数据配置，使用默认校验）
+  // 校验值必须大于0（仅对NumberInput类型，如果没有数据配置，使用默认校验）
   if (!props.dataConfigs || props.dataConfigs.length === 0) {
-    if (value !== null && value <= 0) {
+    if (value !== null && typeof value === 'number' && value <= 0) {
       return
+    }
+  } else {
+    const config = props.dataConfigs[configIndex]
+    const componentType = config?.component
+    // 只有NumberInput需要校验值必须大于0
+    if (componentType === 'NumberInput' || (!componentType && config?.type && /^(int|integer|decimal|float|double|numeric)/i.test(config.type))) {
+      if (value !== null && typeof value === 'number' && value <= 0) {
+        return
+      }
     }
   }
   
@@ -1143,11 +1555,60 @@ const handleInputBlur = (_event: FocusEvent, rowIndex: number, columnIndex: numb
  * 处理单元格点击
  */
 const handleCellClick = (row: any, column: any) => {
-  const rowIndex = props.rows.indexOf(row)
+  console.log('[TableCross] handleCellClick 开始', {
+    row: row ? { id: row.id, name: row.name, __row_type__: row.__row_type__ } : null,
+    column: column ? { property: column.property, field: column.field } : null
+  })
+  
+  // 如果是汇总行或操作行，不处理
+  if (row.__row_type__ === 'sum' || row.__row_type__ === 'action') {
+    console.log('[TableCross] handleCellClick 跳过：汇总行或操作行')
+    return
+  }
+  
+  // 从 tableData 中查找行索引
+  // 注意：不能直接使用引用比较，因为 tableData 是 computed，每次都会创建新数组
+  // 使用行的 id 来查找（更可靠）
+  const rowId = row.id
+  let tableRowIndex = tableData.value.findIndex(r => r === row)
+  
+  // 如果引用比较失败，使用 id 比较
+  if (tableRowIndex < 0 && rowId) {
+    tableRowIndex = tableData.value.findIndex(r => r.id === rowId)
+  }
+  
+  console.log('[TableCross] handleCellClick 行索引查找', {
+    rowId,
+    tableRowIndex,
+    tableDataLength: tableData.value.length,
+    rowsLength: props.rows.length
+  })
+  
+  if (tableRowIndex < 0) {
+    console.log('[TableCross] handleCellClick 错误：找不到行索引')
+    return
+  }
+  
+  // tableData 的结构是：props.rows + 汇总行 + 操作行
+  // 如果 tableRowIndex >= props.rows.length，说明是汇总行或操作行（虽然已经检查了__row_type__，但双重保险）
+  if (tableRowIndex >= props.rows.length) {
+    console.log('[TableCross] handleCellClick 跳过：行索引超出数据行范围')
+    return
+  }
+  
+  // tableRowIndex 就是数据行的索引（因为汇总行和操作行在 tableData 的后面）
+  const rowIndex = tableRowIndex
   const columnProperty = column.property || column.field
   
-  // 处理名称列的点击（第1列）
+  console.log('[TableCross] handleCellClick 列属性', {
+    rowIndex,
+    columnProperty,
+    column: column
+  })
+  
+  // 处理名称列的点击（第1列）- 不选中单元格，选中行
   if (columnProperty === 'name' || columnProperty === '__name__') {
+    console.log('[TableCross] handleCellClick 处理名称列点击')
     if (rowIndex >= 0 && rowIndex < props.rows.length) {
       // 退出编辑、选择，选中该行
       if (editingCell.value) {
@@ -1160,23 +1621,44 @@ const handleCellClick = (row: any, column: any) => {
     return
   }
   
-  // 处理汇总列的点击
+  // 处理汇总列的点击 - 不选中
   if (columnProperty === '__sum__') {
-    // 汇总列不处理点击
+    console.log('[TableCross] handleCellClick 跳过：汇总列')
     return
   }
   
-  // 处理交叉单元格的点击
+  // 处理操作列的点击 - 不选中
+  if (columnProperty === '__action_column__') {
+    console.log('[TableCross] handleCellClick 跳过：操作列')
+    return
+  }
+  
+  // 处理交叉数据单元格的点击
   if (rowIndex >= 0 && columnProperty && columnProperty !== '__name__') {
-    const columnIndex = props.columns.findIndex(col => col.id === columnProperty)
+    // 查找列索引，需要处理类型匹配问题（columnProperty 可能是字符串，而 col.id 可能是数字）
+    // 因为模板中使用 String(column.id) 作为 prop，所以 columnProperty 是字符串
+    const columnIndex = props.columns.findIndex(col => String(col.id) === String(columnProperty))
+    
+    console.log('[TableCross] handleCellClick 查找列索引', {
+      columnProperty,
+      columnIndex,
+      columns: props.columns.map((col, idx) => ({ idx, id: col.id, idString: String(col.id) }))
+    })
+    
     if (columnIndex >= 0) {
-      // 第一行和第一列不可编辑，但可以选中
-      navigateToCell(
-        { rowIndex, columnIndex },
-        { validateCurrent: false }
-      )
+      // 注意：columnIndex 是 props.columns 的索引，columnIndex=0 对应第一列数据单元（名称列不在 props.columns 中）
+      // tableRowIndex 是 tableData 的索引，tableRowIndex=0 对应第一行数据单元（标题行在表头，不在 tableData 中）
+      // 所以第一行数据单元（rowIndex=0）和第一列数据单元（columnIndex=0）都可以选中
+      console.log('[TableCross] handleCellClick 调用 selectCell', { rowIndex, columnIndex })
+      // 选中交叉数据单元格（包括第一行和第一列的交叉单元）
+      const [code, msg] = selectCell(rowIndex, columnIndex)
+      console.log('[TableCross] handleCellClick selectCell 返回', { code, msg })
       return
+    } else {
+      console.log('[TableCross] handleCellClick 错误：找不到列索引', { columnProperty })
     }
+  } else {
+    console.log('[TableCross] handleCellClick 跳过：无效的行索引或列属性', { rowIndex, columnProperty })
   }
 }
 
@@ -1199,7 +1681,8 @@ const handleHeaderClick = (column: any) => {
   }
   
   // 处理数据列的表头点击（第1行）
-  const columnIndex = props.columns.findIndex(col => col.id === columnProperty)
+  // 统一转换为字符串比较（因为模板中使用 String(column.id) 作为 prop）
+  const columnIndex = props.columns.findIndex(col => String(col.id) === String(columnProperty))
   if (columnIndex >= 0) {
     // 退出编辑、选择，选中该列
     if (editingCell.value) {
@@ -1215,12 +1698,31 @@ const handleHeaderClick = (column: any) => {
  * 处理单元格双击
  */
 const handleCellDblclick = (row: any, column: any) => {
-  const rowIndex = props.rows.indexOf(row)
+  // 如果是汇总行或操作行，不处理
+  if (row.__row_type__ === 'sum' || row.__row_type__ === 'action') {
+    return
+  }
+  
+  // 从 tableData 中查找行索引
+  // 使用行的 id 来查找（更可靠）
+  const rowId = row.id
+  let tableRowIndex = tableData.value.findIndex(r => r === row)
+  
+  // 如果引用比较失败，使用 id 比较
+  if (tableRowIndex < 0 && rowId) {
+    tableRowIndex = tableData.value.findIndex(r => r.id === rowId)
+  }
+  
+  if (tableRowIndex < 0 || tableRowIndex >= props.rows.length) {
+    return
+  }
+  const rowIndex = tableRowIndex
   const columnProperty = column.property || column.field
   
   // 只处理交叉单元格的双击
   if (rowIndex >= 0 && columnProperty && columnProperty !== '__name__') {
-    const columnIndex = props.columns.findIndex(col => col.id === columnProperty)
+    // 统一转换为字符串比较（因为模板中使用 String(column.id) 作为 prop）
+    const columnIndex = props.columns.findIndex(col => String(col.id) === String(columnProperty))
     if (columnIndex >= 0) {
       // 第一行和第一列不可编辑
       if (rowIndex === 0 || columnIndex === 0) {
@@ -1251,7 +1753,8 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
     return
   }
   
-  const columnIndex = props.columns.findIndex(col => col.id === columnProperty)
+  // 统一转换为字符串比较（因为模板中使用 String(column.id) 作为 prop）
+  const columnIndex = props.columns.findIndex(col => String(col.id) === String(columnProperty))
   if (columnIndex === -1) {
     return
   }
@@ -1262,6 +1765,16 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
   }
   
   const key = event.key
+  const configIndex = props.currentDataConfigIndex ?? 0
+  const config = props.dataConfigs?.[configIndex]
+  const componentType = config?.component
+  
+  // 忽略 Ctrl+C 和 Ctrl+V，让全局事件处理
+  if (event.ctrlKey || event.metaKey) {
+    if (key === 'c' || key === 'C' || key === 'v' || key === 'V') {
+      return
+    }
+  }
   
   // 如果按下的是可打印字符，直接进入编辑
   if (key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
@@ -1270,22 +1783,42 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
       return
     }
     
-    // 检查是否为数字
-    const isNumber = /^[0-9]$/.test(key)
-    if (!isNumber) {
+    // 检查是否可编辑（考虑primary依赖）
+    if (!isCellEditable(rowIndex, columnIndex, configIndex)) {
       return
     }
     
-    event.preventDefault()
-    event.stopPropagation()
-    
-    // 直接设置第一个字符
-    const numValue = Number(key)
-    updateCellValue(rowIndex, columnIndex, numValue)
-    
-    // 设置编辑状态
-    startEdit(rowIndex, columnIndex)
-    return
+    // 根据组件类型检查输入是否有效
+    if (componentType === 'NumberInput' || (!componentType && config?.type && /^(int|integer|decimal|float|double|numeric)/i.test(config.type))) {
+      // 数字输入：检查是否为有效数字字符
+      const isNumber = /^[0-9.\-+]$/.test(key)
+      if (!isNumber) {
+        return
+      }
+      
+      event.preventDefault()
+      event.stopPropagation()
+      
+      // 直接设置第一个字符
+      const numValue = Number(key)
+      if (!isNaN(numValue)) {
+        updateCellValue(rowIndex, columnIndex, numValue)
+        // 设置编辑状态（标记为键盘录入模式）
+        startEdit(rowIndex, columnIndex)
+      }
+      return
+    } else if (componentType === 'Input' || !componentType) {
+      // 文本输入：接受任何可打印字符
+      event.preventDefault()
+      event.stopPropagation()
+      
+      // 直接设置第一个字符
+      updateCellValue(rowIndex, columnIndex, key)
+      // 设置编辑状态（标记为键盘录入模式）
+      startEdit(rowIndex, columnIndex)
+      return
+    }
+    // Checkbox和RadioBox不支持键盘直接输入
   }
   
   // Delete 或 Backspace 删除单元格内容
@@ -1294,8 +1827,22 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
     if (rowIndex === 0 || columnIndex === 0) {
       return
     }
+    
+    // 检查是否可编辑（考虑primary依赖）
+    if (!isCellEditable(rowIndex, columnIndex, configIndex)) {
+      return
+    }
+    
     event.preventDefault()
-    updateCellValue(rowIndex, columnIndex, null)
+    
+    // 根据组件类型设置不同的默认值
+    if (componentType === 'Checkbox') {
+      updateCellValue(rowIndex, columnIndex, false)
+    } else if (componentType === 'NumberInput' || (!componentType && config?.type && /^(int|integer|decimal|float|double|numeric)/i.test(config.type))) {
+      updateCellValue(rowIndex, columnIndex, null)
+    } else {
+      updateCellValue(rowIndex, columnIndex, '')
+    }
     return
   }
   
@@ -1305,6 +1852,12 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
     if (rowIndex === 0 || columnIndex === 0) {
       return
     }
+    
+    // 检查是否可编辑（考虑primary依赖）
+    if (!isCellEditable(rowIndex, columnIndex, configIndex)) {
+      return
+    }
+    
     event.preventDefault()
     startEdit(rowIndex, columnIndex)
     return
@@ -1329,6 +1882,12 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
     if (rowIndex === 0 || columnIndex === 0) {
       return
     }
+    
+    // 检查是否可编辑（考虑primary依赖）
+    if (!isCellEditable(rowIndex, columnIndex, configIndex)) {
+      return
+    }
+    
     event.preventDefault()
     event.stopPropagation()
     
@@ -1336,8 +1895,14 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
     return
   }
   
-  // 方向键导航
+  // 方向键导航（只在有单元格被选中时处理）
   if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key)) {
+    // 标题行（rowIndex=0）和名称列（columnIndex=0）不可导航
+    // 但第一行交叉单元（rowIndex=1）和第一列交叉单元（columnIndex=1）可以导航
+    if (rowIndex === 0 || columnIndex === 0) {
+      return
+    }
+    
     event.preventDefault()
     event.stopPropagation()
     
@@ -1349,11 +1914,211 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
     }
     
     const direction = directionMap[key]
+    
+    // 使用当前选中的单元格位置（如果有），否则使用当前单元格位置
+    // 注意：currentRowIndex 和 currentColumnIndex 可能为 1（第一行和第一列的交叉单元）
+    const fromRowIndex = currentRowIndex.value !== null && currentRowIndex.value >= 1 ? currentRowIndex.value : rowIndex
+    const fromColumnIndex = currentColumnIndex.value !== null && currentColumnIndex.value >= 1 ? currentColumnIndex.value : columnIndex
+    
+    // 导航到目标单元格（可以导航到第一行和第一列的交叉单元）
     navigateToCell(
-      { direction, fromRowIndex: rowIndex, fromColumnIndex: columnIndex },
+      { direction, fromRowIndex, fromColumnIndex },
       { validateCurrent: false }
     )
     return
+  }
+}
+
+// ==================== 复制粘贴功能 ====================
+/**
+ * 获取当前选中的单元格信息
+ */
+const getSelectedCellInfo = () => {
+  const selectedCell = document.querySelector('.el-table__cell.selected-cell') as HTMLElement
+  if (!selectedCell) return null
+  
+  const rowElement = selectedCell.closest('tr')
+  if (!rowElement) return null
+  
+  const tbody = rowElement.parentElement
+  if (!tbody) return null
+  
+  const rows = Array.from(tbody.querySelectorAll('tr'))
+  const rowIndex = rows.indexOf(rowElement)
+  if (rowIndex === -1 || rowIndex >= props.rows.length) return null
+  
+  const cellIndex = Array.from(rowElement.children).indexOf(selectedCell)
+  if (cellIndex === -1) return null
+  
+  // 跳过名称列
+  const columnIndex = cellIndex - 1
+  if (columnIndex < 0 || columnIndex >= props.columns.length) return null
+  
+  const column = props.columns[columnIndex]
+  return { rowIndex, columnIndex, column }
+}
+
+/**
+ * 处理复制（Ctrl+C）
+ */
+const handleCopy = (event: ClipboardEvent) => {
+  // 确定源单元格：优先使用编辑模式，否则使用选中的单元格
+  let rowIndex: number | null = null
+  let columnIndex: number | null = null
+  let column: TableCrossColumn | null = null
+  
+  if (editingCell.value) {
+    // 编辑模式：使用当前编辑的单元格
+    rowIndex = editingCell.value.rowIndex
+    columnIndex = editingCell.value.columnIndex
+    column = props.columns[columnIndex] || null
+  } else {
+    // 非编辑模式：使用选中的单元格
+    const cellInfo = getSelectedCellInfo()
+    if (cellInfo) {
+      rowIndex = cellInfo.rowIndex
+      columnIndex = cellInfo.columnIndex
+      column = cellInfo.column
+    }
+  }
+  
+  // 如果没有有效的源单元格，忽略复制
+  if (rowIndex === null || columnIndex === null || !column) {
+    return
+  }
+  
+  const configIndex = props.currentDataConfigIndex ?? 0
+  const value = getCellValue(rowIndex, columnIndex, configIndex)
+  
+  if (value === null || value === undefined) {
+    return
+  }
+  
+  event.preventDefault()
+  
+  // 准备复制数据
+  const config = props.dataConfigs?.[configIndex]
+  const componentType = config?.component
+  let copyValue = ''
+  let copyData: any = value
+  
+  if (componentType === 'Checkbox') {
+    copyValue = value ? '是' : '否'
+    copyData = value
+  } else if (componentType === 'RadioBox' && config?.radioOptions) {
+    const option = config.radioOptions.find(opt => opt.value === value)
+    copyValue = option ? option.label : String(value)
+    copyData = value
+  } else {
+    copyValue = getCellDisplayValue(rowIndex, columnIndex, configIndex)
+    copyData = value
+  }
+  
+  // 设置剪贴板数据
+  if (event.clipboardData) {
+    // text/plain: 用户可见的文本
+    event.clipboardData.setData('text/plain', copyValue)
+    // 自定义格式：包含类型和值的元数据
+    const cellData = {
+      type: componentType || config?.type || 'text',
+      value: copyData,
+      configIndex: configIndex
+    }
+    event.clipboardData.setData('application/x-tablecross-cell', JSON.stringify(cellData))
+  }
+}
+
+/**
+ * 处理粘贴（Ctrl+V）
+ */
+const handlePaste = (event: ClipboardEvent) => {
+  // 确定目标单元格：优先使用编辑模式，否则使用选中的单元格
+  let rowIndex: number | null = null
+  let columnIndex: number | null = null
+  let column: TableCrossColumn | null = null
+  
+  if (editingCell.value) {
+    // 编辑模式：使用当前编辑的单元格
+    rowIndex = editingCell.value.rowIndex
+    columnIndex = editingCell.value.columnIndex
+    column = props.columns[columnIndex] || null
+  } else {
+    // 非编辑模式：使用选中的单元格
+    const cellInfo = getSelectedCellInfo()
+    if (cellInfo) {
+      rowIndex = cellInfo.rowIndex
+      columnIndex = cellInfo.columnIndex
+      column = cellInfo.column
+    }
+  }
+  
+  // 如果没有有效的目标单元格，忽略粘贴
+  if (rowIndex === null || columnIndex === null || !column) {
+    return
+  }
+  
+  const configIndex = props.currentDataConfigIndex ?? 0
+  
+  // 检查是否可编辑
+  if (!isCellEditable(rowIndex, columnIndex, configIndex)) {
+    return
+  }
+  
+  event.preventDefault()
+  
+  // 尝试获取自定义格式的数据
+  const customData = event.clipboardData?.getData('application/x-tablecross-cell')
+  let cellData: any = null
+  
+  if (customData) {
+    try {
+      cellData = JSON.parse(customData)
+    } catch (e) {
+      // 解析失败，忽略自定义数据，使用普通文本
+    }
+  }
+  
+  // 处理粘贴数据
+  const config = props.dataConfigs?.[configIndex]
+  const componentType = config?.component
+  
+  if (cellData && cellData.type === componentType) {
+    // 有自定义数据且类型匹配：使用自定义格式处理
+    handleInputUpdate(rowIndex, columnIndex, cellData.value)
+  } else {
+    // 没有自定义数据或类型不匹配：使用普通文本粘贴
+    const pasteData = event.clipboardData?.getData('text/plain') || ''
+    if (pasteData) {
+      if (componentType === 'Checkbox') {
+        // Checkbox: 将"是"、"true"、"1"等转换为true，其他为false
+        const boolValue = ['是', 'true', '1', 'yes'].includes(pasteData.toLowerCase())
+        handleInputUpdate(rowIndex, columnIndex, boolValue)
+      } else if (componentType === 'RadioBox' && config?.radioOptions) {
+        // RadioBox: 尝试通过label或value匹配
+        const option = config.radioOptions.find(opt => opt.label === pasteData || String(opt.value) === pasteData)
+        if (option) {
+          handleInputUpdate(rowIndex, columnIndex, option.value)
+        }
+      } else if (componentType === 'NumberInput' || (!componentType && config?.type && /^(int|integer|decimal|float|double|numeric)/i.test(config.type))) {
+        // NumberInput: 尝试转换为数字
+        const num = Number(pasteData)
+        if (!isNaN(num)) {
+          handleInputUpdate(rowIndex, columnIndex, num)
+        }
+      } else {
+        // Input: 直接使用文本
+        handleInputUpdate(rowIndex, columnIndex, pasteData)
+      }
+    } else {
+      // 如果粘贴数据为空，清空单元格
+      if (componentType === 'Checkbox') {
+        handleInputUpdate(rowIndex, columnIndex, false)
+      } else if (componentType === 'NumberInput' || (!componentType && config?.type && /^(int|integer|decimal|float|double|numeric)/i.test(config.type))) {
+        handleInputUpdate(rowIndex, columnIndex, null)
+      } else {
+        handleInputUpdate(rowIndex, columnIndex, '')
+      }
+    }
   }
 }
 
@@ -1503,6 +2268,10 @@ const addColumn = async (col?: number): Promise<[number, string, number?]> => {
 
 // ==================== 生命周期 ====================
 onMounted(() => {
+  // 监听复制粘贴事件
+  document.addEventListener('copy', handleCopy)
+  document.addEventListener('paste', handlePaste)
+  
   // 监听全局 keydown 事件（处理编辑模式下的 Tab 和 Escape 键）
   window.addEventListener('keydown', handleGlobalKeydown, { capture: true, passive: false })
   document.addEventListener('keydown', handleGlobalKeydown, { capture: true, passive: false })
@@ -1530,6 +2299,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   // 清理事件监听
+  document.removeEventListener('copy', handleCopy)
+  document.removeEventListener('paste', handlePaste)
   window.removeEventListener('keydown', handleGlobalKeydown, { capture: true } as any)
   document.removeEventListener('keydown', handleGlobalKeydown, { capture: true } as any)
   window.removeEventListener('resize', updateTableWidth)
@@ -1566,7 +2337,16 @@ defineExpose({
     :data="tableData"
     border
     class="table-cross"
-    @cell-click="handleCellClick"
+    :row-class-name="getRowClassName"
+    @cell-click="(row, column, cell, event) => {
+      console.log('[TableCross] ElTable cell-click 事件', {
+        row: row ? { id: row.id, name: row.name } : null,
+        column: column ? { property: column.property, field: column.field } : null,
+        cell,
+        event
+      })
+      handleCellClick(row, column)
+    }"
     @cell-dblclick="handleCellDblclick"
     @header-click="handleHeaderClick"
   >
@@ -1582,7 +2362,17 @@ defineExpose({
         <div class="name-header-cell"></div>
       </template>
       <template #default="scope">
+        <!-- 汇总行和操作行：不显示拖动标志 -->
         <div 
+          v-if="scope.row.__row_type__ === 'sum' || scope.row.__row_type__ === 'action'"
+          class="name-cell sum-row-name-cell"
+        >
+          <span class="row-name-text">{{ scope.row.name }}</span>
+        </div>
+        
+        <!-- 普通数据行 -->
+        <div 
+          v-else
           class="name-cell"
           :class="{ 
             'selected-row-name': selectedRowIndex === scope.$index,
@@ -1637,44 +2427,114 @@ defineExpose({
         </div>
       </template>
       <template #default="scope">
-        <!-- 第一行和第一列不可编辑 -->
+        <!-- 汇总行：显示列小计 -->
         <span 
-          v-if="scope.$index === 0 || colIdx === 0"
-          class="table-cross-cell non-editable-cell"
-        >{{ getCellDisplayValue(scope.$index, colIdx) }}</span>
+          v-if="scope.row.__row_type__ === 'sum'"
+          class="table-cross-cell sum-row-cell"
+        >{{ scope.row[String(column.id)] ?? '' }}</span>
         
-        <!-- 编辑模式：数字输入框 -->
-        <ElInputNumber
-          v-else-if="isEditing(scope.$index, colIdx) && isCellEditable(scope.$index, colIdx, currentDataConfigIndex)"
-          :key="`input-number-${scope.$index}-${colIdx}`"
-          :ref="(el: any) => setInputRef(scope.$index, colIdx, el)"
-          :model-value="getCellValueForInput(scope.$index, colIdx)"
-          size="small"
-          :controls="false"
-          :min="1"
-          :precision="dataConfigs[currentDataConfigIndex]?.type?.includes('decimal') ? 2 : 0"
-          class="excel-edit-input-number"
-          @update:model-value="(val?: number) => handleInputUpdate(scope.$index, colIdx, val ?? null)"
-          @focus="handleInputFocus(scope.$index, colIdx)"
-          @blur="handleInputBlur($event, scope.$index, colIdx)"
-        />
+        <!-- 操作行：显示删除列按钮 -->
+        <div 
+          v-else-if="scope.row.__row_type__ === 'action'"
+          class="table-cross-cell action-cell"
+        >
+          <ElLink 
+            type="primary" 
+            :underline="false"
+            @click.stop="emit('column-delete', colIdx)"
+          >
+            删除列
+          </ElLink>
+        </div>
+        
+        <!-- 编辑模式：根据配置渲染不同的组件 -->
+        <template v-else-if="isEditing(scope.$index, colIdx) && isCellEditable(scope.$index, colIdx, currentDataConfigIndex)">
+          <!-- NumberInput -->
+          <ElInputNumber
+            v-if="dataConfigs[currentDataConfigIndex]?.component === 'NumberInput' || (!dataConfigs[currentDataConfigIndex]?.component && dataConfigs[currentDataConfigIndex]?.type && /^(int|integer|decimal|float|double|numeric)/i.test(dataConfigs[currentDataConfigIndex].type))"
+            :key="`input-number-${scope.$index}-${colIdx}`"
+            :ref="(el: any) => setInputRef(scope.$index, colIdx, el)"
+            :model-value="getCellValueForInput(scope.$index, colIdx)"
+            size="small"
+            :controls="false"
+            :min="1"
+            :precision="dataConfigs[currentDataConfigIndex]?.type?.includes('decimal') ? 2 : 0"
+            class="excel-edit-input-number"
+            @update:model-value="(val?: number) => handleInputUpdate(scope.$index, colIdx, val ?? null)"
+            @focus="handleInputFocus(scope.$index, colIdx)"
+            @blur="handleInputBlur($event, scope.$index, colIdx)"
+          />
+          
+          <!-- Input -->
+          <ElInput
+            v-else-if="dataConfigs[currentDataConfigIndex]?.component === 'Input'"
+            :key="`input-${scope.$index}-${colIdx}`"
+            :ref="(el: any) => setInputRef(scope.$index, colIdx, el)"
+            :model-value="getCellValueForInput(scope.$index, colIdx)"
+            size="small"
+            class="excel-edit-input"
+            @update:model-value="(val: string) => handleInputUpdate(scope.$index, colIdx, val)"
+            @focus="handleInputFocus(scope.$index, colIdx)"
+            @blur="handleInputBlur($event, scope.$index, colIdx)"
+          />
+          
+          <!-- Checkbox -->
+          <ElCheckbox
+            v-else-if="dataConfigs[currentDataConfigIndex]?.component === 'Checkbox'"
+            :key="`checkbox-${scope.$index}-${colIdx}`"
+            :ref="(el: any) => setInputRef(scope.$index, colIdx, el)"
+            :model-value="getCellValueForInput(scope.$index, colIdx)"
+            class="excel-edit-checkbox"
+            @update:model-value="(val: boolean) => handleInputUpdate(scope.$index, colIdx, val)"
+            @focus="handleInputFocus(scope.$index, colIdx)"
+            @blur="handleInputBlur($event, scope.$index, colIdx)"
+          />
+          
+          <!-- RadioBox -->
+          <ElRadioGroup
+            v-else-if="dataConfigs[currentDataConfigIndex]?.component === 'RadioBox' && dataConfigs[currentDataConfigIndex]?.radioOptions"
+            :key="`radio-${scope.$index}-${colIdx}`"
+            :ref="(el: any) => setInputRef(scope.$index, colIdx, el)"
+            :model-value="getCellValueForInput(scope.$index, colIdx)"
+            class="excel-edit-radio"
+            @update:model-value="(val: any) => handleInputUpdate(scope.$index, colIdx, val)"
+            @focus="handleInputFocus(scope.$index, colIdx)"
+            @blur="handleInputBlur($event, scope.$index, colIdx)"
+          >
+            <ElRadio
+              v-for="option in dataConfigs[currentDataConfigIndex].radioOptions"
+              :key="option.value"
+              :label="option.value"
+            >
+              {{ option.label }}
+            </ElRadio>
+          </ElRadioGroup>
+        </template>
         
         <!-- 显示模式 -->
         <span 
           v-else
           class="table-cross-cell"
           :class="{ 
-            'selected-cell': currentRowIndex === scope.$index && currentColumnIndex === colIdx,
             'editing-cell': isEditing(scope.$index, colIdx),
             'non-editable-cell': !isCellEditable(scope.$index, colIdx, currentDataConfigIndex)
           }"
           @keydown="handleCellKeydown($event, scope.row, { property: column.id })"
+          @click="() => {
+            console.log('[TableCross] 单元格 span 点击', {
+              rowIndex: scope.$index,
+              colIdx,
+              currentRowIndex: currentRowIndex,
+              currentColumnIndex: currentColumnIndex,
+              shouldBeSelected: currentRowIndex === scope.$index && currentColumnIndex === colIdx
+            })
+          }"
           tabindex="0"
         >{{ getCellDisplayValue(scope.$index, colIdx) }}</span>
       </template>
     </ElTableColumn>
     
-    <!-- 汇总列（排在数据列之后，填充列之前） -->
+    <!-- 汇总列（排在数据列之后，操作列之前） -->
     <ElTableColumn
       prop="__sum__"
       label="行小计"
@@ -1687,13 +2547,57 @@ defineExpose({
         </div>
       </template>
       <template #default="scope">
-        <div class="sum-cell">
+        <!-- 汇总行和操作行：不显示行小计 -->
+        <div 
+          v-if="scope.row.__row_type__ === 'sum' || scope.row.__row_type__ === 'action'"
+          class="sum-cell"
+        ></div>
+        
+        <!-- 普通数据行：显示行小计 -->
+        <div v-else class="sum-cell">
           {{ getRowSum(scope.$index) }}
         </div>
       </template>
     </ElTableColumn>
     
-    <!-- 填充列（空白标题列，用于铺满表格，排在汇总列之后） -->
+    <!-- 操作列（排在汇总列之后，填充列之前，当 allowDeleteRow=true 时显示） -->
+    <ElTableColumn
+      v-if="allowDeleteRow"
+      prop="__action_column__"
+      label="操作"
+      width="100"
+      align="center"
+    >
+      <template #header>
+        <div class="column-header-cell action-column-header">
+          <!-- 操作列不显示拖动标志 -->
+          <span class="column-name-text">操作</span>
+        </div>
+      </template>
+      <template #default="scope">
+        <!-- 汇总行和操作行：操作列不显示内容 -->
+        <div 
+          v-if="scope.row.__row_type__ === 'sum' || scope.row.__row_type__ === 'action'"
+          class="table-cross-cell action-cell"
+        ></div>
+        
+        <!-- 普通数据行：显示删除行按钮 -->
+        <div 
+          v-else
+          class="table-cross-cell action-cell"
+        >
+          <ElLink 
+            type="primary" 
+            :underline="false"
+            @click.stop="emit('row-delete', scope.$index)"
+          >
+            删除行
+          </ElLink>
+        </div>
+      </template>
+    </ElTableColumn>
+    
+    <!-- 填充列（空白标题列，用于铺满表格，排在操作列之后） -->
     <ElTableColumn
       v-if="needFillColumn"
       prop="__fill__"
@@ -1713,37 +2617,6 @@ defineExpose({
     </ElTableColumn>
     
   </ElTable>
-  
-  <!-- 汇总行 -->
-  <div class="sum-row-wrapper">
-    <table class="sum-row-table">
-      <tbody>
-        <tr class="sum-row">
-          <td class="sum-row-name-cell" :style="{ width: `${nameColumnWidth}px`, minWidth: `${nameColumnWidth}px`, maxWidth: `${nameColumnWidth}px` }">
-            列小计
-          </td>
-          <td
-            v-for="(column, colIdx) in columns"
-            :key="String(column.id)"
-            class="sum-row-cell"
-            :style="{ width: `${dataColumnWidth}px`, minWidth: `${dataColumnWidth}px`, maxWidth: `${dataColumnWidth}px` }"
-          >
-            {{ getColumnSum(colIdx) }}
-          </td>
-          <td class="sum-row-sum-cell" :style="{ width: `${sumColumnWidth}px`, minWidth: `${sumColumnWidth}px`, maxWidth: `${sumColumnWidth}px` }">
-            <!-- 总列小计可以显示所有数据的列小计 -->
-          </td>
-          <td
-            v-if="needFillColumn"
-            class="sum-row-cell fill-column-cell"
-            :style="{ width: `${fillColumnWidth}px`, minWidth: `${fillColumnWidth}px`, maxWidth: `${fillColumnWidth}px` }"
-          >
-            <!-- 填充列不显示内容 -->
-          </td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
 </template>
 
 <style lang="less" scoped>
@@ -1907,6 +2780,15 @@ defineExpose({
   cursor: move;
   user-select: none;
   gap: 6px;
+  
+  // 操作列表头：不显示拖动标志，不可拖动
+  &.action-column-header {
+    cursor: default;
+    
+    .drag-handle {
+      display: none;
+    }
+  }
   box-sizing: border-box;
   
   &.selected-column-name {
@@ -1963,6 +2845,13 @@ defineExpose({
   min-width: 100% !important;
   max-width: 100% !important;
   flex: 1 1 auto !important;
+  
+  &.action-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+  }
   padding: 4px 5px;
   word-break: break-word;
   white-space: pre-wrap;
@@ -1991,7 +2880,8 @@ defineExpose({
 }
 
 // ==================== 编辑组件样式 ====================
-.excel-edit-input-number {
+.excel-edit-input-number,
+.excel-edit-input {
   :deep(.el-input),
   :deep(.el-input-number) {
     .fill-container();
@@ -2031,62 +2921,90 @@ defineExpose({
   }
 }
 
-// ==================== 汇总行样式 ====================
-.sum-row-wrapper {
-  border-left: 1px solid #ebeef5;
-  border-right: 1px solid #ebeef5;
-  border-top: none;
-  border-bottom: 1px solid #ebeef5;
-  background-color: #fff;
-  
-  .sum-row-table {
-    width: auto;
-    table-layout: fixed;
-    border-collapse: collapse;
+.excel-edit-checkbox {
+  :deep(.el-checkbox) {
+    .remove-border-bg();
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 100% !important;
+    height: 100% !important;
     
-    .sum-row {
-      background-color: #fafafa;
-      font-size: 14px;
+    .el-checkbox__input {
+      .remove-border-bg();
+    }
+    
+    .el-checkbox__label {
+      padding-left: 0 !important;
+    }
+  }
+}
+
+.excel-edit-radio {
+  :deep(.el-radio-group) {
+    .remove-border-bg();
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 100% !important;
+    height: 100% !important;
+    gap: 8px;
+    
+    .el-radio {
+      margin-right: 0 !important;
       
-      td {
-        padding: 8px !important;
-        text-align: center;
-        border-top: none;
-        border-bottom: none;
-        border-right: 1px solid #ebeef5;
-        font-size: 14px;
+      .el-radio__input {
+        .remove-border-bg();
       }
       
-      .sum-row-name-cell {
-        border-right: 1px solid #ebeef5;
-        text-align: center;
-        box-sizing: border-box;
-        // 宽度通过内联样式设置，使用配置的nameColumnWidth
-        // table-layout: fixed 确保列宽严格按照设置的值
-        // 边框与表头一致：右边border为1px
+      .el-radio__label {
+        padding-left: 4px !important;
       }
-      
-      .sum-row-cell {
-        box-sizing: border-box;
-        // 宽度通过内联样式设置，使用配置的dataColumnWidth
-        // table-layout: fixed 确保列宽严格按照设置的值
-      }
-      
-      .sum-row-sum-cell {
-        border-left: 0;
-        box-sizing: border-box;
-        // 宽度通过内联样式设置，使用配置的sumColumnWidth
-        // table-layout: fixed 确保列宽严格按照设置的值
-        // 边框与表头一致：左右border都是0（右边border由td的通用样式设置为1px）
-      }
-      
-      .fill-column-cell {
-        background-color: #fafafa;
-        box-sizing: border-box;
-        padding: 0 !important; // 填充列不需要padding，允许宽度缩小到0
-        // 宽度通过内联样式设置，使用配置的fillColumnWidth
-        // table-layout: fixed 确保列宽严格按照设置的值
-      }
+    }
+  }
+}
+
+// ==================== 汇总行和操作行样式（现在作为表格行的一部分） ====================
+:deep(.el-table__body) {
+  // 汇总行样式
+  tr.sum-row-type {
+    background-color: #fafafa !important;
+    font-size: 14px;
+    
+    .el-table__cell {
+      background-color: #fafafa !important;
+      padding: 8px !important;
+    }
+    
+    .name-cell.sum-row-name-cell {
+      background-color: #fafafa !important;
+      font-weight: normal;
+    }
+    
+    .table-cross-cell.sum-row-cell {
+      background-color: #fafafa !important;
+      font-weight: normal;
+    }
+  }
+  
+  // 操作行样式
+  tr.action-row-type {
+    background-color: #fafafa !important;
+    border-top: 1px solid #ebeef5;
+    font-size: 14px;
+    
+    .el-table__cell {
+      background-color: #fafafa !important;
+      padding: 8px !important;
+    }
+    
+    .name-cell.sum-row-name-cell {
+      background-color: #fafafa !important;
+      font-weight: normal;
+    }
+    
+    .table-cross-cell.action-cell {
+      background-color: #fafafa !important;
     }
   }
 }

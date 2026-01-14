@@ -159,16 +159,24 @@ const tableRows = computed<TableCrossRow[]>(() => {
       }
     })
     
+    // 操作列由 TableCross 组件单独处理，不需要在这里添加数据
+    
     return row
   })
 })
 
 /** TableCross的列数据（DishGroup） */
 const tableColumns = computed<TableCrossColumn[]>(() => {
-  return dishGroupList.value.map(group => ({
+  // 先创建数据列（不包括操作列）
+  const columns = dishGroupList.value.map(group => ({
     id: group.id,
     name: group.name_unique || ''
   }))
+  
+  // 操作列会在 TableCross 组件中单独添加，放在行小计之后
+  // 这里不添加操作列，让 TableCross 组件处理
+  
+  return columns
 })
 
 // ==================== 初始化 ====================
@@ -266,7 +274,7 @@ const loadDataFromStorage = (shouldRestore: boolean = false) => {
     return
   }
   
-  // 窗口切换场景：恢复缓存
+  // 窗口切换或页面刷新场景：恢复缓存
   try {
     const storageData = sessionStorage.getItem(props.storageKey)
     
@@ -274,11 +282,18 @@ const loadDataFromStorage = (shouldRestore: boolean = false) => {
       const data = JSON.parse(storageData)
       
       // 加载Dish和DishGroup数据
+      // 注意：如果 props 中有数据，优先使用 props（但页面刷新时 props 通常是空的）
       if (data.dishes && Array.isArray(data.dishes)) {
-        dishList.value = data.dishes
+        // 只有在 props 中没有数据时才使用缓存的数据
+        if (!props.dishes || props.dishes.length === 0) {
+          dishList.value = data.dishes
+        }
       }
       if (data.dishGroups && Array.isArray(data.dishGroups)) {
-        dishGroupList.value = data.dishGroups
+        // 只有在 props 中没有数据时才使用缓存的数据
+        if (!props.dishGroups || props.dishGroups.length === 0) {
+          dishGroupList.value = data.dishGroups
+        }
       }
       if (data.branchId !== undefined) {
         branchId.value = data.branchId
@@ -291,7 +306,7 @@ const loadDataFromStorage = (shouldRestore: boolean = false) => {
     // 加载数据失败，静默处理
   }
   
-  // 如果props中有数据，优先使用props
+  // 如果props中有数据，优先使用props（覆盖缓存数据）
   if (props.dishes && props.dishes.length > 0) {
     dishList.value = props.dishes
   }
@@ -369,6 +384,20 @@ const handleCellUpdate = (rowIndex: number, columnIndex: number, value: number |
  * 处理行数据更新
  */
 const handleRowsUpdate = (rows: TableCrossRow[]) => {
+  // 更新 dishList 的顺序以匹配新的行顺序
+  // rows 中的顺序就是新的顺序
+  const newDishList: any[] = []
+  rows.forEach(row => {
+    // 查找对应的 dish
+    const dish = dishList.value.find(d => d.id === row.id)
+    if (dish) {
+      newDishList.push(dish)
+    }
+  })
+  
+  // 更新 dishList 的顺序
+  dishList.value = newDishList
+  
   // 更新交叉数据
   rows.forEach(row => {
     const dishId = String(row.id)
@@ -449,6 +478,86 @@ const addColDatas = (records: any[]) => {
       prompInfoRef.value.warn('所选记录已存在')
     }
   }
+}
+
+/**
+ * 删除行数据（菜品）
+ * @param rowIndex - 要删除的行索引（来自 TableCross，是 tableData 中的索引）
+ */
+const deleteRow = (rowIndex: number) => {
+  // rowIndex 是 tableData 中的索引
+  // tableData 的结构：数据行 + 汇总行 + 操作行（如果启用）
+  // 所以如果 rowIndex >= dishList.length，说明是汇总行或操作行，不处理
+  if (rowIndex < 0 || rowIndex >= dishList.value.length) {
+    return
+  }
+  
+  const dish = dishList.value[rowIndex]
+  const dishId = String(dish.id)
+  
+  // 删除行数据
+  dishList.value.splice(rowIndex, 1)
+  
+  // 删除交叉数据中该行的所有数据
+  if (crossData.value[dataType.value][dishId]) {
+    delete crossData.value[dataType.value][dishId]
+  }
+  
+  saveDataToStorage()
+  
+  if (prompInfoRef.value) {
+    prompInfoRef.value.info('已删除行数据')
+  }
+  
+  // 触发数据变化事件
+  emit('dataChanged', {
+    action: 'delete-row',
+    dishId: dish.id
+  })
+}
+
+/**
+ * 删除列数据（分组）
+ * @param columnIndex - 要删除的列索引（来自 TableCross，可能包括操作列）
+ */
+const deleteColumn = (columnIndex: number) => {
+  // 获取当前列（可能包括操作列）
+  const column = tableColumns.value[columnIndex]
+  
+  // 如果是操作列，不处理
+  if (!column || String(column.id) === '__action_column__') {
+    return
+  }
+  
+  // 查找该列在 dishGroupList 中的实际索引
+  const actualIndex = dishGroupList.value.findIndex(group => group.id === column.id)
+  
+  if (actualIndex < 0 || actualIndex >= dishGroupList.value.length) return
+  
+  const group = dishGroupList.value[actualIndex]
+  const groupId = String(group.id)
+  
+  // 删除列数据
+  dishGroupList.value.splice(actualIndex, 1)
+  
+  // 删除交叉数据中该列的所有数据
+  Object.keys(crossData.value[dataType.value]).forEach(dishId => {
+    if (crossData.value[dataType.value][dishId] && crossData.value[dataType.value][dishId][groupId]) {
+      delete crossData.value[dataType.value][dishId][groupId]
+    }
+  })
+  
+  saveDataToStorage()
+  
+  if (prompInfoRef.value) {
+    prompInfoRef.value.info('已删除列数据')
+  }
+  
+  // 触发数据变化事件
+  emit('dataChanged', {
+    action: 'delete-column',
+    dishGroupId: group.id
+  })
 }
 
 /**
@@ -567,11 +676,25 @@ const stateStores = computed<StatusStoreItem[]>(() => {
  */
 const handleRestoreComplete = async (restored: boolean) => {
   if (restored) {
-    // 状态已恢复，可以加载 sessionStorage 中的数据（窗口切换场景）
+    // 状态已恢复，可以加载 sessionStorage 中的数据（窗口切换或页面刷新场景）
     loadDataFromStorage(true)
   } else {
-    // 窗口打开场景，清空 sessionStorage 缓存
-    loadDataFromStorage(false)
+    // 窗口打开场景：检查是否是页面刷新
+    // 页面刷新时，sessionStorage 中的数据应该还在，应该恢复
+    // 只有在真正的新窗口打开时（sessionStorage 中没有数据），才清空缓存
+    if (props.storageKey) {
+      const storageData = sessionStorage.getItem(props.storageKey)
+      if (storageData) {
+        // 有缓存数据，说明是页面刷新场景，应该恢复
+        loadDataFromStorage(true)
+      } else {
+        // 没有缓存数据，说明是真正的窗口打开场景，清空缓存
+        loadDataFromStorage(false)
+      }
+    } else {
+      // 没有配置 storageKey，直接清空
+      loadDataFromStorage(false)
+    }
   }
 }
 
@@ -754,10 +877,14 @@ defineExpose({
         :sum-column-width="sumColumnWidth"
         :data-configs="dataConfigs"
         :current-data-config-index="currentDataConfigIndex"
+        :allow-delete-row="rowDataConfig?.allowAdd || false"
+        :allow-delete-column="colDataConfig?.allowAdd || false"
         @update:rows="handleRowsUpdate"
         @update:columns="handleColumnsUpdate"
         @cell-update="handleCellUpdate"
         @update:current-data-config-index="(val: number) => { currentDataConfigIndex = val }"
+        @row-delete="deleteRow"
+        @column-delete="deleteColumn"
       />
     </div>
   </div>

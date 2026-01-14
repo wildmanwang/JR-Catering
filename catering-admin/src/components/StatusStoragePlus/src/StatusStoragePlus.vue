@@ -500,9 +500,10 @@ onMounted(async () => {
   mountedRoutePath = router.currentRoute.value.path
   mountedRouteFullPath = router.currentRoute.value.fullPath
   
-  // 严格区分窗口打开和窗口切换场景
-  // 1. 窗口打开：没有恢复标记 -> 不恢复状态，清空可能存在的缓存
+  // 严格区分窗口打开、窗口切换和页面刷新场景
+  // 1. 窗口打开：没有恢复标记，且没有匹配的缓存 -> 不恢复状态，清空可能存在的缓存
   // 2. 窗口切换：有恢复标记，且当前路由已在 visitedViews 中 -> 恢复状态
+  // 3. 页面刷新：没有恢复标记，但有匹配的缓存数据 -> 恢复状态（刷新场景）
   let shouldRestore = false
   
   try {
@@ -532,9 +533,36 @@ onMounted(async () => {
         sessionStorageAdapter.removeItem(PAGE_RESTORE_FLAG_KEY.value)
       }
     } else {
-      // 窗口打开场景：没有恢复标记，不恢复状态，清空可能存在的缓存数据
-      // 即使有缓存数据，也忽略它（清空缓存）
-      clearPageState()
+      // 没有恢复标记，检查是否是页面刷新场景
+      // 页面刷新时：没有恢复标记，但有匹配的缓存数据
+      const savedState = storage.value.getItem(PAGE_STATE_KEY.value)
+      if (savedState) {
+        try {
+          const statePayload = JSON.parse(savedState)
+          // 检查缓存的路由是否匹配当前路由
+          if (statePayload.fullPath === mountedRouteFullPath) {
+            // 检查时间戳是否过期
+            const now = Date.now()
+            const elapsed = now - statePayload.timestamp
+            if (elapsed <= props.maxAge) {
+              // 页面刷新场景：有匹配的缓存数据，恢复状态
+              shouldRestore = true
+            } else {
+              // 缓存已过期，清空
+              clearPageState()
+            }
+          } else {
+            // 路由不匹配，清空缓存
+            clearPageState()
+          }
+        } catch {
+          // 解析失败，清空缓存
+          clearPageState()
+        }
+      } else {
+        // 窗口打开场景：没有恢复标记，也没有缓存数据，清空可能存在的缓存
+        clearPageState()
+      }
     }
   } catch (err) {
     // 出错时，为了安全起见，不恢复状态，清空缓存
