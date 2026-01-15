@@ -1002,11 +1002,6 @@ const startEdit = (rowIndex: number, columnIndex: number): [number, string] => {
     return [-1, `列号${columnIndex}无效`]
   }
   
-  // 第一行和第一列不可编辑
-  if (rowIndex === 0 || columnIndex === 0) {
-    return [-1, '第一行和第一列不可编辑']
-  }
-  
   // 如果已经在编辑这个单元格，不做任何操作
   if (isEditing(rowIndex, columnIndex)) {
     return [1, '就绪']
@@ -1109,8 +1104,8 @@ const deselectCell = (): [number, string] => {
 
 /**
  * 选中单元格（接口函数）
- * 只有交叉的数据单元格可以选中（排除标题行rowIndex=0、名称列columnIndex=0、汇总行、操作行、汇总列、操作列）
- * 注意：第一行交叉单元（rowIndex=1）和第一列交叉单元（columnIndex=1）可以选中
+ * 所有交叉的数据单元格都可以选中，包括第一行数据单元（rowIndex=0）和第一列数据单元（columnIndex=0）
+ * 排除汇总行、操作行、汇总列、操作列
  */
 const selectCell = (rowIndex: number, columnIndex: number): [number, string] => {
   // 参数校验
@@ -1289,8 +1284,9 @@ const deselectColumn = (): [number, string] => {
 // ==================== 单元格导航 ====================
 /**
  * 计算目标单元格（只计算，不执行实际操作）
- * 只计算交叉数据单元格（排除标题行rowIndex=0、名称列columnIndex=0）
- * 注意：第一行交叉单元（rowIndex=1）和第一列交叉单元（columnIndex=1）可以导航
+ * 计算所有交叉数据单元格，包括第一行数据单元（rowIndex=0）和第一列数据单元（columnIndex=0）
+ * 注意：rowIndex=0 对应第一行数据单元（标题行在表头，不在 props.rows 中）
+ *      columnIndex=0 对应第一列数据单元（名称列不在 props.columns 中）
  */
 const calculateTargetCell = (
   target: 
@@ -1392,7 +1388,7 @@ const calculateTargetCell = (
 
 /**
  * 导航到单元格（接口函数）
- * 只导航到交叉数据单元格（排除第一行、第一列）
+ * 导航到所有交叉数据单元格，包括第一行数据单元（rowIndex=0）和第一列数据单元（columnIndex=0）
  */
 const navigateToCell = (
   target: 
@@ -1625,10 +1621,6 @@ const handleCellDblclick = (row: any, column: any) => {
     // 统一转换为字符串比较（因为模板中使用 String(column.id) 作为 prop）
     const columnIndex = props.columns.findIndex(col => String(col.id) === String(columnProperty))
     if (columnIndex >= 0) {
-      // 第一行和第一列不可编辑
-      if (rowIndex === 0 || columnIndex === 0) {
-        return
-      }
       const [editCode] = startEdit(rowIndex, columnIndex)
       if (editCode !== 1) {
         return
@@ -1679,11 +1671,6 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
   
   // 如果按下的是可打印字符，直接进入编辑
   if (key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
-    // 第一行和第一列不可编辑
-    if (rowIndex === 0 || columnIndex === 0) {
-      return
-    }
-    
     // 检查是否可编辑（考虑primary依赖）
     if (!isCellEditable(rowIndex, columnIndex, configIndex)) {
       return
@@ -1724,11 +1711,6 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
   
   // Delete 或 Backspace 删除单元格内容
   if ((key === 'Delete' || key === 'Backspace') && !editingCell.value) {
-    // 第一行和第一列不可编辑
-    if (rowIndex === 0 || columnIndex === 0) {
-      return
-    }
-    
     // 检查是否可编辑（考虑primary依赖）
     if (!isCellEditable(rowIndex, columnIndex, configIndex)) {
       return
@@ -1749,11 +1731,6 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
   
   // F2 进入编辑
   if (key === 'F2') {
-    // 第一行和第一列不可编辑
-    if (rowIndex === 0 || columnIndex === 0) {
-      return
-    }
-    
     // 检查是否可编辑（考虑primary依赖）
     if (!isCellEditable(rowIndex, columnIndex, configIndex)) {
       return
@@ -1779,11 +1756,6 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
   
   // Enter: 进入编辑状态
   if (key === 'Enter') {
-    // 第一行和第一列不可编辑
-    if (rowIndex === 0 || columnIndex === 0) {
-      return
-    }
-    
     // 检查是否可编辑（考虑primary依赖）
     if (!isCellEditable(rowIndex, columnIndex, configIndex)) {
       return
@@ -1798,12 +1770,6 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
   
   // 方向键导航（只在有单元格被选中时处理）
   if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key)) {
-    // 标题行（rowIndex=0）和名称列（columnIndex=0）不可导航
-    // 但第一行交叉单元（rowIndex=1）和第一列交叉单元（columnIndex=1）可以导航
-    if (rowIndex === 0 || columnIndex === 0) {
-      return
-    }
-    
     event.preventDefault()
     event.stopPropagation()
     
@@ -1817,11 +1783,11 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
     const direction = directionMap[key]
     
     // 使用当前选中的单元格位置（如果有），否则使用当前单元格位置
-    // 注意：currentRowIndex 和 currentColumnIndex 可能为 1（第一行和第一列的交叉单元）
-    const fromRowIndex = currentRowIndex.value !== null && currentRowIndex.value >= 1 ? currentRowIndex.value : rowIndex
-    const fromColumnIndex = currentColumnIndex.value !== null && currentColumnIndex.value >= 1 ? currentColumnIndex.value : columnIndex
+    // 注意：rowIndex=0 对应第一行数据单元，columnIndex=0 对应第一列数据单元，都可以导航
+    const fromRowIndex = currentRowIndex.value !== null ? currentRowIndex.value : rowIndex
+    const fromColumnIndex = currentColumnIndex.value !== null ? currentColumnIndex.value : columnIndex
     
-    // 导航到目标单元格（可以导航到第一行和第一列的交叉单元）
+    // 导航到目标单元格（包括第一行和第一列的数据单元）
     navigateToCell(
       { direction, fromRowIndex, fromColumnIndex },
       { validateCurrent: false }
@@ -2407,7 +2373,7 @@ defineExpose({
         <!-- 显示模式 -->
         <span 
           v-else
-          class="table-cross-cell"
+          class="table-cross-cell data-cell"
           :class="{ 
             'editing-cell': isEditing(scope.$index, colIdx),
             'non-editable-cell': !isCellEditable(scope.$index, colIdx, currentDataConfigIndex)
@@ -2434,11 +2400,11 @@ defineExpose({
         <!-- 汇总行和操作行：不显示行小计 -->
         <div 
           v-if="scope.row.__row_type__ === 'sum' || scope.row.__row_type__ === 'action'"
-          class="sum-cell"
+          class="sum-cell sum-column-cell"
         ></div>
         
         <!-- 普通数据行：显示行小计 -->
-        <div v-else class="sum-cell">
+        <div v-else class="sum-cell sum-column-cell">
           {{ getRowSum(scope.$index) }}
         </div>
       </template>
@@ -2540,7 +2506,7 @@ defineExpose({
     background-color: #fafafa;
     border-right: 1px solid #e8e8e8;
     padding: 0 !important;
-    cursor: pointer !important;
+    cursor: default !important;
     user-select: none;
     -webkit-user-select: none;
     -moz-user-select: none;
@@ -2570,15 +2536,36 @@ defineExpose({
   }
   
   // 数据单元格的鼠标样式（Excel 风格）
-  tbody .el-table__cell:not(:first-child):not(:last-child):not(.editing-cell) {
-    cursor: cell !important;
+  // 只匹配数据行的数据列单元格（通过 .data-cell 类名识别，排除汇总行、操作行、汇总列、操作列、填充列）
+  tbody tr:not(.sum-row-type):not(.action-row-type) .el-table__cell:not(:first-child):not(.editing-cell) {
+    // 排除汇总列（包含 .sum-column-cell）、操作列（包含 .action-cell）、填充列（包含 .fill-column-cell）
+    // 使用 :has() 选择器（如果浏览器不支持，下面的规则会作为fallback）
+    &:not(:has(.sum-column-cell)):not(:has(.action-cell)):not(:has(.fill-column-cell)) {
+      // 整个单元格使用 cell 光标（包括边缘的 padding 区域）
+      cursor: cell !important;
+      
+      :deep(.cell) {
+        cursor: cell !important;
+      }
+      
+      // 所有子元素都使用 cell 光标，除了输入框和链接
+      *:not(input):not(.el-input-number):not(.el-input-number__wrapper):not(.el-input-number__decrease):not(.el-input-number__increase):not(.el-link):not(.el-input__wrapper):not(.el-input__inner) {
+        cursor: cell !important;
+      }
+    }
+  }
+  
+  // 汇总列单元格使用默认光标（优先级更高，确保覆盖上面的规则）
+  // 使用 :has() 选择器识别包含 .sum-column-cell 的单元格
+  tbody tr:not(.sum-row-type):not(.action-row-type) .el-table__cell:not(:first-child):not(.editing-cell):has(.sum-column-cell) {
+    cursor: default !important;
     
     :deep(.cell) {
-      cursor: cell !important;
+      cursor: default !important;
     }
     
-    *:not(input):not(.el-input-number) {
-      cursor: cell !important;
+    * {
+      cursor: default !important;
     }
   }
   
@@ -2641,7 +2628,21 @@ defineExpose({
   
   .row-name-text {
     flex: 1;
-    text-align: center;
+    text-align: left; // 普通数据行的名称单元格左对齐
+  }
+  
+  // 汇总行和操作行的名称单元格使用默认箭头指针（不显示拖动指针），并保持居中对齐
+  &.sum-row-name-cell {
+    cursor: default !important;
+    justify-content: center; // 汇总行和操作行的名称单元格居中对齐
+    
+    .row-name-text {
+      text-align: center; // 汇总行和操作行的文字居中对齐
+    }
+    
+    * {
+      cursor: default !important;
+    }
   }
 }
 
@@ -2735,16 +2736,27 @@ defineExpose({
     align-items: center;
     justify-content: center;
     padding: 4px;
+    cursor: default !important; // 背景单元格保持箭头指针
+    
+    // 删除按钮本身保持手指型（ElLink默认就是pointer）
+    .el-link {
+      cursor: pointer !important;
+    }
   }
   padding: 4px 5px;
   word-break: break-word;
   white-space: pre-wrap;
-  cursor: cell !important;
+  cursor: default !important; // 默认箭头，只有 .data-cell 才是 cell 光标
   box-sizing: border-box !important;
   user-select: none;
   outline: none !important;
   border: none !important;
   text-align: center;
+  
+  // 只有数据单元格才使用 cell 光标
+  &.data-cell {
+    cursor: cell !important;
+  }
   
   &:focus {
     outline: none !important;
@@ -2863,6 +2875,11 @@ defineExpose({
     .name-cell.sum-row-name-cell {
       background-color: #fafafa !important;
       font-weight: normal;
+      cursor: default !important; // 汇总行名称单元格使用默认箭头指针
+      
+      * {
+        cursor: default !important;
+      }
     }
     
     .table-cross-cell.sum-row-cell {
@@ -2885,6 +2902,11 @@ defineExpose({
     .name-cell.sum-row-name-cell {
       background-color: #fafafa !important;
       font-weight: normal;
+      cursor: default !important; // 汇总行名称单元格使用默认箭头指针
+      
+      * {
+        cursor: default !important;
+      }
     }
     
     .table-cross-cell.action-cell {
@@ -2912,6 +2934,21 @@ defineExpose({
   padding: 4px 8px;
   text-align: center;
   font-size: 14px;
+  cursor: default !important; // 汇总列单元格使用默认箭头指针
+  user-select: none; // 行小计单元格文字不可选中
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+}
+
+// 汇总列单元格的父元素也使用默认光标
+.sum-column-cell {
+  cursor: default !important;
+  
+  &,
+  * {
+    cursor: default !important;
+  }
 }
 </style>
 
@@ -2948,32 +2985,84 @@ defineExpose({
     justify-content: center !important;
   }
   
-  // 名称列的 .cell 容器和所有子元素都应该是 pointer 光标
+  // 名称列的 .cell 容器和所有子元素都应该是默认光标（箭头）
+  // 但 .name-cell 会覆盖为 move（四向箭头）
   tbody .el-table__cell:first-child {
-    cursor: pointer !important;
+    cursor: default !important;
     user-select: none !important;
     
     .cell {
-      cursor: pointer !important;
+      cursor: default !important;
       user-select: none !important;
     }
     
+    // .name-cell 会覆盖为 move（四向箭头）
+    .name-cell {
+      cursor: move !important;
+    }
+    
+    // 汇总行和操作行的名称单元格使用默认箭头指针（不显示拖动指针）
+    .name-cell.sum-row-name-cell {
+      cursor: default !important;
+      
+      * {
+        cursor: default !important;
+      }
+    }
+  }
+  
+  // 表头的名称列单元格（四角区域）保持默认箭头指针
+  .el-table__header .el-table__cell:first-child {
+    cursor: default !important;
+    
+    .cell {
+      cursor: default !important;
+    }
+    
     * {
-      cursor: pointer !important;
-      user-select: none !important;
+      cursor: default !important;
     }
   }
   
   // 数据单元格的光标样式（Excel 风格）
-  tbody .el-table__cell:not(:first-child):not(:last-child):not(.editing-cell) {
-    cursor: cell !important;
+  // 只匹配数据行的数据列单元格（通过 .data-cell 类名识别，排除汇总行、操作行、汇总列、操作列、填充列）
+  tbody tr:not(.sum-row-type):not(.action-row-type) .el-table__cell:not(:first-child):not(.editing-cell) {
+    // 排除汇总列（包含 .sum-column-cell）、操作列（包含 .action-cell）、填充列（包含 .fill-column-cell）
+    // 使用 :has() 选择器（如果浏览器不支持，下面的规则会作为fallback）
+    &:not(:has(.sum-column-cell)):not(:has(.action-cell)):not(:has(.fill-column-cell)) {
+      // 整个单元格使用 cell 光标（包括边缘的 padding 区域）
+      cursor: cell !important;
+      
+      .cell {
+        cursor: cell !important;
+      }
+      
+      .table-cross-cell.data-cell {
+        cursor: cell !important;
+      }
+      
+      // 所有子元素都使用 cell 光标，除了输入框和链接
+      *:not(input):not(.el-input-number):not(.el-input-number__wrapper):not(.el-input-number__decrease):not(.el-input-number__increase):not(.el-link):not(.el-input__wrapper):not(.el-input__inner) {
+        cursor: cell !important;
+      }
+    }
+  }
+  
+  // 汇总列单元格使用默认光标（优先级更高，确保覆盖上面的规则）
+  // 使用 :has() 选择器识别包含 .sum-column-cell 的单元格
+  tbody tr:not(.sum-row-type):not(.action-row-type) .el-table__cell:not(:first-child):not(.editing-cell):has(.sum-column-cell) {
+    cursor: default !important;
     
     .cell {
-      cursor: cell !important;
+      cursor: default !important;
     }
     
     .table-cross-cell {
-      cursor: cell !important;
+      cursor: default !important;
+    }
+    
+    * {
+      cursor: default !important;
     }
   }
   
