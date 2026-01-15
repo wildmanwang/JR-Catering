@@ -5,7 +5,7 @@
  * 数据通过 sessionStorage 从父窗口（Dish.vue）传递
  */
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ContentWrap } from '@/components/ContentWrap'
 import { ImportGrid, type ImportGridColumn, type SaveConfig, type ToolbarButton } from '@/wintemplate/ImportGrid'
@@ -19,6 +19,7 @@ defineOptions({
 })
 
 const router = useRouter()
+const importGridRef = ref<InstanceType<typeof ImportGrid>>()
 
 // ==================== 常量 ====================
 // 注意：storageKey 必须与 BaseGrid 生成的 key 一致
@@ -130,6 +131,22 @@ const toolbarButtons = computed<ToolbarButton[]>(() => [
     label: '菜品', 
     alignRight: true,
     onClick: () => {
+      // 打开 ImportDetail 前，先获取 ImportGrid 的当前实际数据并保存到 sessionStorage
+      // 确保传递的是当前页面的实际数据，而不是缓存数据
+      if (importGridRef.value) {
+        const currentData = importGridRef.value.getData()
+        if (currentData && currentData.length > 0) {
+          try {
+            const payload = {
+              action: 'import',
+              data: currentData
+            }
+            sessionStorage.setItem(IMPORT_STORAGE_KEY, JSON.stringify(payload))
+          } catch {
+            // 保存数据到 sessionStorage 失败，静默处理
+          }
+        }
+      }
       router.push('/product/dishGroup/importDetail')
     }
   }
@@ -154,6 +171,7 @@ const saveConfig = computed<SaveConfig>(() => ({
 <template>
   <ContentWrap>
     <ImportGrid
+      ref="importGridRef"
       :columns="columns"
       :storage-key="IMPORT_STORAGE_KEY"
       :save-config="saveConfig"

@@ -229,6 +229,22 @@ interface Props {
   importTransform?: (row: any) => any
   /** 导入按钮的标签（用于提示信息） */
   importLabel?: string
+  /** 
+   * 额外的状态存储配置项（可选）
+   * 用于在使用 BaseGrid 的组件中添加自定义的缓存项
+   * 
+   * 示例：
+   * ```ts
+   * const extraStores = computed(() => [
+   *   {
+   *     name: 'customState',
+   *     getState: () => ({ customValue: customValue.value }),
+   *     setState: (state) => { customValue.value = state.customValue }
+   *   }
+   * ])
+   * ```
+   */
+  extraStores?: StatusStoreItem[]
 }
 
 // ==================== Props 定义 ====================
@@ -381,7 +397,7 @@ const initFieldOptions = async () => {
         // 如果返回 { data: [...] } 格式
         rawOptions = res.data
       } else {
-        console.warn(`字段 ${field} 的选项数据格式不正确：`, res)
+        // 字段选项数据格式不正确，使用空数组
         rawOptions = []
       }
       
@@ -390,7 +406,7 @@ const initFieldOptions = async () => {
       
       fieldOptionsData.value[field] = transformedOptions
     } catch (err) {
-      console.error(`获取字段 ${field} 的选项数据失败：`, err)
+      // 获取字段选项数据失败，使用空数组
       fieldOptionsData.value[field] = []
     }
   })
@@ -506,7 +522,7 @@ const openImport = async (importRoute?: string, importLabel?: string) => {
   const label = importLabel || props.importLabel || '数据'
   
   if (!route) {
-    console.warn('未配置导入路由（importRoute），无法打开导入窗口')
+    // 未配置导入路由，无法打开导入窗口
     return
   }
   
@@ -548,7 +564,6 @@ const openImport = async (importRoute?: string, importLabel?: string) => {
     sessionStorage.setItem(storageKey, JSON.stringify({ data: payload, _addEmptyRow: true }))
     router.push(route)
   } catch (err) {
-    console.error('打开导入窗口失败：', err)
     ElMessage.error('打开导入窗口失败，请稍后重试')
   }
 }
@@ -724,11 +739,11 @@ const initQuickQueryList = async () => {
           // 格式3: 数据在 list 字段中
           rawData = (res as any).list
         } else {
-          console.warn('快捷查询列表数据格式不正确，期望数组或包含 data/list 字段的对象：', res)
+          // 快捷查询列表数据格式不正确，使用空数组
           rawData = []
         }
       } else {
-        console.warn('快捷查询列表数据格式不正确：', res)
+        // 快捷查询列表数据格式不正确，使用空数组
         rawData = []
       }
       
@@ -773,7 +788,7 @@ const initQuickQueryList = async () => {
         }
       }
     } catch (err) {
-      console.error('获取快捷查询列表数据失败：', err)
+      // 获取快捷查询列表数据失败，使用空数组
       data = []
     }
   } else if (typeof config.data === 'function') {
@@ -781,7 +796,7 @@ const initQuickQueryList = async () => {
     try {
       data = await config.data()
     } catch (err) {
-      console.error('获取快捷查询列表数据失败：', err)
+      // 获取快捷查询列表数据失败，使用空数组
       data = []
     }
   } else if (config.data && Array.isArray(config.data)) {
@@ -1290,7 +1305,7 @@ const { tableRegister, tableState, tableMethods } = useTable({
         total: totalCount
       }
     } catch (err: any) {
-      console.error('获取数据失败：', err.message || err)
+      // 获取数据失败，返回空列表
       return {
         list: [],
         total: 0
@@ -1478,12 +1493,13 @@ const restoreTableSelection = async (selectedIds: any[]) => {
       requestAnimationFrame(checkTimeout)
     }
   } catch (err) {
-    console.error('BaseGrid: 恢复表格选择状态失败', err)
+    // 恢复表格选择状态失败，静默处理
   }
 }
 
 /**
  * 配置 StatusStoragePlus 的状态存储
+ * 合并 BaseGrid 内置的状态和外部传入的额外状态
  */
 const stateStores = computed<StatusStoreItem[]>(() => {
   const stores: StatusStoreItem[] = [
@@ -1580,6 +1596,11 @@ const stateStores = computed<StatusStoreItem[]>(() => {
       }
     }
   ]
+  
+  // 合并外部传入的额外状态存储配置项
+  if (props.extraStores && props.extraStores.length > 0) {
+    stores.push(...props.extraStores)
+  }
   
   return stores
 })
@@ -1971,9 +1992,8 @@ const handleToolbarButtonClick = (btn: ToolbarButton) => {
       
       if (importRoute) {
         openImport(importRoute, importLabel)
-      } else {
-        console.warn('未配置导入路由（importRoute），无法执行导入操作。请在 toolbarButtons 的 import 按钮配置中添加 importRoute，或在 BaseGrid 的 props 中配置 importRoute')
       }
+      // 未配置导入路由，无法执行导入操作
       break
     default:
       // 其他按钮类型，如果没有提供 onClick，则不执行任何操作
@@ -2178,6 +2198,13 @@ defineExpose({
               <slot name="toolbar-left"></slot>
             </div>
 
+            <!-- 工具栏中间前置插槽（在 PromptInfo 之前） -->
+            <div class="toolbar-middle-prepend">
+              <div class="toolbar-middle-prepend-content">
+                <slot name="toolbar-middle-prepend"></slot>
+              </div>
+            </div>
+
             <div class="base-grid-toolbar-info">
               <PromptInfo ref="prompInfoRef" />
             </div>
@@ -2216,6 +2243,13 @@ defineExpose({
             </template>
           </template>
           <slot name="toolbar-left"></slot>
+        </div>
+
+        <!-- 工具栏中间前置插槽（在 PromptInfo 之前） -->
+        <div class="toolbar-middle-prepend">
+          <div class="toolbar-middle-prepend-content">
+            <slot name="toolbar-middle-prepend"></slot>
+          </div>
         </div>
 
         <div class="base-grid-toolbar-info">
@@ -2384,6 +2418,36 @@ defineExpose({
   flex-shrink: 0;
 }
 
+/* 工具栏中间前置插槽区域 */
+.toolbar-middle-prepend {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  /* 抵消工具栏 gap 的 10px，使总间距为 10px（gap 10px + margin-left -10px + 第一个元素 margin-left 10px） */
+  margin-left: -10px;
+  margin-right: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.toolbar-middle-prepend-content {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-right: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  
+  /* 插槽内所有元素的样式（使用 :deep 穿透作用域） */
+  :deep(> *) {
+    margin-left: 10px !important;
+    margin-right: 0 !important;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+  }
+}
+
 /* 工具栏中间信息显示区域 */
 .base-grid-toolbar-info {
   flex: 1;
@@ -2391,6 +2455,16 @@ defineExpose({
   align-items: center;
   min-width: 0;
   overflow: hidden;
+}
+</style>
+
+<style lang="less">
+/* 全局样式：确保插槽内元素的 margin-left 生效 */
+.toolbar-middle-prepend-content > * {
+  margin-left: 10px !important;
+  margin-right: 0 !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
 }
 </style>
 

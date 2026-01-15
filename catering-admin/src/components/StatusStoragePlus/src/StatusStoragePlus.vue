@@ -279,8 +279,9 @@ const storage = computed<StorageAdapter>(() => {
   return localStorageAdapter
 })
 
-const PAGE_STATE_KEY = computed(() => `${props.storagePrefix}${router.currentRoute.value.fullPath}`)
-const PAGE_RESTORE_FLAG_KEY = computed(() => `RESTORE_FLAG_${router.currentRoute.value.fullPath}`)
+// 使用 ref 存储缓存 key，在挂载时初始化，确保使用挂载时的路由而不是当前路由
+const PAGE_STATE_KEY = ref<string>('')
+const PAGE_RESTORE_FLAG_KEY = ref<string>('')
 
 const pageReady = ref(false)
 const isRestoring = ref(false)
@@ -311,7 +312,7 @@ const savePageState = async () => {
     const statePayload = {
       state,
       timestamp: Date.now(),
-      fullPath: router.currentRoute.value.fullPath
+      fullPath: mountedRouteFullPath || router.currentRoute.value.fullPath
     }
     
     storage.value.setItem(PAGE_STATE_KEY.value, JSON.stringify(statePayload))
@@ -325,6 +326,9 @@ const savePageState = async () => {
  */
 const restorePageState = async (): Promise<boolean> => {
   try {
+    if (!PAGE_STATE_KEY.value) {
+      return false
+    }
     const savedState = storage.value.getItem(PAGE_STATE_KEY.value)
     
     if (!savedState) {
@@ -342,8 +346,8 @@ const restorePageState = async (): Promise<boolean> => {
       return false
     }
     
-    // 验证 fullPath 是否匹配
-    if (statePayload.fullPath !== router.currentRoute.value.fullPath) {
+    // 验证 fullPath 是否匹配（使用挂载时的路由）
+    if (statePayload.fullPath !== (mountedRouteFullPath || router.currentRoute.value.fullPath)) {
       return false
     }
     
@@ -409,7 +413,7 @@ const restorePageState = async (): Promise<boolean> => {
  */
 const clearPageState = (stateKey?: string, fullPath?: string) => {
   const keyToRemove = stateKey || PAGE_STATE_KEY.value
-  const pathToCheck = fullPath || router.currentRoute.value.fullPath
+  const pathToCheck = fullPath || mountedRouteFullPath || router.currentRoute.value.fullPath
   
   try {
     const savedState = storage.value.getItem(keyToRemove)
@@ -423,9 +427,11 @@ const clearPageState = (stateKey?: string, fullPath?: string) => {
     }
     
     // 同时清除恢复标记（使用 sessionStorage）
-    const flagKey = fullPath ? `RESTORE_FLAG_${fullPath}` : PAGE_RESTORE_FLAG_KEY.value
+    const flagKey = fullPath ? `RESTORE_FLAG_${fullPath}` : (PAGE_RESTORE_FLAG_KEY.value || `RESTORE_FLAG_${mountedRouteFullPath || router.currentRoute.value.fullPath}`)
     try {
-      sessionStorageAdapter.removeItem(flagKey)
+      if (flagKey) {
+        sessionStorageAdapter.removeItem(flagKey)
+      }
     } catch (err) {
       // 删除恢复标记失败，静默处理
     }
@@ -435,24 +441,63 @@ const clearPageState = (stateKey?: string, fullPath?: string) => {
 }
 
 /**
+ * 处理页面刷新/关闭前保存状态
+ * 注意：页面刷新时 onBeforeRouteLeave 不会被调用，需要使用 beforeunload 事件
+ */
+const handleBeforeUnload = () => {
+  if (!pageReady.value || isRestoring.value) return
+  if (props.stores.length === 0) return
+  
+  // 页面刷新/关闭时，保存状态但不设置恢复标记（刷新时会通过缓存数据判断）
+  if (props.autoSave) {
+    if (saveStateTimer) {
+      clearTimeout(saveStateTimer)
+      saveStateTimer = null
+    }
+    // 同步保存（beforeunload 事件中异步操作可能无效）
+    try {
+      const state: Record<string, any> = {}
+      
+      // 收集所有配置的状态
+      for (const store of props.stores) {
+        try {
+          const stateData = store.getState()
+          state[store.name] = deepClone(stateData)
+        } catch (err) {
+          // 保存状态失败，静默处理
+        }
+      }
+      
+      const statePayload = {
+        state,
+        timestamp: Date.now(),
+        fullPath: mountedRouteFullPath || router.currentRoute.value.fullPath
+      }
+      
+      storage.value.setItem(PAGE_STATE_KEY.value, JSON.stringify(statePayload))
+    } catch (err) {
+      // 保存页面状态失败，静默处理
+    }
+  }
+}
+
+/**
  * 路由守卫：离开页面前保存状态
+ * 
+ * 判断逻辑：
+ * - 如果当前路由不在 visitedViews 中，可能是关闭操作
+ * - 窗口关闭时，onBeforeUnmount 会清空缓存和恢复标记
+ * - 窗口切换时，设置恢复标记以便后续恢复状态
  */
 onBeforeRouteLeave((_to, _from, next) => {
-  // 检查是否是关闭页签的操作
-  // 注意：此时页签可能还没有从 visitedViews 中移除，所以需要检查目标路由
-  // 如果目标路由是关闭操作（不在 visitedViews 中，且不是新打开的路由），则可能是关闭
   const visitedViews = tagsViewStore.getVisitedViews
   const isFromInVisitedViews = visitedViews.some(
     view => view.fullPath === _from.fullPath || view.path === _from.path
   )
   
-  // 如果当前路由不在 visitedViews 中，说明可能是关闭操作
-  // 但为了安全起见，我们仍然保存状态（以防判断错误）
-  // 真正的清空逻辑在 onBeforeUnmount 中处理
+  // 判断是否可能是关闭操作（当前路由不在 visitedViews 中）
   const isLikelyClosing = !isFromInVisitedViews
   
-  // 如果启用了自动保存，在路由跳转（切换窗口）时保存状态
-  // 注意：即使是关闭，也先保存，然后在 onBeforeUnmount 中清空
   if (props.autoSave) {
     if (saveStateTimer) {
       clearTimeout(saveStateTimer)
@@ -461,9 +506,7 @@ onBeforeRouteLeave((_to, _from, next) => {
     savePageState()
     
     // 只有在窗口切换时（不是关闭）才设置恢复标记
-    // 窗口关闭时，onBeforeUnmount 会清空缓存和恢复标记
-    if (!isLikelyClosing) {
-      // 设置恢复标记，表示该路由有保存的状态，可以恢复（使用 sessionStorage）
+    if (!isLikelyClosing && PAGE_RESTORE_FLAG_KEY.value) {
       try {
         sessionStorageAdapter.setItem(PAGE_RESTORE_FLAG_KEY.value, '1')
       } catch (err) {
@@ -475,21 +518,17 @@ onBeforeRouteLeave((_to, _from, next) => {
   next()
 })
 
-// ==================== 监听路由变化，恢复状态 ====================
-// 注意：这个 watch 主要用于检测路由切换回当前页面的情况
-// 但在没有 keep-alive 的情况下，组件会重新创建，所以主要逻辑在 onMounted 中
+// ==================== 监听路由变化 ====================
+// 注意：此 watch 主要用于 keep-alive 场景下的路由切换
+// 在没有 keep-alive 的情况下，组件会重新创建，主要逻辑在 onMounted 中处理
 watch(
   () => router.currentRoute.value.fullPath,
   async (newFullPath, oldFullPath) => {
-    // 首次挂载时不处理（会由 onMounted 处理）
     if (!pageReady.value) return
-    
-    // 如果路由没有变化，不处理
     if (newFullPath === oldFullPath) return
     
-    // 检查是否是切换到当前路由（这种情况在有 keep-alive 时才会发生）
+    // keep-alive 场景：切换到当前路由时恢复状态
     if (newFullPath === router.currentRoute.value.fullPath && oldFullPath !== newFullPath) {
-      // 切换到当前路由，恢复状态
       await restorePageState()
     }
   }
@@ -499,6 +538,13 @@ watch(
 onMounted(async () => {
   mountedRoutePath = router.currentRoute.value.path
   mountedRouteFullPath = router.currentRoute.value.fullPath
+  
+  // 初始化缓存 key，使用挂载时的路由，确保整个生命周期中使用一致的路由
+  PAGE_STATE_KEY.value = `${props.storagePrefix}${mountedRouteFullPath}`
+  PAGE_RESTORE_FLAG_KEY.value = `RESTORE_FLAG_${mountedRouteFullPath}`
+  
+  // 注册 beforeunload 事件，用于页面刷新/关闭时保存缓存
+  window.addEventListener('beforeunload', handleBeforeUnload)
   
   // 严格区分窗口打开、窗口切换和页面刷新场景
   // 1. 窗口打开：没有恢复标记，且没有匹配的缓存 -> 不恢复状态，清空可能存在的缓存
@@ -511,10 +557,10 @@ onMounted(async () => {
     await nextTick()
     
     // 检查是否有恢复标记（这是判断窗口切换的主要依据）
-    const restoreFlag = sessionStorageAdapter.getItem(PAGE_RESTORE_FLAG_KEY.value)
+    const restoreFlag = PAGE_RESTORE_FLAG_KEY.value ? sessionStorageAdapter.getItem(PAGE_RESTORE_FLAG_KEY.value) : null
     const hasRestoreFlag = restoreFlag === '1'
     
-    if (hasRestoreFlag) {
+    if (hasRestoreFlag && PAGE_RESTORE_FLAG_KEY.value) {
       // 有恢复标记，进一步验证是否是窗口切换场景
       // 检查当前路由是否已经在 visitedViews 中（确保不是首次打开但误设置了标记）
       const visitedViews = tagsViewStore.getVisitedViews
@@ -526,16 +572,21 @@ onMounted(async () => {
         // 窗口切换场景：恢复状态
         shouldRestore = true
         // 清除标记，避免下次误判
-        sessionStorageAdapter.removeItem(PAGE_RESTORE_FLAG_KEY.value)
+        if (PAGE_RESTORE_FLAG_KEY.value) {
+          sessionStorageAdapter.removeItem(PAGE_RESTORE_FLAG_KEY.value)
+        }
       } else {
         // 有恢复标记但不在 visitedViews 中，可能是异常情况，清空缓存和标记
         clearPageState()
-        sessionStorageAdapter.removeItem(PAGE_RESTORE_FLAG_KEY.value)
+        if (PAGE_RESTORE_FLAG_KEY.value) {
+          sessionStorageAdapter.removeItem(PAGE_RESTORE_FLAG_KEY.value)
+        }
       }
     } else {
       // 没有恢复标记，检查是否是页面刷新场景
       // 页面刷新时：没有恢复标记，但有匹配的缓存数据
-      const savedState = storage.value.getItem(PAGE_STATE_KEY.value)
+      const savedState = PAGE_STATE_KEY.value ? storage.value.getItem(PAGE_STATE_KEY.value) : null
+      
       if (savedState) {
         try {
           const statePayload = JSON.parse(savedState)
@@ -555,7 +606,7 @@ onMounted(async () => {
             // 路由不匹配，清空缓存
             clearPageState()
           }
-        } catch {
+        } catch (err) {
           // 解析失败，清空缓存
           clearPageState()
         }
@@ -569,7 +620,9 @@ onMounted(async () => {
     clearPageState()
     // 清除可能存在的恢复标记
     try {
-      sessionStorageAdapter.removeItem(PAGE_RESTORE_FLAG_KEY.value)
+      if (PAGE_RESTORE_FLAG_KEY.value) {
+        sessionStorageAdapter.removeItem(PAGE_RESTORE_FLAG_KEY.value)
+      }
     } catch {
       // 静默处理
     }
@@ -595,12 +648,17 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  // 移除 beforeunload 事件监听
+  window.removeEventListener('beforeunload', handleBeforeUnload)
+  
   if (saveStateTimer) {
     clearTimeout(saveStateTimer)
     saveStateTimer = null
   }
   
-  // 检查窗口是否真正关闭
+  /**
+   * 检查窗口是否真正关闭，如果是则清空缓存
+   */
   const checkAndClear = () => {
     const fullPathToCheck = mountedRouteFullPath || router.currentRoute.value.fullPath
     const visitedViews = tagsViewStore.getVisitedViews
@@ -611,16 +669,14 @@ onBeforeUnmount(() => {
       const stateKey = `${props.storagePrefix}${fullPathToCheck}`
       clearPageState(stateKey, fullPathToCheck)
       return true
-    } else {
-      return false
     }
+    return false
   }
   
   // 延迟检查，确保页签状态已更新
   nextTick(() => {
     setTimeout(() => {
       if (checkAndClear()) return
-      
       setTimeout(() => {
         checkAndClear()
       }, 150)
@@ -658,7 +714,7 @@ defineExpose({
       })
     }
     // 如果不在恢复中，检查是否有保存的状态
-    const savedState = storage.value.getItem(PAGE_STATE_KEY.value)
+    const savedState = PAGE_STATE_KEY.value ? storage.value.getItem(PAGE_STATE_KEY.value) : null
     return !!savedState
   }
 })

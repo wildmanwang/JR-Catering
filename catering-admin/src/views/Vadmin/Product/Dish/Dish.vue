@@ -104,9 +104,8 @@
       label: '操作',
       type: 'action' as const,
       align: 'center' as const,
-      fixed: 'right' as const,
+      fixed: 'right' as const
       // 如果不配置 actionOptions，BaseGrid 会自动使用集成的操作函数
-      // actionOptions: [] // 可以留空，使用默认操作
     }
   ]
   
@@ -121,14 +120,14 @@
       label: '状态',
       type: 'select' as const,
       // 不配置 options，BaseGrid 会自动从 status 列的 optionsApi 获取数据
-      units: 1 // 1单位 = 160px
+      units: 1
     },
     {
       field: 'fuzzy_query_str',
       label: '模糊查询',
       type: 'input' as const,
       placeholder: '请输入名称或显示名称',
-      units: 3 // 默认3单位（480px）
+      units: 3
     }
   ]
   
@@ -137,7 +136,7 @@
     {
       stype: 'new' as const
       // 如果不提供 onClick，BaseGrid 会自动使用集成的 addAction
-    } as const,
+    },
     {
       stype: 'import' as const,
       label: '菜品',

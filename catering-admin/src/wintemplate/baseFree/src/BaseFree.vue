@@ -259,7 +259,7 @@ const initFieldOptions = async () => {
         // 如果返回 { data: [...] } 格式
         rawOptions = res.data
       } else {
-        console.warn(`字段 ${fieldName} 的选项数据格式不正确：`, res)
+        // 字段选项数据格式不正确，使用空数组
         rawOptions = []
       }
       
@@ -268,7 +268,7 @@ const initFieldOptions = async () => {
       
       fieldOptionsData.value[fieldName] = transformedOptions
     } catch (err) {
-      console.error(`获取字段 ${fieldName} 的选项数据失败：`, err)
+      // 获取字段选项数据失败，使用空数组
       fieldOptionsData.value[fieldName] = []
     }
   })
@@ -845,7 +845,6 @@ const resetFormToInitial = async () => {
  * @example
  * await processSaveData(async (formData) => {
  *   // 保存成功后的处理逻辑
- *   console.log('保存成功', formData)
  * })
  */
 const processSaveData = async (onSuccess?: (formData: any) => Promise<void> | void): Promise<any | null> => {
@@ -1050,17 +1049,16 @@ const processOrderNumber = (originalValue: any): any => {
  * @param fieldName - 字段名，默认为 'name_unique'
  */
 const focusNameUniqueField = async (fieldName: string = 'name_unique') => {
-  // 等待 DOM 更新完成
+  // 等待 DOM 更新完成，确保表单组件已完全渲染
   await nextTick()
-  await nextTick() // 多等待一次，确保表单组件已完全渲染
+  await nextTick()
   
   try {
     // 获取字段的组件实例
     const componentExpose = await getComponentExpose(fieldName)
     
     if (componentExpose) {
-      // Element Plus Input 组件支持 focus 和 select 方法
-      // 等待一下再设置焦点，确保组件已完全渲染
+      // Element Plus Input 组件支持 focus 和 select 方法，延迟设置焦点确保组件已完全渲染
       setTimeout(() => {
         if (componentExpose.focus) {
           componentExpose.focus()
@@ -1079,7 +1077,6 @@ const focusNameUniqueField = async (fieldName: string = 'name_unique') => {
     }
   } catch (error) {
     // 如果获取组件实例失败，静默处理（不影响主要功能）
-    console.warn(`无法定位 ${fieldName} 字段焦点:`, error)
   }
 }
 

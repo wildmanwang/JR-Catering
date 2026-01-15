@@ -42,37 +42,26 @@ const props = withDefaults(defineProps<WinSheetProps>(), {
 const statusStoragePlusRef = ref<InstanceType<typeof StatusStoragePlus>>()
 
 // ==================== 计算属性 ====================
-/** 计算存储前缀 */
+/**
+ * 计算存储前缀
+ * 如果提供了 storagePrefix，则使用它；否则使用 windowId 生成默认前缀
+ */
 const computedStoragePrefix = computed(() => {
-  if (props.storagePrefix) {
-    return props.storagePrefix
-  }
-  // 如果没有提供 storagePrefix，使用 windowId
-  return `${props.windowId}_STATE_`
+  return props.storagePrefix || `${props.windowId}_STATE_`
 })
 
 // ==================== 暴露方法 ====================
 defineExpose({
   /** 手动保存状态 */
-  saveState: () => {
-    statusStoragePlusRef.value?.saveState()
-  },
+  saveState: () => statusStoragePlusRef.value?.saveState(),
   /** 手动恢复状态 */
-  restoreState: () => {
-    statusStoragePlusRef.value?.restoreState()
-  },
+  restoreState: () => statusStoragePlusRef.value?.restoreState(),
   /** 手动清空状态 */
-  clearState: () => {
-    statusStoragePlusRef.value?.clearState()
-  },
+  clearState: () => statusStoragePlusRef.value?.clearState(),
   /** 获取状态恢复完成的 Promise */
-  waitForRestore: () => {
-    return statusStoragePlusRef.value?.waitForRestore() || Promise.resolve(false)
-  },
+  waitForRestore: () => statusStoragePlusRef.value?.waitForRestore() || Promise.resolve(false),
   /** 获取 StatusStoragePlus 组件引用 */
-  getStatusStoragePlusRef: () => {
-    return statusStoragePlusRef.value
-  }
+  getStatusStoragePlusRef: () => statusStoragePlusRef.value
 })
 </script>
 
@@ -85,15 +74,16 @@ defineExpose({
       :auto-save="autoSave"
       :on-restore-complete="onRestoreComplete"
     >
-      <!-- 默认插槽：子组件内容 -->
       <slot></slot>
     </StatusStoragePlus>
   </ContentWrap>
 </template>
 
 <style lang="less" scoped>
-// WinSheet 容器样式
-// 确保子组件能够正确填充容器
+/**
+ * WinSheet 容器样式
+ * 确保子组件能够正确填充容器，实现全屏布局
+ */
 :deep(.content-wrap),
 :deep(.content-wrap .el-card),
 :deep(.content-wrap .el-card__body) {

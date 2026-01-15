@@ -45,8 +45,8 @@ const columns = [
     label: '显示名称',
     type: 'text' as const,
     minWidth: '240px',
-    show: true,
-    showConfig: true // 可配置显示/隐藏
+      show: true,
+      showConfig: true
   },
   {
     field: 'dish_group_type_id',
@@ -100,9 +100,8 @@ const columns = [
     label: '操作',
     type: 'action' as const,
     align: 'center' as const,
-    fixed: 'right' as const
-    // 如果不配置 actionOptions，BaseGrid 会自动使用集成的操作函数
-    // actionOptions: [] // 可以留空，使用默认操作
+      fixed: 'right' as const
+      // 如果不配置 actionOptions，BaseGrid 会自动使用集成的操作函数
   }
 ]
 
@@ -115,8 +114,8 @@ const searchConditions = [
   {
     field: 'is_active',
     label: '是否启用',
-    type: 'select' as const,
-    units: 1, // 1单位 = 160px
+      type: 'select' as const,
+      units: 1,
     options: [
       {
         label: '是',
@@ -132,8 +131,8 @@ const searchConditions = [
     field: 'fuzzy_query_str',
     label: '模糊查询',
     type: 'input' as const,
-    placeholder: '请输入名称或显示名称',
-    units: 3 // 默认3单位（480px）
+      placeholder: '请输入名称或显示名称',
+      units: 3
   }
 ]
 
@@ -142,7 +141,7 @@ const searchConditions = [
     {
       stype: 'new' as const
       // 如果不提供 onClick，BaseGrid 会自动使用集成的 addAction
-    } as const,
+    },
     {
       stype: 'import' as const,
       label: '菜品分组',

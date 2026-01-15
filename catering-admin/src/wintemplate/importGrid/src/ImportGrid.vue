@@ -107,6 +107,22 @@ export interface ImportGridProps {
   addRowMessage?: string
   /** 窗口标识（用于 StatusStoragePlus 的唯一标识，使用方需要赋值） */
   windowId?: string
+  /** 
+   * 额外的状态存储配置项（可选）
+   * 用于在使用 ImportGrid 的组件中添加自定义的缓存项
+   * 
+   * 示例：
+   * ```ts
+   * const extraStores = computed(() => [
+   *   {
+   *     name: 'customState',
+   *     getState: () => ({ customValue: customValue.value }),
+   *     setState: (state) => { customValue.value = state.customValue }
+   *   }
+   * ])
+   * ```
+   */
+  extraStores?: StatusStoreItem[]
 }
 
 const props = withDefaults(defineProps<ImportGridProps>(), {
@@ -307,44 +323,160 @@ const deepCloneData = (data: any[]): any[] => {
 
 const hasRestoredState = ref(false)
 
+// 待恢复的选中状态（在数据加载完成后恢复）
+const pendingSelection = ref<{
+  selectedRows: number[]
+  selectedCells: Array<{ rowIndex: number; field: string }>
+} | null>(null)
+
+/**
+ * 获取当前选中的行索引数组
+ */
+const getSelectedRowIndices = (): number[] => {
+  if (!tableGridRef.value) return []
+  
+  try {
+    const tableEl = tableGridRef.value.$el as HTMLElement
+    if (!tableEl) return []
+    
+    const selectedRows = tableEl.querySelectorAll('tr.selected-row')
+    const rowIndices: number[] = []
+    
+    const tbody = tableEl.querySelector('.el-table__body tbody')
+    if (!tbody) return []
+    
+    const allRows = Array.from(tbody.querySelectorAll('tr'))
+    
+    selectedRows.forEach(selectedRow => {
+      const index = allRows.indexOf(selectedRow as HTMLElement)
+      if (index >= 0) {
+        rowIndices.push(index)
+      }
+    })
+    
+    return rowIndices
+  } catch (err) {
+    return []
+  }
+}
+
+/**
+ * 获取当前选中的单元格信息数组
+ */
+const getSelectedCellInfos = (): Array<{ rowIndex: number; field: string }> => {
+  if (!tableGridRef.value) return []
+  
+  try {
+    const tableEl = tableGridRef.value.$el as HTMLElement
+    if (!tableEl) return []
+    
+    const selectedCells = tableEl.querySelectorAll('.el-table__cell.selected-cell')
+    const cellInfos: Array<{ rowIndex: number; field: string }> = []
+    
+    const tbody = tableEl.querySelector('.el-table__body tbody')
+    if (!tbody) return []
+    
+    const allRows = Array.from(tbody.querySelectorAll('tr'))
+    const visibleColumns = props.columns.filter(col => col.show !== false)
+    
+    selectedCells.forEach(selectedCell => {
+      const rowElement = (selectedCell as HTMLElement).closest('tr')
+      if (!rowElement) return
+      
+      const rowIndex = allRows.indexOf(rowElement)
+      if (rowIndex === -1) return
+      
+      const cellIndex = Array.from(rowElement.children).indexOf(selectedCell as HTMLElement)
+      if (cellIndex === -1) return
+      
+      // 跳过序号列
+      const columnIndex = cellIndex - 1
+      if (columnIndex < 0 || columnIndex >= visibleColumns.length) return
+      
+      const column = visibleColumns[columnIndex]
+      cellInfos.push({ rowIndex, field: column.field })
+    })
+    
+    return cellInfos
+  } catch (err) {
+    return []
+  }
+}
+
 // 配置状态存储（StatusStoragePlus 组件使用）
-const stateStores = computed<StatusStoreItem[]>(() => [
-  {
-    name: 'importGrid',
-    getState: () => ({
-      data: deepCloneData(dataList.value),
-      originalData: deepCloneData(originalData.value)
-    }),
-    setState: async (state: any) => {
-      isRestoring.value = true
-      hasRestoredState.value = true
-      
-      // 恢复数据
-      if (state.data) {
-        dataList.value = deepCloneData(state.data)
-      }
-      if (state.originalData) {
-        originalData.value = deepCloneData(state.originalData)
-      }
-      
-      await nextTick()
-      await nextTick()
-      
-      // 同步 originalData 和 dataList 的长度（处理删除行的情况）
-      if (originalData.value.length > dataList.value.length) {
-        originalData.value = originalData.value.slice(0, dataList.value.length)
-      }
-      
-      isRestoring.value = false
-      
-      // 触发数据加载事件
-      emit('dataLoaded', dataList.value)
-      if (prompInfoRef.value) {
-        prompInfoRef.value.info('已恢复上次编辑的数据')
+// 合并 ImportGrid 内置的状态和外部传入的额外状态
+const stateStores = computed<StatusStoreItem[]>(() => {
+  const stores: StatusStoreItem[] = [
+    {
+      name: 'importGrid',
+      getState: () => {
+        // 获取当前选中的行和单元格
+        const selectedRows = getSelectedRowIndices()
+        const selectedCells = getSelectedCellInfos()
+        
+        return {
+          data: deepCloneData(dataList.value),
+          originalData: deepCloneData(originalData.value),
+          selectedRows: [...selectedRows],
+          selectedCells: [...selectedCells]
+        }
+      },
+      setState: async (state: any) => {
+        isRestoring.value = true
+        hasRestoredState.value = true
+        
+        // 恢复数据
+        // 使用 Array.isArray 检查，确保空数组也能被正确恢复
+        if (Array.isArray(state.data)) {
+          dataList.value = deepCloneData(state.data)
+        }
+        if (Array.isArray(state.originalData)) {
+          originalData.value = deepCloneData(state.originalData)
+        }
+        
+        // 保存待恢复的选中状态（等数据加载完成后再恢复）
+        if (state.selectedRows && Array.isArray(state.selectedRows)) {
+          pendingSelection.value = {
+            selectedRows: [...state.selectedRows],
+            selectedCells: state.selectedCells && Array.isArray(state.selectedCells) 
+              ? [...state.selectedCells] 
+              : []
+          }
+        } else if (state.selectedCells && Array.isArray(state.selectedCells) && state.selectedCells.length > 0) {
+          pendingSelection.value = {
+            selectedRows: [],
+            selectedCells: [...state.selectedCells]
+          }
+        } else {
+          pendingSelection.value = null
+        }
+        
+        await nextTick()
+        await nextTick()
+        
+        // 同步 originalData 和 dataList 的长度（处理删除行的情况）
+        if (originalData.value.length > dataList.value.length) {
+          originalData.value = originalData.value.slice(0, dataList.value.length)
+        }
+        
+        isRestoring.value = false
+        
+        // 触发数据加载事件
+        emit('dataLoaded', dataList.value)
+        if (prompInfoRef.value) {
+          prompInfoRef.value.info('已恢复上次编辑的数据')
+        }
       }
     }
+  ]
+  
+  // 合并外部传入的额外状态存储配置项
+  if (props.extraStores && props.extraStores.length > 0) {
+    stores.push(...props.extraStores)
   }
-])
+  
+  return stores
+})
 const currentRowIndex = ref<number | null>(null)
 const prompInfoRef = ref<InstanceType<typeof PromptInfo>>()
 const saveLoading = ref(false)
@@ -899,7 +1031,6 @@ const save = async (): Promise<void> => {
     }
     
   } catch (err) {
-    console.error('保存失败：', err)
     const errorMessage = '保存失败，请稍后重试'
     if (prompInfoRef.value) {
       prompInfoRef.value.err(errorMessage)
@@ -1450,8 +1581,11 @@ watch(
     
     // 自动保存数据到 sessionStorage，供其他窗口（如 ImportCross）读取
     // 保存格式：{ action: 'import', data: [...] }，与 loadDataFromStorage 的读取格式一致
-    // 注意：只在数据变化时保存，不覆盖从外部传入的初始数据
-    if (props.storageKey && newData && newData.length > 0 && pageReady.value) {
+    // 注意：
+    // 1. 只在数据变化时保存，不覆盖从外部传入的初始数据
+    // 2. 即使数据为空数组也应该保存，以便正确替换旧数据（当用户删除所有记录时）
+    // 3. 需要确保 pageReady.value 为 true，避免初始化时保存空数据
+    if (props.storageKey && Array.isArray(newData) && pageReady.value) {
       try {
         const payload = {
           action: 'import',
@@ -1459,7 +1593,7 @@ watch(
         }
         sessionStorage.setItem(props.storageKey, JSON.stringify(payload))
       } catch (error) {
-        console.error('保存数据到 sessionStorage 失败:', error)
+        // 保存数据到 sessionStorage 失败，静默处理
       }
     }
   },
@@ -1522,6 +1656,77 @@ onBeforeUnmount(() => {
 })
 
 /**
+ * 恢复选中状态（在数据加载完成后调用）
+ */
+const restoreSelection = async () => {
+  if (!pendingSelection.value || !tableGridRef.value) {
+    return
+  }
+  
+  const { selectedRows, selectedCells } = pendingSelection.value
+  
+  // 等待组件和数据就绪
+  await nextTick()
+  await nextTick()
+  
+  // 检查数据是否已加载
+  if (dataList.value.length === 0) {
+    // 如果数据还没加载，再等待一段时间
+    setTimeout(() => {
+      restoreSelection()
+    }, 100)
+    return
+  }
+  
+  try {
+    // 清除所有现有选中状态
+    if (tableGridRef.value.deselectRow) {
+      tableGridRef.value.deselectRow()
+    }
+    if (tableGridRef.value.deselectCell) {
+      tableGridRef.value.deselectCell()
+    }
+    
+    // 优先恢复选中的行（如果有）
+    if (selectedRows && selectedRows.length > 0) {
+      // 恢复选中的行（多行可能不连续）
+      // 第一行使用 single 模式，后续行使用 ctrl 模式（支持多选）
+      for (let i = 0; i < selectedRows.length; i++) {
+        const rowIndex = selectedRows[i]
+        // 检查索引是否有效
+        if (rowIndex >= 0 && rowIndex < dataList.value.length) {
+          if (tableGridRef.value.selectRow) {
+            const selectType = i === 0 ? 'single' : 'ctrl'
+            tableGridRef.value.selectRow(rowIndex, selectType)
+            // 每次选中后等待一下，确保 DOM 更新完成
+            await nextTick()
+          }
+        }
+      }
+    }
+    // 如果没有选中的行，但有选中的单元格，恢复单元格选中
+    else if (selectedCells && selectedCells.length > 0) {
+      // 恢复第一个选中的单元格（TableGrid 只支持单个单元格选中）
+      const firstCell = selectedCells[0]
+      const { rowIndex, field } = firstCell
+      
+      // 检查索引和字段是否有效
+      if (rowIndex >= 0 && rowIndex < dataList.value.length && field) {
+        const column = props.columns.find(col => col.field === field && col.show !== false)
+        if (column && tableGridRef.value.selectCell) {
+          tableGridRef.value.selectCell(rowIndex, field)
+        }
+      }
+    }
+  } catch (err) {
+    // 恢复选中状态失败，静默处理
+  }
+  
+  // 清除待恢复状态
+  pendingSelection.value = null
+}
+
+/**
  * 处理状态恢复完成回调
  */
 const handleRestoreComplete = async (_restored: boolean) => {
@@ -1529,6 +1734,13 @@ const handleRestoreComplete = async (_restored: boolean) => {
     if (prompInfoRef.value) {
       prompInfoRef.value.ready()
     }
+  }
+  
+  // 如果状态已恢复，恢复选中状态
+  if (_restored && pendingSelection.value) {
+    await nextTick()
+    await nextTick()
+    restoreSelection()
   }
   
   pageReady.value = true
@@ -1579,6 +1791,14 @@ defineExpose({
           </ButtonPlus>
         </template>
       </div>
+      
+      <!-- 工具栏中间前置插槽（在 PromptInfo 之前） -->
+      <div class="toolbar-middle-prepend">
+        <div class="toolbar-middle-prepend-content">
+          <slot name="toolbar-middle-prepend"></slot>
+        </div>
+      </div>
+      
       <div class="toolbar-info">
         <PromptInfo ref="prompInfoRef" />
       </div>
@@ -1650,6 +1870,36 @@ defineExpose({
   gap: 10px;
 }
 
+/* 工具栏中间前置插槽区域 */
+.toolbar-middle-prepend {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  /* 抵消工具栏 gap 的 10px，使总间距为 10px（gap 10px + margin-left -10px + 第一个元素 margin-left 10px） */
+  margin-left: -10px;
+  margin-right: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.toolbar-middle-prepend-content {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-right: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  
+  /* 插槽内所有元素的样式（使用 :deep 穿透作用域） */
+  :deep(> *) {
+    margin-left: 10px !important;
+    margin-right: 0 !important;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+  }
+}
+
 .toolbar-info {
   flex: 1;
   min-width: 0;
@@ -1691,5 +1941,15 @@ defineExpose({
   flex: 1;
   min-height: 0;
   height: 100%;
+}
+</style>
+
+<style lang="less">
+/* 全局样式：确保插槽内元素的 margin-left 生效 */
+.toolbar-middle-prepend-content > * {
+  margin-left: 10px !important;
+  margin-right: 0 !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
 }
 </style>

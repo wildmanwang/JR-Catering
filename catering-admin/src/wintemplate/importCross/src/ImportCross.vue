@@ -9,7 +9,8 @@
 -->
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick, toRaw } from 'vue'
-import { onBeforeRouteLeave } from 'vue-router'
+import { useRouter, onBeforeRouteLeave } from 'vue-router'
+import { useTagsViewStoreWithOut } from '@/store/modules/tagsView'
 import { WinSheet, type StatusStoreItem } from '@/wintemplate/WinSheet'
 import TableCross, { type TableCrossRow, type TableCrossColumn, type TableCrossDataConfigs } from '@/components/TableCross/src/TableCross.vue'
 import { ButtonPlus } from '@/components/ButtonPlus'
@@ -40,9 +41,6 @@ export interface ColDataConfig {
 /**
  * 组件 Props 接口
  */
-/**
- * 组件 Props 接口
- */
 export interface ImportCrossProps {
   /** 数据存储的 sessionStorage key（用于在页面间传递数据） */
   storageKey?: string
@@ -68,6 +66,22 @@ export interface ImportCrossProps {
   dataConfigs?: TableCrossDataConfigs
   /** 保存处理函数 */
   onSave?: (data: any) => Promise<void> | void
+  /** 
+   * 额外的状态存储配置项（可选）
+   * 用于在使用 ImportCross 的组件中添加自定义的缓存项
+   * 
+   * 示例：
+   * ```ts
+   * const extraStores = computed(() => [
+   *   {
+   *     name: 'customState',
+   *     getState: () => ({ customValue: customValue.value }),
+   *     setState: (state) => { customValue.value = state.customValue }
+   *   }
+   * ])
+   * ```
+   */
+  extraStores?: StatusStoreItem[]
 }
 
 const props = withDefaults(defineProps<ImportCrossProps>(), {
@@ -104,6 +118,15 @@ const dataType = ref<'use_dish' | 'price_add'>('use_dish')
 /** 当前选中的数据配置索引（从0开始） */
 const currentDataConfigIndex = ref<number>(0)
 
+/** 当前选中的行索引 */
+const currentRowIndex = ref<number | null>(null)
+
+/** 当前选中的列索引 */
+const currentColumnIndex = ref<number | null>(null)
+
+/** 待恢复的选中状态（在数据加载完成后恢复） */
+const pendingSelection = ref<{ rowIndex: number | null; columnIndex: number | null } | null>(null)
+
 /** Dish记录列表 */
 const dishList = ref<any[]>([])
 
@@ -119,10 +142,18 @@ const crossData = ref<{
   price_add: {}
 })
 
+// ==================== 路由和状态管理 ====================
+const router = useRouter()
+const tagsViewStore = useTagsViewStoreWithOut()
+
 // ==================== 组件引用 ====================
 const prompInfoRef = ref<InstanceType<typeof PromptInfo>>()
 const tableCrossRef = ref<InstanceType<typeof TableCross>>()
 const winSheetRef = ref<InstanceType<typeof WinSheet>>()
+
+// 保存挂载时的路由信息，用于窗口关闭时判断
+let mountedRoutePath: string | null = null
+let mountedRouteFullPath: string | null = null
 
 // 为了在模板中使用
 const dataConfigs = computed(() => props.dataConfigs ?? [])
@@ -277,6 +308,64 @@ const loadDataFromSource = () => {
 }
 
 /**
+ * 恢复选中状态（在数据加载完成后调用）
+ */
+const restoreSelection = async () => {
+  if (!pendingSelection.value) {
+    return
+  }
+  
+  const { rowIndex, columnIndex } = pendingSelection.value
+  
+  // 等待组件和数据就绪
+  await nextTick()
+  await nextTick()
+  
+  // 检查数据是否已加载
+  if (tableRows.value.length === 0 || tableColumns.value.length === 0) {
+    // 如果数据还没加载，再等待一段时间
+    setTimeout(() => {
+      restoreSelection()
+    }, 100)
+    return
+  }
+  
+  if (!tableCrossRef.value) {
+    pendingSelection.value = null
+    return
+  }
+  
+  try {
+    if (rowIndex !== null && rowIndex !== undefined && 
+        columnIndex !== null && columnIndex !== undefined) {
+      // 检查索引是否有效
+      if (rowIndex >= 0 && rowIndex < tableRows.value.length &&
+          columnIndex >= 0 && columnIndex < tableColumns.value.length) {
+        // 恢复单元格选中状态
+        tableCrossRef.value.selectCell(rowIndex, columnIndex)
+      }
+    } else if (rowIndex !== null && rowIndex !== undefined) {
+      // 检查行索引是否有效
+      if (rowIndex >= 0 && rowIndex < tableRows.value.length) {
+        // 恢复行选中状态
+        tableCrossRef.value.selectRow(rowIndex)
+      }
+    } else if (columnIndex !== null && columnIndex !== undefined) {
+      // 检查列索引是否有效
+      if (columnIndex >= 0 && columnIndex < tableColumns.value.length) {
+        // 恢复列选中状态
+        tableCrossRef.value.selectColumn(columnIndex)
+      }
+    }
+  } catch (err) {
+    // 恢复选中状态失败，静默处理
+  }
+  
+  // 清除待恢复状态
+  pendingSelection.value = null
+}
+
+/**
  * 从sessionStorage加载数据
  * @param shouldRestore - 是否应该恢复缓存（窗口切换时为 true，窗口打开时为 false）
  */
@@ -425,7 +514,6 @@ const updateSourceStorageCache = (deletedColumnIds?: (string | number)[]) => {
     sessionStorage.setItem(props.sourceStorageKey, JSON.stringify(updatedData))
   } catch (error) {
     // 更新源缓存失败，静默处理（不影响主流程）
-    console.warn('更新源存储缓存失败:', error)
   }
 }
 
@@ -643,13 +731,13 @@ const deleteColumn = (columnIndex: number) => {
   // 保存到主存储
   saveDataToStorage()
   
-  // 同步更新源存储缓存（sourceStorageKey），移除已删除的列
-  // 这是一个通用的缓存更新机制，确保刷新后不会重新出现已删除的列
-  updateSourceStorageCache([group.id])
-  
-  if (prompInfoRef.value) {
-    prompInfoRef.value.info('已删除列数据')
-  }
+    // 同步更新源存储缓存（sourceStorageKey），移除已删除的列
+    // 这是一个通用的缓存更新机制，确保刷新后不会重新出现已删除的列
+    updateSourceStorageCache([group.id])
+    
+    if (prompInfoRef.value) {
+      prompInfoRef.value.info('已删除列数据')
+    }
   
   // 触发数据变化事件
   emit('dataChanged', {
@@ -741,6 +829,7 @@ watch(() => props.dataConfigs, (configs) => {
 // ==================== 状态存储配置（用于 WinSheet） ====================
 /**
  * 配置状态存储（用于 WinSheet 的 StatusStoragePlus）
+ * 合并 ImportCross 内置的状态和外部传入的额外状态
  */
 const stateStores = computed<StatusStoreItem[]>(() => {
   const stores: StatusStoreItem[] = [
@@ -750,7 +839,9 @@ const stateStores = computed<StatusStoreItem[]>(() => {
         return {
           branchId: branchId.value,
           currentDataConfigIndex: currentDataConfigIndex.value,
-          dataType: dataType.value
+          dataType: dataType.value,
+          currentRowIndex: currentRowIndex.value,
+          currentColumnIndex: currentColumnIndex.value
         }
       },
       setState: async (state: any) => {
@@ -763,9 +854,32 @@ const stateStores = computed<StatusStoreItem[]>(() => {
         if (state.dataType) {
           dataType.value = state.dataType
         }
+        
+        // 恢复选中状态（先保存待恢复状态，等数据加载完成后再恢复）
+        if (state.currentRowIndex !== undefined || state.currentColumnIndex !== undefined) {
+          // 保存待恢复的选中状态
+          pendingSelection.value = {
+            rowIndex: state.currentRowIndex ?? null,
+            columnIndex: state.currentColumnIndex ?? null
+          }
+          
+          // 更新本地状态
+          if (state.currentRowIndex !== undefined) {
+            currentRowIndex.value = state.currentRowIndex
+          }
+          if (state.currentColumnIndex !== undefined) {
+            currentColumnIndex.value = state.currentColumnIndex
+          }
+        }
       }
     }
   ]
+  
+  // 合并外部传入的额外状态存储配置项
+  if (props.extraStores && props.extraStores.length > 0) {
+    stores.push(...props.extraStores)
+  }
+  
   return stores
 })
 
@@ -776,23 +890,15 @@ const handleRestoreComplete = async (restored: boolean) => {
   if (restored) {
     // 状态已恢复，可以加载 sessionStorage 中的数据（窗口切换或页面刷新场景）
     loadDataFromStorage(true)
+    // 数据加载完成后，恢复选中状态
+    await nextTick()
+    await nextTick()
+    restoreSelection()
   } else {
-    // 窗口打开场景：检查是否是页面刷新
-    // 页面刷新时，sessionStorage 中的数据应该还在，应该恢复
-    // 只有在真正的新窗口打开时（sessionStorage 中没有数据），才清空缓存
-    if (props.storageKey) {
-      const storageData = sessionStorage.getItem(props.storageKey)
-      if (storageData) {
-        // 有缓存数据，说明是页面刷新场景，应该恢复
-        loadDataFromStorage(true)
-      } else {
-        // 没有缓存数据，说明是真正的窗口打开场景，清空缓存
-        loadDataFromStorage(false)
-      }
-    } else {
-      // 没有配置 storageKey，直接清空
-      loadDataFromStorage(false)
-    }
+    // 窗口打开场景：不应恢复任何缓存数据，直接清空
+    // 注意：StatusStoragePlus 已经判断了场景，如果 restored=false，说明是窗口打开，不应该恢复
+    // sessionStorage 中的数据可能是之前窗口留下的，窗口打开时应该清空
+    loadDataFromStorage(false)
   }
 }
 
@@ -831,6 +937,9 @@ onBeforeRouteLeave((_to, _from, next) => {
 
 // ==================== 生命周期 ====================
 onMounted(async () => {
+  mountedRoutePath = router.currentRoute.value.path
+  mountedRouteFullPath = router.currentRoute.value.fullPath
+  
   await loadBranchList()
   
   // 先加载源窗口数据（如果配置了）
@@ -859,8 +968,34 @@ onBeforeUnmount(() => {
     window.removeEventListener('focus', handleWindowFocus)
   }
   
-  // 窗口关闭时的 sessionStorage 清理由 WinSheet 的 StatusStoragePlus 自动处理
-  // 这里只需要清理事件监听器
+  // 检查窗口是否真正关闭，如果是则清除 sessionStorage
+  const checkAndClearSessionStorage = () => {
+    const pathToCheck = mountedRoutePath || router.currentRoute.value.path
+    const visitedViews = tagsViewStore.getVisitedViews
+    const isStillOpen = visitedViews.some(view => view.path === pathToCheck)
+    
+    if (!isStillOpen && props.storageKey) {
+      try {
+        sessionStorage.removeItem(props.storageKey)
+      } catch (error) {
+        // 清除 sessionStorage 失败，静默处理
+      }
+      return true
+    } else {
+      return false
+    }
+  }
+  
+  // 延迟检查，确保页签状态已更新
+  nextTick(() => {
+    setTimeout(() => {
+      if (checkAndClearSessionStorage()) return
+      
+      setTimeout(() => {
+        checkAndClearSessionStorage()
+      }, 150)
+    }, 50)
+  })
 })
 
 // ==================== 暴露方法 ====================
@@ -922,6 +1057,13 @@ defineExpose({
         </ElRadioGroup>
       </div>
       
+      <!-- 工具栏中间前置插槽（在 PromptInfo 之前） -->
+      <div class="toolbar-middle-prepend">
+        <div class="toolbar-middle-prepend-content">
+          <slot name="toolbar-middle-prepend"></slot>
+        </div>
+      </div>
+      
       <!-- PromptInfo组件 -->
       <div class="toolbar-info">
         <PromptInfo ref="prompInfoRef" />
@@ -929,6 +1071,7 @@ defineExpose({
       
       <!-- 右侧按钮组 -->
       <div class="toolbar-right">
+        
         <!-- 根据配置显示按钮 -->
         <template v-if="rowDataConfig?.allowAdd">
           <ButtonPlus
@@ -975,12 +1118,16 @@ defineExpose({
         :sum-column-width="sumColumnWidth"
         :data-configs="dataConfigs"
         :current-data-config-index="currentDataConfigIndex"
+        :current-row-index="currentRowIndex"
+        :current-column-index="currentColumnIndex"
         :allow-delete-row="rowDataConfig?.allowAdd || false"
         :allow-delete-column="colDataConfig?.allowAdd || false"
         @update:rows="handleRowsUpdate"
         @update:columns="handleColumnsUpdate"
         @cell-update="handleCellUpdate"
         @update:current-data-config-index="(val: number) => { currentDataConfigIndex = val }"
+        @update:current-row-index="(val: number | null) => { currentRowIndex = val }"
+        @update:current-column-index="(val: number | null) => { currentColumnIndex = val }"
         @row-delete="deleteRow"
         @column-delete="deleteColumn"
       />
@@ -1010,6 +1157,36 @@ defineExpose({
   display: flex;
   gap: 10px;
   align-items: center;
+}
+
+.toolbar-middle-prepend {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  /* 抵消工具栏 gap 的 10px，使总间距为 10px（gap 10px + margin-left -10px + 第一个元素 margin-left 10px） */
+  margin-left: -10px;
+  margin-right: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.toolbar-middle-prepend-content {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-right: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  
+  /* 插槽内所有元素的样式（不限定组件类型） */
+  /* 使用 :deep 确保样式能穿透到插槽内容 */
+  :deep(> *) {
+    margin-left: 10px !important;
+    margin-right: 0 !important;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+  }
 }
 
 .toolbar-info {
@@ -1058,6 +1235,16 @@ defineExpose({
   height: 100%;
   padding: 0 !important;
   margin: 0 !important;
+}
+</style>
+
+<style lang="less">
+/* 全局样式：确保插槽内元素的 margin-left 生效 */
+.toolbar-middle-prepend-content > * {
+  margin-left: 10px !important;
+  margin-right: 0 !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
 }
 </style>
 
