@@ -198,6 +198,7 @@ const loadBranchList = async () => {
 
 /**
  * 从源窗口（如 ImportBase）加载数据
+ * 注意：会考虑已删除的列，只加载当前不存在的列（增量加载）
  */
 const loadDataFromSource = () => {
   if (!props.sourceStorageKey) return
@@ -224,8 +225,29 @@ const loadDataFromSource = () => {
         }
       }
       
-      // 将源窗口的数据作为 DishGroup（列）显示
-      if (sourceList.length > 0) {
+      // 获取当前已存在的列ID集合（用于增量加载，避免重复添加）
+      const existingColumnIds = new Set(dishGroupList.value.map(g => String(g.id)))
+      
+      // 过滤出新增的列（不在当前列表中的列）
+      const newColumns = sourceList.filter(item => {
+        const itemId = String(item.id)
+        return !existingColumnIds.has(itemId)
+      })
+      
+      // 如果有新增的列，添加到列表中
+      if (newColumns.length > 0) {
+        const newColumnData = newColumns.map(item => ({
+          id: item.id,
+          name_unique: item.name_unique || item.name_display || '',
+          ...item // 保留原始数据
+        }))
+        dishGroupList.value.push(...newColumnData)
+        
+        if (prompInfoRef.value) {
+          prompInfoRef.value.info(`已从上一个窗口加载 ${newColumnData.length} 个新分组`)
+        }
+      } else if (sourceList.length > 0 && dishGroupList.value.length === 0) {
+        // 如果当前列表为空，但源数据有数据，则全部加载（首次加载场景）
         dishGroupList.value = sourceList.map(item => ({
           id: item.id,
           name_unique: item.name_unique || item.name_display || '',
@@ -235,7 +257,7 @@ const loadDataFromSource = () => {
         if (prompInfoRef.value) {
           prompInfoRef.value.info(`已从上一个窗口加载 ${dishGroupList.value.length} 个分组`)
         }
-      } else {
+      } else if (sourceList.length === 0) {
         // 数据为空，提示用户
         if (prompInfoRef.value) {
           prompInfoRef.value.warn('上一个窗口没有数据')
@@ -333,6 +355,77 @@ const saveDataToStorage = () => {
     sessionStorage.setItem(props.storageKey, JSON.stringify(data))
   } catch (error) {
     // 保存数据失败，静默处理
+  }
+}
+
+/**
+ * 更新源存储缓存（sourceStorageKey）
+ * 当删除列时，同步更新源缓存，移除已删除的列
+ * 这是一个通用的缓存更新机制，可以集中处理缓存同步
+ * @param deletedColumnIds - 已删除的列ID数组（可选，如果不提供则根据当前 dishGroupList 更新）
+ */
+const updateSourceStorageCache = (deletedColumnIds?: (string | number)[]) => {
+  if (!props.sourceStorageKey) return
+  
+  try {
+    const sourceData = sessionStorage.getItem(props.sourceStorageKey)
+    if (!sourceData) return
+    
+    const parsed = JSON.parse(sourceData)
+    
+    // 处理不同的数据格式
+    let sourceList: any[] = []
+    let dataFormat: 'array' | 'object_with_data' | 'object_with_action' = 'array'
+    
+    if (Array.isArray(parsed)) {
+      sourceList = parsed
+      dataFormat = 'array'
+    } else if (parsed && typeof parsed === 'object') {
+      if (parsed.action === 'import' && Array.isArray(parsed.data)) {
+        sourceList = parsed.data
+        dataFormat = 'object_with_action'
+      } else if (Array.isArray(parsed.data)) {
+        sourceList = parsed.data
+        dataFormat = 'object_with_data'
+      }
+    }
+    
+    if (sourceList.length === 0) return
+    
+    // 获取要保留的列ID集合
+    const currentColumnIds = new Set(dishGroupList.value.map(g => String(g.id)))
+    
+    // 如果有指定删除的列ID，也从集合中移除
+    if (deletedColumnIds && deletedColumnIds.length > 0) {
+      deletedColumnIds.forEach(id => currentColumnIds.delete(String(id)))
+    }
+    
+    // 过滤掉已删除的列
+    const filteredList = sourceList.filter(item => {
+      const itemId = String(item.id)
+      return currentColumnIds.has(itemId)
+    })
+    
+    // 根据原始格式更新缓存
+    let updatedData: any
+    if (dataFormat === 'array') {
+      updatedData = filteredList
+    } else if (dataFormat === 'object_with_action') {
+      updatedData = {
+        ...parsed,
+        data: filteredList
+      }
+    } else {
+      updatedData = {
+        ...parsed,
+        data: filteredList
+      }
+    }
+    
+    sessionStorage.setItem(props.sourceStorageKey, JSON.stringify(updatedData))
+  } catch (error) {
+    // 更新源缓存失败，静默处理（不影响主流程）
+    console.warn('更新源存储缓存失败:', error)
   }
 }
 
@@ -547,7 +640,12 @@ const deleteColumn = (columnIndex: number) => {
     }
   })
   
+  // 保存到主存储
   saveDataToStorage()
+  
+  // 同步更新源存储缓存（sourceStorageKey），移除已删除的列
+  // 这是一个通用的缓存更新机制，确保刷新后不会重新出现已删除的列
+  updateSourceStorageCache([group.id])
   
   if (prompInfoRef.value) {
     prompInfoRef.value.info('已删除列数据')
