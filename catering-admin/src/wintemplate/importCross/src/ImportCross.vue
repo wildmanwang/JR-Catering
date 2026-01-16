@@ -26,6 +26,12 @@ export interface RowDataConfig {
   name: string
   /** 是否支持新增行 */
   allowAdd: boolean
+  /** 选择数据的组件（可选，如果配置了则自动处理选择逻辑） */
+  selectComponent?: any
+  /** 选择模式：'single' 单选，'multiple' 多选（默认 'multiple'） */
+  selectMode?: 'single' | 'multiple'
+  /** 是否回传已选记录给选择窗口（默认 true） */
+  passSelectedRecords?: boolean
 }
 
 /**
@@ -36,6 +42,12 @@ export interface ColDataConfig {
   name: string
   /** 是否支持新增列 */
   allowAdd: boolean
+  /** 选择数据的组件（可选，如果配置了则自动处理选择逻辑） */
+  selectComponent?: any
+  /** 选择模式：'single' 单选，'multiple' 多选（默认 'multiple'） */
+  selectMode?: 'single' | 'multiple'
+  /** 是否回传已选记录给选择窗口（默认 true） */
+  passSelectedRecords?: boolean
 }
 
 /**
@@ -46,10 +58,10 @@ export interface ImportCrossProps {
   storageKey?: string
   /** 源数据存储的 sessionStorage key（用于从上一个窗口自动读取数据，如 ImportBase） */
   sourceStorageKey?: string
-  /** @deprecated 使用 rowDatas 代替 */
-  dishes?: any[]
-  /** @deprecated 使用 colDatas 代替 */
-  dishGroups?: any[]
+  /** 行数据列表 */
+  rowDatas?: any[]
+  /** 列数据列表 */
+  colDatas?: any[]
   /** 行数据配置 */
   rowDataConfig?: RowDataConfig
   /** 列数据配置 */
@@ -87,8 +99,8 @@ export interface ImportCrossProps {
 const props = withDefaults(defineProps<ImportCrossProps>(), {
   storageKey: 'IMPORT_CROSS_PAYLOAD',
   sourceStorageKey: '',
-  dishes: () => [],
-  dishGroups: () => [],
+  rowDatas: () => [],
+  colDatas: () => [],
   rowDataConfig: () => ({ name: '行数据', allowAdd: true }),
   colDataConfig: () => ({ name: '列数据', allowAdd: true }),
   windowId: 'ImportCross',
@@ -126,6 +138,18 @@ const currentColumnIndex = ref<number | null>(null)
 
 /** 待恢复的选中状态（在数据加载完成后恢复） */
 const pendingSelection = ref<{ rowIndex: number | null; columnIndex: number | null } | null>(null)
+
+/** 行数据选择组件显示状态 */
+const rowSelectVisible = ref(false)
+
+/** 列数据选择组件显示状态 */
+const colSelectVisible = ref(false)
+
+/** 行数据已选记录（用于传递给选择组件） */
+const rowSelectedRecords = ref<any[]>([])
+
+/** 列数据已选记录（用于传递给选择组件） */
+const colSelectedRecords = ref<any[]>([])
 
 /** Dish记录列表 */
 const dishList = ref<any[]>([])
@@ -392,18 +416,22 @@ const loadDataFromStorage = (shouldRestore: boolean = false) => {
     if (storageData) {
       const data = JSON.parse(storageData)
       
-      // 加载Dish和DishGroup数据
+      // 加载行数据和列数据
       // 注意：如果 props 中有数据，优先使用 props（但页面刷新时 props 通常是空的）
-      if (data.dishes && Array.isArray(data.dishes)) {
+      // 保持向后兼容：同时支持旧格式（dishes/dishGroups）和新格式（rowDatas/colDatas）
+      const rowData = data.rowDatas || data.dishes
+      const colData = data.colDatas || data.dishGroups
+      
+      if (rowData && Array.isArray(rowData)) {
         // 只有在 props 中没有数据时才使用缓存的数据
-        if (!props.dishes || props.dishes.length === 0) {
-          dishList.value = data.dishes
+        if (!props.rowDatas || props.rowDatas.length === 0) {
+          dishList.value = rowData
         }
       }
-      if (data.dishGroups && Array.isArray(data.dishGroups)) {
+      if (colData && Array.isArray(colData)) {
         // 只有在 props 中没有数据时才使用缓存的数据
-        if (!props.dishGroups || props.dishGroups.length === 0) {
-          dishGroupList.value = data.dishGroups
+        if (!props.colDatas || props.colDatas.length === 0) {
+          dishGroupList.value = colData
         }
       }
       if (data.branchId !== undefined) {
@@ -418,11 +446,11 @@ const loadDataFromStorage = (shouldRestore: boolean = false) => {
   }
   
   // 如果props中有数据，优先使用props（覆盖缓存数据）
-  if (props.dishes && props.dishes.length > 0) {
-    dishList.value = props.dishes
+  if (props.rowDatas && props.rowDatas.length > 0) {
+    dishList.value = props.rowDatas
   }
-  if (props.dishGroups && props.dishGroups.length > 0) {
-    dishGroupList.value = props.dishGroups
+  if (props.colDatas && props.colDatas.length > 0) {
+    dishGroupList.value = props.colDatas
   }
 }
 
@@ -436,6 +464,10 @@ const saveDataToStorage = () => {
   
   try {
     const data = {
+      // 新格式
+      rowDatas: dishList.value,
+      colDatas: dishGroupList.value,
+      // 保持向后兼容：同时保存旧格式
       dishes: dishList.value,
       dishGroups: dishGroupList.value,
       branchId: branchId.value,
@@ -748,18 +780,88 @@ const deleteColumn = (columnIndex: number) => {
 
 /**
  * 选择列数据（分组）
- * 触发 select-col-data 事件，通知父组件打开列数据选择窗口
+ * 如果配置了 selectComponent，则自动打开选择组件；否则触发事件通知父组件
  */
 const handleSelectGroup = () => {
-  emit('select-col-data')
+  if (props.colDataConfig?.selectComponent) {
+    // 如果配置了选择组件，自动打开
+    colSelectVisible.value = true
+  } else {
+    // 向后兼容：触发事件通知父组件
+    emit('select-col-data')
+  }
 }
 
 /**
  * 选择行数据（菜品）
- * 触发 select-row-data 事件，通知父组件打开行数据选择窗口
+ * 如果配置了 selectComponent，则自动打开选择组件；否则触发事件通知父组件
  */
 const handleSelectDish = () => {
-  emit('select-row-data')
+  if (props.rowDataConfig?.selectComponent) {
+    // 如果配置了选择组件，自动打开
+    rowSelectVisible.value = true
+  } else {
+    // 向后兼容：触发事件通知父组件
+    emit('select-row-data')
+  }
+}
+
+/**
+ * 处理行数据选择确认
+ * @param records - 选中的记录列表
+ */
+const handleRowSelectConfirm = (records: any[]) => {
+  if (records && records.length > 0) {
+    addRowDatas(records)
+  }
+  rowSelectVisible.value = false
+}
+
+/**
+ * 处理行数据选择（直接选择，不关闭窗口）
+ * @param records - 选中的记录列表
+ * @param type - 选择类型
+ */
+const handleRowSelect = (records: any[], type: 'row' | 'column') => {
+  if (type === 'row' && records && records.length > 0) {
+    addRowDatas(records)
+  }
+}
+
+/**
+ * 处理行数据选择取消
+ */
+const handleRowSelectCancel = () => {
+  rowSelectVisible.value = false
+}
+
+/**
+ * 处理列数据选择确认
+ * @param records - 选中的记录列表
+ */
+const handleColSelectConfirm = (records: any[]) => {
+  if (records && records.length > 0) {
+    addColDatas(records)
+  }
+  colSelectVisible.value = false
+}
+
+/**
+ * 处理列数据选择（直接选择，不关闭窗口）
+ * @param records - 选中的记录列表
+ * @param type - 选择类型
+ */
+const handleColSelect = (records: any[], type: 'row' | 'column') => {
+  if (type === 'column' && records && records.length > 0) {
+    addColDatas(records)
+  }
+}
+
+/**
+ * 处理列数据选择取消
+ */
+const handleColSelectCancel = () => {
+  colSelectVisible.value = false
 }
 
 /**
@@ -777,6 +879,10 @@ const handleSave = async () => {
   // 构建保存数据
   const saveData = {
     branchId: branchId.value,
+    // 新格式
+    rowDatas: dishList.value,
+    colDatas: dishGroupList.value,
+    // 保持向后兼容：同时包含旧格式
     dishes: dishList.value,
     dishGroups: dishGroupList.value,
     crossData: crossData.value
@@ -809,6 +915,44 @@ watch(dataType, () => {
   // 数据类型切换时，表格会自动通过computed更新
   if (prompInfoRef.value) {
     prompInfoRef.value.info(`已切换到${dataType.value === 'use_dish' ? '使用菜品' : '配置加价'}`)
+  }
+})
+
+/** 监听行数据变化，同步到已选记录（用于选择组件显示） */
+watch(() => dishList.value, (newList) => {
+  if (props.rowDataConfig?.selectComponent && (props.rowDataConfig.passSelectedRecords !== false)) {
+    rowSelectedRecords.value = [...newList]
+  }
+}, { deep: true })
+
+/** 监听列数据变化，同步到已选记录（用于选择组件显示） */
+watch(() => dishGroupList.value, (newList) => {
+  if (props.colDataConfig?.selectComponent && (props.colDataConfig.passSelectedRecords !== false)) {
+    colSelectedRecords.value = [...newList]
+  }
+}, { deep: true })
+
+/** 监听行选择窗口打开，初始化已选记录 */
+watch(() => rowSelectVisible.value, (visible) => {
+  if (visible && props.rowDataConfig?.selectComponent) {
+    // 根据配置决定是否回传已选记录
+    if (props.rowDataConfig.passSelectedRecords !== false) {
+      rowSelectedRecords.value = [...dishList.value]
+    } else {
+      rowSelectedRecords.value = []
+    }
+  }
+})
+
+/** 监听列选择窗口打开，初始化已选记录 */
+watch(() => colSelectVisible.value, (visible) => {
+  if (visible && props.colDataConfig?.selectComponent) {
+    // 根据配置决定是否回传已选记录
+    if (props.colDataConfig.passSelectedRecords !== false) {
+      colSelectedRecords.value = [...dishGroupList.value]
+    } else {
+      colSelectedRecords.value = []
+    }
   }
 })
 
@@ -1002,6 +1146,10 @@ onBeforeUnmount(() => {
 defineExpose({
   getData: () => ({
     branchId: branchId.value,
+    // 新格式
+    rowDatas: dishList.value,
+    colDatas: dishGroupList.value,
+    // 保持向后兼容：同时返回旧格式
     dishes: dishList.value,
     dishGroups: dishGroupList.value,
     crossData: crossData.value
@@ -1133,6 +1281,32 @@ defineExpose({
       />
     </div>
   </div>
+  
+  <!-- 动态渲染行数据选择组件 -->
+  <component
+    v-if="rowDataConfig?.selectComponent"
+    :is="rowDataConfig.selectComponent"
+    v-model="rowSelectVisible"
+    :selected-records="(rowDataConfig.passSelectedRecords !== false) ? rowSelectedRecords : []"
+    :select-mode="rowDataConfig.selectMode || 'multiple'"
+    select-type="row"
+    @confirm="handleRowSelectConfirm"
+    @cancel="handleRowSelectCancel"
+    @select="handleRowSelect"
+  />
+  
+  <!-- 动态渲染列数据选择组件 -->
+  <component
+    v-if="colDataConfig?.selectComponent"
+    :is="colDataConfig.selectComponent"
+    v-model="colSelectVisible"
+    :selected-records="(colDataConfig.passSelectedRecords !== false) ? colSelectedRecords : []"
+    :select-mode="colDataConfig.selectMode || 'multiple'"
+    select-type="column"
+    @confirm="handleColSelectConfirm"
+    @cancel="handleColSelectCancel"
+    @select="handleColSelect"
+  />
   </WinSheet>
 </template>
 
