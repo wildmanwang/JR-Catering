@@ -88,6 +88,16 @@ export interface TableCrossProps {
   allowDeleteRow?: boolean
   /** 是否允许删除列（当为 true 时，在列小计行之后添加操作行） */
   allowDeleteColumn?: boolean
+  /** 
+   * 自定义单元格可编辑性判断函数（可选）
+   * 如果提供了此函数，会在内部判断之前先调用此函数
+   * 返回 false 时，单元格将不可编辑
+   * @param rowIndex - 行索引
+   * @param columnIndex - 列索引
+   * @param dataConfigIndex - 数据配置索引
+   * @returns 是否可编辑
+   */
+  isCellEditable?: (rowIndex: number, columnIndex: number, dataConfigIndex: number) => boolean
 }
 
 /**
@@ -505,7 +515,7 @@ const getCellDataKey = (columnId: string | number, dataConfigIndex: number): str
 }
 
 /**
- * 检查单元格是否可编辑（考虑primary依赖）
+ * 检查单元格是否可编辑（考虑primary依赖和自定义判断函数）
  */
 const isCellEditable = (rowIndex: number, columnIndex: number, dataConfigIndex: number): boolean => {
   // 检查是否是汇总行或操作行
@@ -517,6 +527,15 @@ const isCellEditable = (rowIndex: number, columnIndex: number, dataConfigIndex: 
   // 注意：rowIndex 是 props.rows 的索引，rowIndex=0 对应第一行数据单元（标题行在表头，不在 props.rows 中）
   // columnIndex 是 props.columns 的索引，columnIndex=0 对应第一列数据单元（名称列不在 props.columns 中）
   // 所以第一行数据单元（rowIndex=0）和第一列数据单元（columnIndex=0）都应该可编辑
+  
+  // 如果提供了自定义判断函数，先调用它
+  if (props.isCellEditable) {
+    const customResult = props.isCellEditable(rowIndex, columnIndex, dataConfigIndex)
+    if (customResult === false) {
+      return false
+    }
+    // 如果返回 true，继续执行内部逻辑
+  }
   
   // 如果没有数据配置，使用默认逻辑
   if (!props.dataConfigs || props.dataConfigs.length === 0) {
@@ -2380,7 +2399,9 @@ defineExpose({
           }"
           @keydown="handleCellKeydown($event, scope.row, { property: column.id })"
           tabindex="0"
-        >{{ getCellDisplayValue(scope.$index, colIdx) }}</span>
+        >
+          <span v-if="isCellEditable(scope.$index, colIdx, currentDataConfigIndex)">{{ getCellDisplayValue(scope.$index, colIdx) }}</span>
+        </span>
       </template>
     </ElTableColumn>
     
@@ -2536,11 +2557,11 @@ defineExpose({
   }
   
   // 数据单元格的鼠标样式（Excel 风格）
-  // 只匹配数据行的数据列单元格（通过 .data-cell 类名识别，排除汇总行、操作行、汇总列、操作列、填充列）
+  // 只匹配数据行的数据列单元格（通过 .data-cell 类名识别，排除汇总行、操作行、汇总列、操作列、填充列、不可编辑单元格）
   tbody tr:not(.sum-row-type):not(.action-row-type) .el-table__cell:not(:first-child):not(.editing-cell) {
-    // 排除汇总列（包含 .sum-column-cell）、操作列（包含 .action-cell）、填充列（包含 .fill-column-cell）
+    // 排除汇总列（包含 .sum-column-cell）、操作列（包含 .action-cell）、填充列（包含 .fill-column-cell）、不可编辑单元格（包含 .non-editable-cell）
     // 使用 :has() 选择器（如果浏览器不支持，下面的规则会作为fallback）
-    &:not(:has(.sum-column-cell)):not(:has(.action-cell)):not(:has(.fill-column-cell)) {
+    &:not(:has(.sum-column-cell)):not(:has(.action-cell)):not(:has(.fill-column-cell)):not(:has(.non-editable-cell)) {
       // 整个单元格使用 cell 光标（包括边缘的 padding 区域）
       cursor: cell !important;
       // 数据单元格背景色为白色
@@ -2800,9 +2821,31 @@ defineExpose({
   }
   
   &.non-editable-cell {
-    cursor: default !important;
-    background-color: #fafafa !important; // 非可编辑单元格保持浅灰色背景
-    color: #909399;
+    cursor: not-allowed !important; // 禁止指针
+    background-color: #fafafa !important; // 非可编辑单元格使用浅灰色背景
+    color: transparent !important; // 隐藏文字
+    position: relative;
+    
+    // 添加斜纹背景效果
+    &::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #fafafa; // 浅灰色背景
+      // 斜纹：45度角，线宽1px，间距2px（更密集）
+      background-image: repeating-linear-gradient(
+        45deg,
+        #fafafa,
+        #fafafa 2px,
+        #e8e8e8 2px,
+        #e8e8e8 3px
+      );
+      pointer-events: none;
+      z-index: 0;
+    }
   }
   
   &.fill-column-cell {
@@ -3037,6 +3080,45 @@ defineExpose({
     }
   }
   
+  // 不可编辑的数据单元格：使用斜纹灰色背景
+  tbody tr:not(.sum-row-type):not(.action-row-type) .el-table__cell:not(:first-child):has(.non-editable-cell) {
+    background-color: #fafafa !important; // 浅灰色背景
+    cursor: not-allowed !important; // 禁止指针
+    position: relative;
+    
+    &::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #fafafa; // 浅灰色背景
+      // 斜纹：45度角，线宽1px，间距2px（更密集）
+      background-image: repeating-linear-gradient(
+        45deg,
+        #fafafa,
+        #fafafa 2px,
+        #e8e8e8 2px,
+        #e8e8e8 3px
+      );
+      pointer-events: none;
+      z-index: 0;
+    }
+    
+    .table-cross-cell {
+      position: relative;
+      z-index: 1;
+      color: transparent !important; // 隐藏文字内容
+      cursor: not-allowed !important; // 禁止指针
+    }
+    
+    // 确保所有子元素也使用禁止指针
+    * {
+      cursor: not-allowed !important;
+    }
+  }
+  
   // 编辑状态下的数据单元格也保持白色背景
   .el-table__cell.editing-cell {
     &:not(:has(.sum-column-cell)):not(:has(.action-cell)):not(:has(.fill-column-cell)) {
@@ -3121,11 +3203,11 @@ defineExpose({
   }
   
   // 数据单元格的光标样式（Excel 风格）
-  // 只匹配数据行的数据列单元格（通过 .data-cell 类名识别，排除汇总行、操作行、汇总列、操作列、填充列）
+  // 只匹配数据行的数据列单元格（通过 .data-cell 类名识别，排除汇总行、操作行、汇总列、操作列、填充列、不可编辑单元格）
   tbody tr:not(.sum-row-type):not(.action-row-type) .el-table__cell:not(:first-child):not(.editing-cell) {
-    // 排除汇总列（包含 .sum-column-cell）、操作列（包含 .action-cell）、填充列（包含 .fill-column-cell）
+    // 排除汇总列（包含 .sum-column-cell）、操作列（包含 .action-cell）、填充列（包含 .fill-column-cell）、不可编辑单元格（包含 .non-editable-cell）
     // 使用 :has() 选择器（如果浏览器不支持，下面的规则会作为fallback）
-    &:not(:has(.sum-column-cell)):not(:has(.action-cell)):not(:has(.fill-column-cell)) {
+    &:not(:has(.sum-column-cell)):not(:has(.action-cell)):not(:has(.fill-column-cell)):not(:has(.non-editable-cell)) {
       // 整个单元格使用 cell 光标（包括边缘的 padding 区域）
       cursor: cell !important;
       
@@ -3141,6 +3223,23 @@ defineExpose({
       *:not(input):not(.el-input-number):not(.el-input-number__wrapper):not(.el-input-number__decrease):not(.el-input-number__increase):not(.el-link):not(.el-input__wrapper):not(.el-input__inner) {
         cursor: cell !important;
       }
+    }
+  }
+  
+  // 不可编辑的数据单元格：使用禁止指针（优先级更高，确保覆盖上面的规则）
+  tbody tr:not(.sum-row-type):not(.action-row-type) .el-table__cell:not(:first-child):has(.non-editable-cell) {
+    cursor: not-allowed !important;
+    
+    .cell {
+      cursor: not-allowed !important;
+    }
+    
+    .table-cross-cell {
+      cursor: not-allowed !important;
+    }
+    
+    * {
+      cursor: not-allowed !important;
     }
   }
   
