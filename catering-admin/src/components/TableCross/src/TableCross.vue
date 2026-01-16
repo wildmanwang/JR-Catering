@@ -14,7 +14,7 @@
 -->
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
-import { ElTable, ElTableColumn, ElInputNumber, ElInput, ElCheckbox, ElRadioGroup, ElRadio, ElIcon, ElLink } from 'element-plus'
+import { ElTable, ElTableColumn, ElInputNumber, ElInput, ElCheckbox, ElRadioGroup, ElRadio, ElSelect, ElOption, ElIcon, ElLink } from 'element-plus'
 import { Rank } from '@element-plus/icons-vue'
 
 /**
@@ -45,16 +45,18 @@ export interface TableCrossColumn {
 export interface TableCrossDataConfig {
   /** 配置标签（显示在单选按钮上） */
   label: string
-  /** 数据类型：'int' | 'decimal(12,2)' | 'string' 等 */
+  /** 数据类型：'int' | 'str' | 'string' | 'number' | 'bool' | 'boolean' | 'decimal(12,2)' 等 */
   type: string
   /** 显示格式：用于格式化显示值 */
   format?: string
   /** 是否为主配置（只有第一个元素有效）：当为true时，如果第一套数据配置了值，其他数据才可以配置 */
   primary?: boolean
-  /** 编辑组件类型：'NumberInput' | 'Input' | 'Checkbox' | 'RadioBox'，默认根据type自动推断 */
-  component?: 'NumberInput' | 'Input' | 'Checkbox' | 'RadioBox'
+  /** 编辑组件类型：'NumberInput' | 'Input' | 'Checkbox' | 'RadioBox' | 'Select'，默认根据type自动推断 */
+  component?: 'NumberInput' | 'Input' | 'Checkbox' | 'RadioBox' | 'Select'
   /** RadioBox选项（当component为'RadioBox'时必填） */
   radioOptions?: Array<{ label: string; value: any }>
+  /** Select选项（当component为'Select'时必填） */
+  selectOptions?: Array<{ label: string; value: any }>
 }
 
 /**
@@ -88,6 +90,12 @@ export interface TableCrossProps {
   allowDeleteRow?: boolean
   /** 是否允许删除列（当为 true 时，在列小计行之后添加操作行） */
   allowDeleteColumn?: boolean
+  /** 
+   * 是否允许直接编辑（默认为 false）
+   * - 允许时：Input、NumberInput 点击即可进入编辑模式；Select 点击即下拉；Checkbox 单击切换值；Radiobox 点击进入编辑模式
+   * - 不允许时：Input、NumberInput 双击或输入有效字符进入编辑模式；Select、Checkbox、Radiobox 双击进入编辑模式
+   */
+  allowDirectEdit?: boolean
   /** 
    * 自定义单元格可编辑性判断函数（可选）
    * 如果提供了此函数，会在内部判断之前先调用此函数
@@ -129,7 +137,8 @@ const props = withDefaults(defineProps<TableCrossProps>(), {
   dataConfigs: () => [],
   currentDataConfigIndex: 0,
   allowDeleteRow: false,
-  allowDeleteColumn: false
+  allowDeleteColumn: false,
+  allowDirectEdit: false
 })
 
 const emit = defineEmits<TableCrossEmits>()
@@ -455,22 +464,71 @@ const validateDataType = (value: any, type: string): boolean => {
   if (!typeMatch) return false
   
   const baseType = typeMatch[1].toLowerCase()
-  const numValue = Number(value)
   
   switch (baseType) {
     case 'int':
     case 'integer':
-      return Number.isInteger(numValue) && !isNaN(numValue)
+      const intValue = Number(value)
+      return Number.isInteger(intValue) && !isNaN(intValue)
+    case 'number':
     case 'decimal':
     case 'float':
     case 'double':
     case 'numeric':
+      const numValue = Number(value)
       return !isNaN(numValue) && isFinite(numValue)
+    case 'str':
     case 'string':
     case 'text':
       return true // 字符串类型接受任何值
+    case 'bool':
+    case 'boolean':
+      return typeof value === 'boolean' || value === 'true' || value === 'false' || value === 1 || value === 0
     default:
-      return !isNaN(numValue) && isFinite(numValue) // 默认按数字处理
+      // 默认尝试按数字处理
+      const defaultNumValue = Number(value)
+      return !isNaN(defaultNumValue) && isFinite(defaultNumValue)
+  }
+}
+
+/**
+ * 根据数据类型自动推断组件类型
+ */
+const inferComponentType = (config?: TableCrossDataConfig): 'NumberInput' | 'Input' | 'Checkbox' | 'RadioBox' | 'Select' | undefined => {
+  // 如果明确指定了组件类型，直接返回
+  if (config?.component) {
+    return config.component
+  }
+  
+  // 根据 type 自动推断
+  if (!config?.type) {
+    return undefined
+  }
+  
+  const typeMatch = config.type.match(/^(\w+)(?:\((\d+)(?:,(\d+))?\))?$/)
+  if (!typeMatch) return undefined
+  
+  const baseType = typeMatch[1].toLowerCase()
+  
+  // 根据类型自动推断
+  switch (baseType) {
+    case 'bool':
+    case 'boolean':
+      return 'Checkbox'
+    case 'int':
+    case 'integer':
+    case 'number':
+    case 'decimal':
+    case 'float':
+    case 'double':
+    case 'numeric':
+      return 'NumberInput'
+    case 'str':
+    case 'string':
+    case 'text':
+      return 'Input'
+    default:
+      return undefined
   }
 }
 
@@ -608,10 +666,10 @@ const getCellValue = (rowIndex: number, columnIndex: number, dataConfigIndex?: n
   
   // 根据组件类型返回不同的值
   const config = props.dataConfigs?.[configIndex]
-  const componentType = config?.component
+  const componentType = inferComponentType(config)
   
-  if (componentType === 'Checkbox' || componentType === 'RadioBox') {
-    // Checkbox和RadioBox返回原始值
+  if (componentType === 'Checkbox' || componentType === 'RadioBox' || componentType === 'Select') {
+    // Checkbox、RadioBox和Select返回原始值
     return value
   }
   
@@ -660,16 +718,22 @@ const getCellDisplayValue = (rowIndex: number, columnIndex: number, dataConfigIn
   if (value === null) return ''
   
   const config = props.dataConfigs?.[configIndex]
-  const componentType = config?.component
+  const componentType = inferComponentType(config)
   
-  // Checkbox显示为"是"/"否"
+  // Checkbox显示为"✓"或空
   if (componentType === 'Checkbox') {
-    return value ? '是' : '否'
+    return value ? '✓' : ''
   }
   
   // RadioBox显示为选项的label
   if (componentType === 'RadioBox' && config?.radioOptions) {
     const option = config.radioOptions.find(opt => opt.value === value)
+    return option ? option.label : String(value)
+  }
+  
+  // Select显示为选项的label
+  if (componentType === 'Select' && config?.selectOptions) {
+    const option = config.selectOptions.find(opt => opt.value === value)
     return option ? option.label : String(value)
   }
   
@@ -686,13 +750,15 @@ const getCellValueForInput = (rowIndex: number, columnIndex: number, dataConfigI
   // 检查是否可编辑（考虑primary依赖），如果不可编辑，返回空值
   if (!isCellEditable(rowIndex, columnIndex, configIndex)) {
     const config = props.dataConfigs?.[configIndex]
-    const componentType = config?.component
-    if (componentType === 'NumberInput' || (!componentType && config?.type && /^(int|integer|decimal|float|double|numeric)/i.test(config.type))) {
+    const componentType = inferComponentType(config)
+    if (componentType === 'NumberInput') {
       return undefined
     } else if (componentType === 'Input') {
       return ''
     } else if (componentType === 'Checkbox') {
       return false
+    } else if (componentType === 'Select' || componentType === 'RadioBox') {
+      return undefined
     } else {
       return undefined
     }
@@ -700,15 +766,30 @@ const getCellValueForInput = (rowIndex: number, columnIndex: number, dataConfigI
   
   const value = getCellValue(rowIndex, columnIndex, dataConfigIndex)
   const config = props.dataConfigs?.[configIndex]
-  const componentType = config?.component
+  const componentType = inferComponentType(config)
   
   // NumberInput返回number | undefined
-  if (componentType === 'NumberInput' || (!componentType && config?.type && /^(int|integer|decimal|float|double|numeric)/i.test(config.type))) {
+  if (componentType === 'NumberInput') {
     return value === null ? undefined : (typeof value === 'number' ? value : Number(value))
   }
   
+  // Input返回string
+  if (componentType === 'Input') {
+    return value === null ? '' : String(value)
+  }
+  
+  // Checkbox返回boolean
+  if (componentType === 'Checkbox') {
+    return value === null ? false : Boolean(value)
+  }
+  
+  // Select和RadioBox返回原始值
+  if (componentType === 'Select' || componentType === 'RadioBox') {
+    return value === null ? undefined : value
+  }
+  
   // 其他类型返回原始值
-  return value === null ? (componentType === 'Input' ? '' : undefined) : value
+  return value === null ? undefined : value
 }
 
 /**
@@ -721,11 +802,11 @@ const updateCellValue = (rowIndex: number, columnIndex: number, value: any, data
   const configIndex = dataConfigIndex ?? props.currentDataConfigIndex ?? 0
   const config = props.dataConfigs?.[configIndex]
   
-  // 验证数据类型（对于数字类型）
+  // 验证数据类型
   if (value !== null && value !== undefined && value !== '' && config?.type) {
-    const componentType = config.component
+    const componentType = inferComponentType(config)
     // 只有NumberInput需要验证数字类型
-    if (componentType === 'NumberInput' || (!componentType && config.type && /^(int|integer|decimal|float|double|numeric)/i.test(config.type))) {
+    if (componentType === 'NumberInput') {
       if (!validateDataType(value, config.type)) {
         return // 数据类型不匹配，不更新
       }
@@ -1036,6 +1117,38 @@ const startEdit = (rowIndex: number, columnIndex: number): [number, string] => {
           const refKey = `${rowIndex}-${columnIndex}`
           const componentRef = inputRefsMap.get(refKey)
           if (componentRef) {
+            // 检查组件类型
+          const configIndex = props.currentDataConfigIndex ?? 0
+          const config = props.dataConfigs?.[configIndex]
+          const componentType = inferComponentType(config)
+          
+          if (componentType === 'Select') {
+            // Select 组件：需要触发下拉
+            // Element Plus 的 ElSelect 在获得焦点时会自动下拉
+            if (componentRef.$el) {
+              // 尝试找到内部的 input 元素并聚焦
+              const selectInput = componentRef.$el.querySelector('.el-select__input') as HTMLElement
+              if (selectInput) {
+                selectInput.focus()
+                selectInput.click() // 点击以触发下拉
+              } else {
+                // 如果没有找到 input，尝试直接点击 Select 组件
+                const selectWrapper = componentRef.$el.querySelector('.el-select') as HTMLElement
+                if (selectWrapper) {
+                  selectWrapper.click()
+                }
+              }
+            } else if (typeof componentRef.focus === 'function') {
+              componentRef.focus()
+            }
+          } else if (componentType === 'Checkbox' || componentType === 'RadioBox') {
+            // Checkbox 和 RadioBox 不需要聚焦（它们不应该进入编辑模式）
+            // 但为了兼容性，仍然尝试聚焦
+            if (typeof componentRef.focus === 'function') {
+              componentRef.focus()
+            }
+          } else {
+            // Input 和 NumberInput：聚焦并选中文本
             if (typeof componentRef.focus === 'function') {
               componentRef.focus()
             } else if (componentRef.input) {
@@ -1045,6 +1158,7 @@ const startEdit = (rowIndex: number, columnIndex: number): [number, string] => {
                 actualInput.select()
               }
             }
+          }
           }
         })
       })
@@ -1479,10 +1593,10 @@ const navigateToCell = (
       const { rowIndex, columnIndex } = editingCell.value
       const configIndex = props.currentDataConfigIndex ?? 0
       const config = props.dataConfigs?.[configIndex]
-      const componentType = config?.component
+      const componentType = inferComponentType(config)
       
       // 只有NumberInput需要校验值必须大于0
-      if (componentType === 'NumberInput' || (!componentType && config?.type && /^(int|integer|decimal|float|double|numeric)/i.test(config.type))) {
+      if (componentType === 'NumberInput') {
         const value = getCellValue(rowIndex, columnIndex)
         if (value !== null && typeof value === 'number' && value <= 0) {
           return [-1, '单元格值必须大于0']
@@ -1527,9 +1641,9 @@ const handleInputUpdate = (rowIndex: number, columnIndex: number, value: any) =>
     }
   } else {
     const config = props.dataConfigs[configIndex]
-    const componentType = config?.component
+    const componentType = inferComponentType(config)
     // 只有NumberInput需要校验值必须大于0
-    if (componentType === 'NumberInput' || (!componentType && config?.type && /^(int|integer|decimal|float|double|numeric)/i.test(config.type))) {
+    if (componentType === 'NumberInput') {
       if (value !== null && typeof value === 'number' && value <= 0) {
         return
       }
@@ -1548,7 +1662,13 @@ const handleInputFocus = (rowIndex: number, columnIndex: number) => {
 const handleInputBlur = (_event: FocusEvent, rowIndex: number, columnIndex: number) => {
   delayExecute(() => {
     const activeElement = document.activeElement
-    if (activeElement && activeElement.closest('.excel-edit-input-number')) {
+    if (activeElement && (
+      activeElement.closest('.excel-edit-input-number') ||
+      activeElement.closest('.excel-edit-input') ||
+      activeElement.closest('.excel-edit-checkbox') ||
+      activeElement.closest('.excel-edit-radio') ||
+      activeElement.closest('.excel-edit-select')
+    )) {
       return
     }
     if (editingCell.value && editingCell.value.rowIndex === rowIndex && editingCell.value.columnIndex === columnIndex) {
@@ -1623,10 +1743,48 @@ const handleCellClick = (row: any, column: any) => {
     const columnIndex = props.columns.findIndex(col => String(col.id) === String(columnProperty))
     
     if (columnIndex >= 0) {
-      // 注意：columnIndex 是 props.columns 的索引，columnIndex=0 对应第一列数据单元（名称列不在 props.columns 中）
-      // tableRowIndex 是 tableData 的索引，tableRowIndex=0 对应第一行数据单元（标题行在表头，不在 tableData 中）
-      // 所以第一行数据单元（rowIndex=0）和第一列数据单元（columnIndex=0）都可以选中
-      // 选中交叉数据单元格（包括第一行和第一列的交叉单元）
+      // 检查是否可编辑
+      const configIndex = props.currentDataConfigIndex ?? 0
+      if (!isCellEditable(rowIndex, columnIndex, configIndex)) {
+        // 不可编辑，只选中单元格
+        selectCell(rowIndex, columnIndex)
+        return
+      }
+      
+      const config = props.dataConfigs?.[configIndex]
+      const componentType = inferComponentType(config)
+      
+      // 根据 allowDirectEdit 和组件类型决定行为
+      if (props.allowDirectEdit) {
+        // 允许直接编辑
+        if (componentType === 'Checkbox') {
+          // Checkbox：单击切换值，不进入编辑模式
+          const currentValue = getCellValue(rowIndex, columnIndex, configIndex)
+          const newValue = !currentValue
+          updateCellValue(rowIndex, columnIndex, newValue, configIndex)
+          // 选中单元格但不进入编辑模式
+          selectCell(rowIndex, columnIndex)
+          return
+        } else if (componentType === 'Select') {
+          // Select：点击即下拉（进入编辑模式，Select 会自动下拉）
+          startEdit(rowIndex, columnIndex)
+          return
+        } else if (componentType === 'Input' || componentType === 'NumberInput') {
+          // Input、NumberInput：点击即可进入编辑模式
+          startEdit(rowIndex, columnIndex)
+          return
+        } else if (componentType === 'RadioBox') {
+          // Radiobox：点击即进入编辑模式
+          startEdit(rowIndex, columnIndex)
+          return
+        }
+      } else {
+        // 不允许直接编辑：只选中单元格，不进入编辑模式
+        selectCell(rowIndex, columnIndex)
+        return
+      }
+      
+      // 默认行为：选中单元格
       selectCell(rowIndex, columnIndex)
       return
     }
@@ -1695,6 +1853,25 @@ const handleCellDblclick = (row: any, column: any) => {
     // 统一转换为字符串比较（因为模板中使用 String(column.id) 作为 prop）
     const columnIndex = props.columns.findIndex(col => String(col.id) === String(columnProperty))
     if (columnIndex >= 0) {
+      // 检查是否可编辑
+      const configIndex = props.currentDataConfigIndex ?? 0
+      if (!isCellEditable(rowIndex, columnIndex, configIndex)) {
+        return
+      }
+      
+      const config = props.dataConfigs?.[configIndex]
+      const componentType = inferComponentType(config)
+      
+      // 如果允许直接编辑，Checkbox 双击也不进入编辑模式（因为 Checkbox 永远不进入编辑模式）
+      if (props.allowDirectEdit && componentType === 'Checkbox') {
+        // Checkbox 双击也切换值
+        const currentValue = getCellValue(rowIndex, columnIndex, configIndex)
+        const newValue = !currentValue
+        updateCellValue(rowIndex, columnIndex, newValue, configIndex)
+        return
+      }
+      
+      // 其他情况：双击进入编辑模式
       const [editCode] = startEdit(rowIndex, columnIndex)
       if (editCode !== 1) {
         return
@@ -1734,7 +1911,7 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
   const key = event.key
   const configIndex = props.currentDataConfigIndex ?? 0
   const config = props.dataConfigs?.[configIndex]
-  const componentType = config?.component
+  const componentType = inferComponentType(config)
   
   // 忽略 Ctrl+C 和 Ctrl+V，让全局事件处理
   if (event.ctrlKey || event.metaKey) {
@@ -1751,7 +1928,7 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
     }
     
     // 根据组件类型检查输入是否有效
-    if (componentType === 'NumberInput' || (!componentType && config?.type && /^(int|integer|decimal|float|double|numeric)/i.test(config.type))) {
+    if (componentType === 'NumberInput') {
       // 数字输入：检查是否为有效数字字符
       const isNumber = /^[0-9.\-+]$/.test(key)
       if (!isNumber) {
@@ -1769,7 +1946,7 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
         startEdit(rowIndex, columnIndex)
       }
       return
-    } else if (componentType === 'Input' || !componentType) {
+    } else if (componentType === 'Input') {
       // 文本输入：接受任何可打印字符
       event.preventDefault()
       event.stopPropagation()
@@ -1780,7 +1957,7 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
       startEdit(rowIndex, columnIndex)
       return
     }
-    // Checkbox和RadioBox不支持键盘直接输入
+    // Checkbox、RadioBox和Select不支持键盘直接输入
   }
   
   // Delete 或 Backspace 删除单元格内容
@@ -1793,9 +1970,14 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
     event.preventDefault()
     
     // 根据组件类型设置不同的默认值
+    const componentType = inferComponentType(config)
     if (componentType === 'Checkbox') {
       updateCellValue(rowIndex, columnIndex, false)
-    } else if (componentType === 'NumberInput' || (!componentType && config?.type && /^(int|integer|decimal|float|double|numeric)/i.test(config.type))) {
+    } else if (componentType === 'NumberInput') {
+      updateCellValue(rowIndex, columnIndex, null)
+    } else if (componentType === 'Input') {
+      updateCellValue(rowIndex, columnIndex, '')
+    } else if (componentType === 'Select' || componentType === 'RadioBox') {
       updateCellValue(rowIndex, columnIndex, null)
     } else {
       updateCellValue(rowIndex, columnIndex, '')
@@ -1939,7 +2121,7 @@ const handleCopy = (event: ClipboardEvent) => {
   
   // 准备复制数据
   const config = props.dataConfigs?.[configIndex]
-  const componentType = config?.component
+  const componentType = inferComponentType(config)
   let copyValue = ''
   let copyData: any = value
   
@@ -1948,6 +2130,10 @@ const handleCopy = (event: ClipboardEvent) => {
     copyData = value
   } else if (componentType === 'RadioBox' && config?.radioOptions) {
     const option = config.radioOptions.find(opt => opt.value === value)
+    copyValue = option ? option.label : String(value)
+    copyData = value
+  } else if (componentType === 'Select' && config?.selectOptions) {
+    const option = config.selectOptions.find(opt => opt.value === value)
     copyValue = option ? option.label : String(value)
     copyData = value
   } else {
@@ -2021,7 +2207,7 @@ const handlePaste = (event: ClipboardEvent) => {
   
   // 处理粘贴数据
   const config = props.dataConfigs?.[configIndex]
-  const componentType = config?.component
+  const componentType = inferComponentType(config)
   
   if (cellData && cellData.type === componentType) {
     // 有自定义数据且类型匹配：使用自定义格式处理
@@ -2040,7 +2226,13 @@ const handlePaste = (event: ClipboardEvent) => {
         if (option) {
           handleInputUpdate(rowIndex, columnIndex, option.value)
         }
-      } else if (componentType === 'NumberInput' || (!componentType && config?.type && /^(int|integer|decimal|float|double|numeric)/i.test(config.type))) {
+      } else if (componentType === 'Select' && config?.selectOptions) {
+        // Select: 尝试通过label或value匹配
+        const option = config.selectOptions.find(opt => opt.label === pasteData || String(opt.value) === pasteData)
+        if (option) {
+          handleInputUpdate(rowIndex, columnIndex, option.value)
+        }
+      } else if (componentType === 'NumberInput') {
         // NumberInput: 尝试转换为数字
         const num = Number(pasteData)
         if (!isNaN(num)) {
@@ -2054,7 +2246,9 @@ const handlePaste = (event: ClipboardEvent) => {
       // 如果粘贴数据为空，清空单元格
       if (componentType === 'Checkbox') {
         handleInputUpdate(rowIndex, columnIndex, false)
-      } else if (componentType === 'NumberInput' || (!componentType && config?.type && /^(int|integer|decimal|float|double|numeric)/i.test(config.type))) {
+      } else if (componentType === 'NumberInput') {
+        handleInputUpdate(rowIndex, columnIndex, null)
+      } else if (componentType === 'Select' || componentType === 'RadioBox') {
         handleInputUpdate(rowIndex, columnIndex, null)
       } else {
         handleInputUpdate(rowIndex, columnIndex, '')
@@ -2384,7 +2578,7 @@ defineExpose({
         <template v-else-if="isEditing(scope.$index, colIdx) && isCellEditable(scope.$index, colIdx, currentDataConfigIndex)">
           <!-- NumberInput -->
           <ElInputNumber
-            v-if="dataConfigs[currentDataConfigIndex]?.component === 'NumberInput' || (!dataConfigs[currentDataConfigIndex]?.component && dataConfigs[currentDataConfigIndex]?.type && /^(int|integer|decimal|float|double|numeric)/i.test(dataConfigs[currentDataConfigIndex].type))"
+            v-if="(() => { const config = dataConfigs[currentDataConfigIndex]; const inferred = !config?.component && config?.type && /^(int|integer|number|decimal|float|double|numeric)/i.test(config.type); return config?.component === 'NumberInput' || inferred; })()"
             :key="`input-number-${scope.$index}-${colIdx}`"
             :ref="(el: any) => setInputRef(scope.$index, colIdx, el)"
             :model-value="getCellValueForInput(scope.$index, colIdx)"
@@ -2400,7 +2594,7 @@ defineExpose({
           
           <!-- Input -->
           <ElInput
-            v-else-if="dataConfigs[currentDataConfigIndex]?.component === 'Input'"
+            v-else-if="(() => { const config = dataConfigs[currentDataConfigIndex]; const inferred = !config?.component && config?.type && /^(str|string|text)/i.test(config.type); return config?.component === 'Input' || inferred; })()"
             :key="`input-${scope.$index}-${colIdx}`"
             :ref="(el: any) => setInputRef(scope.$index, colIdx, el)"
             :model-value="getCellValueForInput(scope.$index, colIdx)"
@@ -2413,7 +2607,7 @@ defineExpose({
           
           <!-- Checkbox -->
           <ElCheckbox
-            v-else-if="dataConfigs[currentDataConfigIndex]?.component === 'Checkbox'"
+            v-else-if="(() => { const config = dataConfigs[currentDataConfigIndex]; const inferred = !config?.component && config?.type && /^(bool|boolean)/i.test(config.type); return config?.component === 'Checkbox' || inferred; })()"
             :key="`checkbox-${scope.$index}-${colIdx}`"
             :ref="(el: any) => setInputRef(scope.$index, colIdx, el)"
             :model-value="getCellValueForInput(scope.$index, colIdx)"
@@ -2442,6 +2636,26 @@ defineExpose({
               {{ option.label }}
             </ElRadio>
           </ElRadioGroup>
+          
+          <!-- Select -->
+          <ElSelect
+            v-else-if="dataConfigs[currentDataConfigIndex]?.component === 'Select' && dataConfigs[currentDataConfigIndex]?.selectOptions"
+            :key="`select-${scope.$index}-${colIdx}`"
+            :ref="(el: any) => setInputRef(scope.$index, colIdx, el)"
+            :model-value="getCellValueForInput(scope.$index, colIdx)"
+            size="small"
+            class="excel-edit-select"
+            @update:model-value="(val: any) => handleInputUpdate(scope.$index, colIdx, val)"
+            @focus="handleInputFocus(scope.$index, colIdx)"
+            @blur="handleInputBlur($event, scope.$index, colIdx)"
+          >
+            <ElOption
+              v-for="option in dataConfigs[currentDataConfigIndex].selectOptions"
+              :key="option.value"
+              :label="option.label"
+              :value="option.value"
+            />
+          </ElSelect>
         </template>
         
         <!-- 显示模式 -->
@@ -3000,6 +3214,39 @@ defineExpose({
       .el-radio__label {
         padding-left: 4px !important;
       }
+    }
+  }
+}
+
+.excel-edit-select {
+  :deep(.el-select) {
+    .fill-container();
+    display: block !important;
+  }
+  
+  :deep(.el-input__wrapper) {
+    .fill-container();
+    .remove-border-bg();
+    padding: 0 4px !important;
+    display: flex !important;
+    align-items: center !important;
+    
+    &:hover, &:focus, &:focus-within, &.is-focus {
+      .remove-border-bg();
+    }
+  }
+  
+  :deep(.el-input__inner) {
+    .fill-container();
+    .remove-border-bg();
+    padding: 0 !important;
+    line-height: normal !important;
+    display: flex !important;
+    align-items: center !important;
+    text-align: center !important;
+    
+    &:hover, &:focus {
+      .remove-border-bg();
     }
   }
 }

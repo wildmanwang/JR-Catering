@@ -76,6 +76,8 @@ export interface ImportCrossProps {
   sumColumnWidth?: number
   /** 数据配置数组（支持多套数据配置） */
   dataConfigs?: TableCrossDataConfigs
+  /** 是否允许直接编辑（默认为 true） */
+  allowDirectEdit?: boolean
   /** 保存处理函数 */
   onSave?: (data: any) => Promise<void> | void
   /** 
@@ -98,6 +100,7 @@ export interface ImportCrossProps {
 
 const props = withDefaults(defineProps<ImportCrossProps>(), {
   storageKey: 'IMPORT_CROSS_PAYLOAD',
+  allowDirectEdit: true,
   sourceStorageKey: '',
   rowDatas: () => [],
   colDatas: () => [],
@@ -1349,6 +1352,7 @@ defineExpose({
         :current-column-index="currentColumnIndex"
         :allow-delete-row="rowDataConfig?.allowAdd || false"
         :allow-delete-column="colDataConfig?.allowAdd || false"
+        :allow-direct-edit="allowDirectEdit"
         @update:rows="handleRowsUpdate"
         @update:columns="handleColumnsUpdate"
         @cell-update="handleCellUpdate"

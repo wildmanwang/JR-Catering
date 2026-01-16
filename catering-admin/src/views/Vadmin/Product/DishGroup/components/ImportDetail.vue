@@ -43,8 +43,8 @@ const colDataConfig = ref({
 // ==================== 数据配置 ====================
 /** 数据配置数组 */
 const dataConfigs = ref<TableCrossDataConfigs>([
-  { label: '配置菜品', type: 'int', format: '', primary: true },
-  { label: '配置加价', type: 'decimal(12,2)', format: 'decimal(12,2)' }
+  { label: '配置菜品', type: 'bool', component: 'Checkbox', format: '', primary: true },
+  { label: '配置加价', type: 'number', component: 'NumberInput', format: 'decimal(12,2)' }
 ])
 
 // ==================== ImportCross 组件引用 ====================
@@ -114,6 +114,7 @@ const extraStores = computed<StatusStoreItem[]>(() => [
       :data-configs="dataConfigs"
       :row-data-config="rowDataConfig"
       :col-data-config="colDataConfig"
+      :allow-direct-edit="false"
       :on-save="handleSave"
       :extra-stores="extraStores"
       @data-changed="handleDataChanged"
