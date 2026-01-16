@@ -1203,7 +1203,7 @@ const selectRow = (rowIndex: number): [number, string] => {
   emit('update:currentRowIndex', rowIndex)
   emit('row-select', rowIndex)
   
-  // 应用选中样式
+  // 应用选中样式（只给数据单元格添加，排除汇总列和操作列）
   nextTick(() => {
     const tableEl = tableRef.value?.$el as HTMLElement
     if (tableEl) {
@@ -1213,8 +1213,34 @@ const selectRow = (rowIndex: number): [number, string] => {
         rows.forEach((row, idx) => {
           if (idx === rowIndex) {
             row.classList.add('selected-row')
+            // 只给数据单元格添加选中类，排除汇总列、操作列和填充列
+            const cells = Array.from(row.children) as HTMLElement[]
+            const dataCells: HTMLElement[] = []
+            cells.forEach((cell, cellIdx) => {
+              // 跳过名称列（第1列）
+              if (cellIdx === 0) return
+              // 跳过汇总列、操作列和填充列（通过检查单元格内容判断）
+              const cellContent = cell.querySelector('.sum-column-cell, .action-cell, .fill-column-cell')
+              if (cellContent) {
+                cell.classList.remove('selected-row-cell', 'selected-row-cell-first', 'selected-row-cell-last')
+              } else {
+                // 只给数据单元格添加选中类
+                cell.classList.add('selected-row-cell')
+                dataCells.push(cell)
+              }
+            })
+            // 标记第一个和最后一个数据单元格
+            if (dataCells.length > 0) {
+              dataCells[0].classList.add('selected-row-cell-first')
+              dataCells[dataCells.length - 1].classList.add('selected-row-cell-last')
+            }
           } else {
             row.classList.remove('selected-row')
+            // 移除该行的所有选中类
+            const cells = Array.from(row.children) as HTMLElement[]
+            cells.forEach(cell => {
+              cell.classList.remove('selected-row-cell', 'selected-row-cell-first', 'selected-row-cell-last')
+            })
           }
         })
       }
@@ -1234,6 +1260,10 @@ const deselectRow = (): [number, string] => {
   if (tableEl) {
     tableEl.querySelectorAll('tr.selected-row').forEach(el => {
       el.classList.remove('selected-row')
+    })
+    // 移除所有行的选中单元格类
+    tableEl.querySelectorAll('.el-table__cell.selected-row-cell').forEach(el => {
+      el.classList.remove('selected-row-cell', 'selected-row-cell-first', 'selected-row-cell-last')
     })
   }
   
@@ -1260,20 +1290,45 @@ const selectColumn = (columnIndex: number): [number, string] => {
   emit('update:currentColumnIndex', columnIndex)
   emit('column-select', columnIndex)
   
-  // 应用选中样式
+  // 应用选中样式（只给数据行的单元格添加，排除汇总行和操作行）
   nextTick(() => {
     const tableEl = tableRef.value?.$el as HTMLElement
     if (tableEl) {
       const tbody = tableEl.querySelector('.el-table__body tbody')
       if (tbody) {
         const rows = Array.from(tbody.querySelectorAll('tr'))
-        rows.forEach(row => {
-          const cells = Array.from(row.children)
+        let firstDataRowIdx = -1
+        let lastDataRowIdx = -1
+        
+        // 找到第一个和最后一个数据行
+        rows.forEach((row, rowIdx) => {
+          if (rowIdx < props.rows.length) {
+            if (firstDataRowIdx === -1) {
+              firstDataRowIdx = rowIdx
+            }
+            lastDataRowIdx = rowIdx
+          }
+        })
+        
+        rows.forEach((row, rowIdx) => {
+          // 跳过汇总行和操作行（只选择数据行）
+          if (rowIdx >= props.rows.length) {
+            return
+          }
+          
+          const cells = Array.from(row.children) as HTMLElement[]
           cells.forEach((cell, idx) => {
             if (idx === columnIndex + 1) { // +1 因为第1列是名称列
               cell.classList.add('selected-column')
+              // 标记第一行和最后一行
+              if (rowIdx === firstDataRowIdx) {
+                cell.classList.add('selected-column-first-row')
+              }
+              if (rowIdx === lastDataRowIdx) {
+                cell.classList.add('selected-column-last-row')
+              }
             } else {
-              cell.classList.remove('selected-column')
+              cell.classList.remove('selected-column', 'selected-column-first-row', 'selected-column-last-row')
             }
           })
         })
@@ -1293,7 +1348,7 @@ const deselectColumn = (): [number, string] => {
   const tableEl = tableRef.value?.$el as HTMLElement
   if (tableEl) {
     tableEl.querySelectorAll('.el-table__cell.selected-column').forEach(el => {
-      el.classList.remove('selected-column')
+      el.classList.remove('selected-column', 'selected-column-first-row', 'selected-column-last-row')
     })
   }
   
@@ -3296,76 +3351,82 @@ defineExpose({
     }
   }
   
-  // 行选中时，该行的数据单元格添加绿色边框
-  tbody tr.selected-row {
-    position: relative;
+  // 行选中时，该行的数据单元格添加绿色边框（只选择数据单元格，排除汇总列和操作列）
+  // 统一使用与单元格选择相同的伪元素方式
+  tbody tr.selected-row .el-table__cell.selected-row-cell {
+    position: relative !important;
     
-    .el-table__cell:not(:first-child):not(:last-child) {
-      position: relative !important;
-      
-      &::before {
-        content: '' !important;
-        position: absolute !important;
-        top: 0 !important;
-        left: 0 !important;
-        right: 0 !important;
-        height: 2px !important;
-        background-color: rgb(16, 153, 104) !important;
-        pointer-events: none !important;
-        z-index: 1 !important;
-      }
-      
-      &::after {
-        content: '' !important;
-        position: absolute !important;
-        bottom: 0 !important;
-        left: 0 !important;
-        right: 0 !important;
-        height: 2px !important;
-        background-color: rgb(16, 153, 104) !important;
-        pointer-events: none !important;
-        z-index: 1 !important;
-      }
+    &::after {
+      content: '' !important;
+      position: absolute !important;
+      top: 0 !important;
+      left: 0 !important;
+      right: 0 !important;
+      bottom: 0 !important;
+      // 所有单元格都显示上下边框
+      border-top: 2px solid rgb(16, 153, 104) !important;
+      border-bottom: 2px solid rgb(16, 153, 104) !important;
+      // 左右边框默认不显示
+      border-left: none !important;
+      border-right: none !important;
+      pointer-events: none !important;
+      box-sizing: border-box !important;
+      z-index: 1 !important;
     }
-    
-    .el-table__cell:nth-child(2) {
-      position: relative !important;
-      box-shadow: -2px 0 0 0 rgb(16, 153, 104) !important;
+  }
+  
+  // 第一个数据单元格：显示左边框
+  tbody tr.selected-row .el-table__cell.selected-row-cell-first {
+    &::after {
+      border-left: 2px solid rgb(16, 153, 104) !important;
     }
-    
-    .el-table__cell:nth-last-child(2) {
-      position: relative !important;
+  }
+  
+  // 最后一个数据单元格：显示右边框
+  tbody tr.selected-row .el-table__cell.selected-row-cell-last {
+    &::after {
       border-right: 2px solid rgb(16, 153, 104) !important;
     }
   }
   
-  // 列选中时，该列的数据单元格添加绿色边框
-  .el-table__cell.selected-column {
-    position: relative;
-    
-    &::before {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: 0;
-      bottom: 0;
-      width: 2px;
-      background-color: rgb(16, 153, 104);
-      pointer-events: none;
-      z-index: 1;
-    }
+  // 列选中时，该列的数据单元格添加绿色边框（只选择数据行的单元格，排除汇总行和操作行）
+  // 统一使用与单元格选择相同的伪元素方式
+  tbody tr:not(.sum-row-type):not(.action-row-type) .el-table__cell.selected-column {
+    position: relative !important;
     
     &::after {
-      content: '';
-      position: absolute;
-      top: 0;
-      right: 0;
-      bottom: 0;
-      width: 2px;
-      background-color: rgb(16, 153, 104);
-      pointer-events: none;
-      z-index: 1;
+      content: '' !important;
+      position: absolute !important;
+      top: 0 !important;
+      left: 0 !important;
+      right: 0 !important;
+      bottom: 0 !important;
+      // 所有单元格都显示左右边框
+      border-left: 2px solid rgb(16, 153, 104) !important;
+      border-right: 2px solid rgb(16, 153, 104) !important;
+      // 上下边框默认不显示（但第一行和最后一行会覆盖）
+      border-top: none !important;
+      border-bottom: none !important;
+      pointer-events: none !important;
+      box-sizing: border-box !important;
+      z-index: 1 !important;
     }
+  }
+  
+  // 第一行数据单元格：显示上边框（使用更具体的选择器确保优先级）
+  tbody tr:not(.sum-row-type):not(.action-row-type) .el-table__cell.selected-column.selected-column-first-row::after {
+    border-top: 2px solid rgb(16, 153, 104) !important;
+  }
+  
+  // 最后一行数据单元格：显示下边框（使用更具体的选择器确保优先级）
+  tbody tr:not(.sum-row-type):not(.action-row-type) .el-table__cell.selected-column.selected-column-last-row::after {
+    border-bottom: 2px solid rgb(16, 153, 104) !important;
+  }
+  
+  // 如果第一行也是最后一行（只有一行数据），需要同时显示上下边框
+  tbody tr:not(.sum-row-type):not(.action-row-type) .el-table__cell.selected-column.selected-column-first-row.selected-column-last-row::after {
+    border-top: 2px solid rgb(16, 153, 104) !important;
+    border-bottom: 2px solid rgb(16, 153, 104) !important;
   }
 }
 </style>
