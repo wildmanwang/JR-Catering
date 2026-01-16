@@ -157,14 +157,12 @@ const dishList = ref<any[]>([])
 /** DishGroup记录列表 */
 const dishGroupList = ref<any[]>([])
 
-/** 交叉数据配置（多套配置值） */
-const crossData = ref<{
-  use_dish: Record<string, Record<string, number | null>> // { dishId: { dishGroupId: value } }
-  price_add: Record<string, Record<string, number | null>> // { dishId: { dishGroupId: value } }
-}>({
-  use_dish: {},
-  price_add: {}
-})
+/** 
+ * 交叉数据配置（多套配置值）
+ * 新格式：按配置索引存储 { configIndex: { dishId: { dishGroupId: value } } }
+ * 旧格式（向后兼容）：按数据类型存储 { use_dish: { dishId: { dishGroupId: value } }, price_add: {...} }
+ */
+const crossData = ref<Record<number | string, Record<string, Record<string, number | null>>>>({})
 
 // ==================== 路由和状态管理 ====================
 const router = useRouter()
@@ -200,12 +198,25 @@ const tableRows = computed<TableCrossRow[]>(() => {
     dishGroupList.value.forEach(group => {
       // 如果有数据配置，使用多套数据存储
       if (props.dataConfigs && props.dataConfigs.length > 0) {
-        props.dataConfigs.forEach((config, configIndex) => {
+        props.dataConfigs.forEach((_config, configIndex) => {
           const dataKey = `__data_${configIndex}_${group.id}`
-          // 从 crossData 中获取值（保持向后兼容）
-          const oldValue = crossData.value[dataType.value]?.[String(dish.id)]?.[String(group.id)]
-          // 优先使用新格式，如果没有则使用旧格式
-          row[dataKey] = oldValue ?? null
+          const dishId = String(dish.id)
+          const groupId = String(group.id)
+          
+          // 优先从新格式读取（按配置索引）
+          let value: number | null = null
+          if (crossData.value[configIndex]?.[dishId]?.[groupId] !== undefined) {
+            value = crossData.value[configIndex][dishId][groupId]
+          } else {
+            // 向后兼容：尝试从旧格式读取
+            // 旧格式：use_dish 对应索引0，price_add 对应索引1
+            const oldDataType = configIndex === 0 ? 'use_dish' : configIndex === 1 ? 'price_add' : null
+            if (oldDataType && crossData.value[oldDataType]?.[dishId]?.[groupId] !== undefined) {
+              value = crossData.value[oldDataType][dishId][groupId]
+            }
+          }
+          
+          row[dataKey] = value
         })
       } else {
         // 没有数据配置，使用旧的格式（向后兼容）
@@ -439,6 +450,35 @@ const loadDataFromStorage = (shouldRestore: boolean = false) => {
       }
       if (data.crossData) {
         crossData.value = data.crossData
+        
+        // 如果有数据配置，尝试将旧格式迁移到新格式
+        if (props.dataConfigs && props.dataConfigs.length > 0) {
+          // 检查是否有旧格式的数据（use_dish 或 price_add）
+          const hasOldFormat = 'use_dish' in crossData.value || 'price_add' in crossData.value
+          
+          if (hasOldFormat) {
+            // 迁移数据：use_dish -> 索引0，price_add -> 索引1
+            if (crossData.value['use_dish']) {
+              if (!crossData.value[0]) {
+                crossData.value[0] = {}
+              }
+              Object.keys(crossData.value['use_dish']).forEach(dishId => {
+                crossData.value[0][dishId] = { ...crossData.value['use_dish'][dishId] }
+              })
+            }
+            if (crossData.value['price_add']) {
+              if (!crossData.value[1]) {
+                crossData.value[1] = {}
+              }
+              Object.keys(crossData.value['price_add']).forEach(dishId => {
+                crossData.value[1][dishId] = { ...crossData.value['price_add'][dishId] }
+              })
+            }
+            
+            // 迁移完成后，可以选择保留旧格式（向后兼容）或删除
+            // 这里保留旧格式，以便向后兼容
+          }
+        }
       }
     }
   } catch (error) {
@@ -563,21 +603,28 @@ const handleCellUpdate = (rowIndex: number, columnIndex: number, value: number |
   const dishGroupId = String(column.id)
   const configIndex = dataConfigIndex ?? currentDataConfigIndex.value
   
-  // 如果有数据配置，使用多套数据存储
+  // 如果有数据配置，使用多套数据存储（按配置索引）
   if (props.dataConfigs && props.dataConfigs.length > 0) {
-    // 初始化数据结构（保持向后兼容）
-    if (!crossData.value[dataType.value][dishId]) {
-      crossData.value[dataType.value][dishId] = {}
+    // 初始化数据结构（新格式：按配置索引存储）
+    if (!crossData.value[configIndex]) {
+      crossData.value[configIndex] = {}
+    }
+    if (!crossData.value[configIndex][dishId]) {
+      crossData.value[configIndex][dishId] = {}
     }
     
-    // 更新值（保持向后兼容）
-    crossData.value[dataType.value][dishId][dishGroupId] = value
+    // 更新值到对应配置索引的位置
+    crossData.value[configIndex][dishId][dishGroupId] = value
   } else {
-    // 没有数据配置，使用旧的格式
-    if (!crossData.value[dataType.value][dishId]) {
-      crossData.value[dataType.value][dishId] = {}
+    // 没有数据配置，使用旧的格式（按数据类型存储）
+    const oldDataType = dataType.value
+    if (!crossData.value[oldDataType]) {
+      crossData.value[oldDataType] = {}
     }
-    crossData.value[dataType.value][dishId][dishGroupId] = value
+    if (!crossData.value[oldDataType][dishId]) {
+      crossData.value[oldDataType][dishId] = {}
+    }
+    crossData.value[oldDataType][dishId][dishGroupId] = value
   }
   
   // 保存到storage
@@ -594,7 +641,7 @@ const handleCellUpdate = (rowIndex: number, columnIndex: number, value: number |
 }
 
 /**
- * 处理行数据更新
+ * 处理行数据更新（通常由拖拽重排序触发）
  */
 const handleRowsUpdate = (rows: TableCrossRow[]) => {
   // 更新 dishList 的顺序以匹配新的行顺序
@@ -611,19 +658,27 @@ const handleRowsUpdate = (rows: TableCrossRow[]) => {
   // 更新 dishList 的顺序
   dishList.value = newDishList
   
-  // 更新交叉数据
-  rows.forEach(row => {
-    const dishId = String(row.id)
-    dishGroupList.value.forEach(group => {
-      const groupId = String(group.id)
-      const value = row[groupId] ?? null
-      
-      if (!crossData.value[dataType.value][dishId]) {
-        crossData.value[dataType.value][dishId] = {}
-      }
-      crossData.value[dataType.value][dishId][groupId] = value
+  // 如果有数据配置，数据已经通过 __data_${configIndex}_${groupId} 格式存储在 crossData 中
+  // 拖拽重排序不会改变数据本身，只改变顺序，所以不需要更新 crossData
+  // 只有在没有数据配置的情况下（旧格式），才需要从 rows 读取数据更新 crossData
+  if (!props.dataConfigs || props.dataConfigs.length === 0) {
+    // 旧格式：更新交叉数据
+    rows.forEach(row => {
+      const dishId = String(row.id)
+      dishGroupList.value.forEach(group => {
+        const groupId = String(group.id)
+        const value = row[groupId] ?? null
+        
+        if (!crossData.value[dataType.value]) {
+          crossData.value[dataType.value] = {}
+        }
+        if (!crossData.value[dataType.value][dishId]) {
+          crossData.value[dataType.value][dishId] = {}
+        }
+        crossData.value[dataType.value][dishId][groupId] = value
+      })
     })
-  })
+  }
   
   saveDataToStorage()
 }
@@ -712,8 +767,18 @@ const deleteRow = (rowIndex: number) => {
   dishList.value.splice(rowIndex, 1)
   
   // 删除交叉数据中该行的所有数据
-  if (crossData.value[dataType.value][dishId]) {
-    delete crossData.value[dataType.value][dishId]
+  if (props.dataConfigs && props.dataConfigs.length > 0) {
+    // 新格式：删除所有配置索引中该行的数据
+    props.dataConfigs.forEach((_config, configIndex) => {
+      if (crossData.value[configIndex]?.[dishId]) {
+        delete crossData.value[configIndex][dishId]
+      }
+    })
+  } else {
+    // 旧格式：按数据类型删除
+    if (crossData.value[dataType.value]?.[dishId]) {
+      delete crossData.value[dataType.value][dishId]
+    }
   }
   
   saveDataToStorage()
@@ -754,11 +819,25 @@ const deleteColumn = (columnIndex: number) => {
   dishGroupList.value.splice(actualIndex, 1)
   
   // 删除交叉数据中该列的所有数据
-  Object.keys(crossData.value[dataType.value]).forEach(dishId => {
-    if (crossData.value[dataType.value][dishId] && crossData.value[dataType.value][dishId][groupId]) {
-      delete crossData.value[dataType.value][dishId][groupId]
-    }
-  })
+  if (props.dataConfigs && props.dataConfigs.length > 0) {
+    // 新格式：删除所有配置索引中该列的数据
+    props.dataConfigs.forEach((_config, configIndex) => {
+      if (crossData.value[configIndex]) {
+        Object.keys(crossData.value[configIndex]).forEach(dishId => {
+          if (crossData.value[configIndex][dishId]?.[groupId]) {
+            delete crossData.value[configIndex][dishId][groupId]
+          }
+        })
+      }
+    })
+  } else {
+    // 旧格式：按数据类型删除
+    Object.keys(crossData.value[dataType.value] || {}).forEach(dishId => {
+      if (crossData.value[dataType.value][dishId]?.[groupId]) {
+        delete crossData.value[dataType.value][dishId][groupId]
+      }
+    })
+  }
   
   // 保存到主存储
   saveDataToStorage()

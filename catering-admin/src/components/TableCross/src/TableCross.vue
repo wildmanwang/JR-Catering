@@ -2490,20 +2490,18 @@ defineExpose({
 
 // ==================== 表格基础样式 ====================
 :deep(.table-cross) {
+  // 设置整个表格的默认背景色为浅灰色
   .el-table__cell {
     padding: 4px !important;
     position: relative;
     min-height: 32px;
     vertical-align: middle !important;
-    
-    &:hover {
-      background-color: #f5f7fa;
-    }
+    background-color: #fafafa !important; // 默认背景色为浅灰色，使用 !important 确保优先级
   }
   
   // 名称列样式
   .el-table__cell:first-child {
-    background-color: #fafafa;
+    background-color: #fafafa !important;
     border-right: 1px solid #e8e8e8;
     padding: 0 !important;
     cursor: default !important;
@@ -2515,7 +2513,7 @@ defineExpose({
   
   // 表头样式
   .el-table__header th {
-    background-color: #fafafa;
+    background-color: #fafafa !important;
     border-bottom: 1px solid #e8e8e8;
     text-align: center !important;
     height: auto !important;
@@ -2528,7 +2526,9 @@ defineExpose({
     height: auto !important;
     min-height: 32px;
     padding: 4px !important;
+    background-color: #fafafa !important;
   }
+  
   
   // 表格最后一行的下边框移除（避免与汇总行边框叠加，汇总行已有上边框）
   .el-table__body tbody tr:last-child .el-table__cell {
@@ -2543,6 +2543,8 @@ defineExpose({
     &:not(:has(.sum-column-cell)):not(:has(.action-cell)):not(:has(.fill-column-cell)) {
       // 整个单元格使用 cell 光标（包括边缘的 padding 区域）
       cursor: cell !important;
+      // 数据单元格背景色为白色
+      background-color: #ffffff !important;
       
       :deep(.cell) {
         cursor: cell !important;
@@ -2555,10 +2557,18 @@ defineExpose({
     }
   }
   
+  // 编辑模式下的数据单元格也保持白色背景
+  tbody tr:not(.sum-row-type):not(.action-row-type) .el-table__cell.editing-cell {
+    &:not(:has(.sum-column-cell)):not(:has(.action-cell)):not(:has(.fill-column-cell)) {
+      background-color: #ffffff !important;
+    }
+  }
+  
   // 汇总列单元格使用默认光标（优先级更高，确保覆盖上面的规则）
   // 使用 :has() 选择器识别包含 .sum-column-cell 的单元格
   tbody tr:not(.sum-row-type):not(.action-row-type) .el-table__cell:not(:first-child):not(.editing-cell):has(.sum-column-cell) {
     cursor: default !important;
+    background-color: #fafafa !important; // 汇总列单元格保持浅灰色背景
     
     :deep(.cell) {
       cursor: default !important;
@@ -2567,6 +2577,26 @@ defineExpose({
     * {
       cursor: default !important;
     }
+  }
+  
+  // 操作列单元格保持浅灰色背景
+  tbody tr:not(.sum-row-type):not(.action-row-type) .el-table__cell:not(:first-child):has(.action-cell) {
+    background-color: #fafafa !important;
+  }
+  
+  // 填充列单元格保持浅灰色背景
+  tbody tr:not(.sum-row-type):not(.action-row-type) .el-table__cell:not(:first-child):has(.fill-column-cell) {
+    background-color: #fafafa !important;
+  }
+  
+  // 汇总行的所有单元格保持浅灰色背景
+  tr.sum-row-type .el-table__cell {
+    background-color: #fafafa !important;
+  }
+  
+  // 操作行的所有单元格保持浅灰色背景
+  tr.action-row-type .el-table__cell {
+    background-color: #fafafa !important;
   }
   
   // 编辑中的单元格样式
@@ -2584,6 +2614,11 @@ defineExpose({
     
     :deep(input) {
       cursor: text !important;
+    }
+    
+    // 如果编辑的单元格是数据单元格，保持白色背景
+    &:not(:has(.sum-column-cell)):not(:has(.action-cell)):not(:has(.fill-column-cell)) {
+      background-color: #ffffff !important;
     }
   }
 }
@@ -2753,9 +2788,10 @@ defineExpose({
   border: none !important;
   text-align: center;
   
-  // 只有数据单元格才使用 cell 光标
+  // 只有数据单元格才使用 cell 光标，并设置白色背景
   &.data-cell {
     cursor: cell !important;
+    background-color: #ffffff !important; // 数据单元格背景色为白色，使用 !important 确保优先级
   }
   
   &:focus {
@@ -2765,13 +2801,23 @@ defineExpose({
   
   &.non-editable-cell {
     cursor: default !important;
-    background-color: #f5f7fa;
+    background-color: #fafafa !important; // 非可编辑单元格保持浅灰色背景
     color: #909399;
   }
   
   &.fill-column-cell {
     cursor: default !important;
-    background-color: #fafafa;
+    background-color: #fafafa !important; // 填充列单元格保持浅灰色背景
+  }
+  
+  // 汇总列单元格样式
+  &.sum-row-cell {
+    background-color: #fafafa !important;
+  }
+  
+  // 操作单元格样式
+  &.action-cell {
+    background-color: #fafafa !important;
   }
 }
 
@@ -2955,6 +3001,56 @@ defineExpose({
 <style lang="less">
 // ==================== 全局样式 ====================
 .table-cross {
+  // 设置所有单元格的默认背景色为浅灰色
+  .el-table__cell {
+    background-color: #fafafa !important;
+  }
+  
+  // 名称列背景色
+  .el-table__cell:first-child {
+    background-color: #fafafa !important;
+  }
+  
+  // 表头背景色
+  .el-table__header th,
+  .el-table__header .el-table__cell {
+    background-color: #fafafa !important;
+  }
+  
+  // 汇总行和操作行背景色
+  tr.sum-row-type .el-table__cell,
+  tr.action-row-type .el-table__cell {
+    background-color: #fafafa !important;
+  }
+  
+  // 汇总列、操作列、填充列背景色
+  .el-table__cell:has(.sum-column-cell),
+  .el-table__cell:has(.action-cell),
+  .el-table__cell:has(.fill-column-cell) {
+    background-color: #fafafa !important;
+  }
+  
+  // 数据单元格背景色为白色（非汇总列、操作列、填充列、名称列的数据单元格）
+  tbody tr:not(.sum-row-type):not(.action-row-type) .el-table__cell:not(:first-child) {
+    &:not(:has(.sum-column-cell)):not(:has(.action-cell)):not(:has(.fill-column-cell)) {
+      background-color: #ffffff !important;
+    }
+  }
+  
+  // 编辑状态下的数据单元格也保持白色背景
+  .el-table__cell.editing-cell {
+    &:not(:has(.sum-column-cell)):not(:has(.action-cell)):not(:has(.fill-column-cell)) {
+      background-color: #ffffff !important;
+    }
+    
+    // 如果编辑的是汇总列、操作列、填充列，保持浅灰色
+    &:has(.sum-column-cell),
+    &:has(.action-cell),
+    &:has(.fill-column-cell) {
+      background-color: #fafafa !important;
+    }
+  }
+  
   // 强制覆盖 Element Plus .cell 的 padding
   .el-table__header .el-table__cell .cell {
     padding: 0 !important;
