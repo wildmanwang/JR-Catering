@@ -991,6 +991,22 @@ const handleSave = async () => {
   }
 }
 
+// ==================== TableCross 事件处理 ====================
+/**
+ * 处理 TableCross 组件的 message 事件
+ */
+const handleTableCrossMessage = (type: 'info' | 'warn' | 'error', message: string) => {
+  if (prompInfoRef.value) {
+    if (type === 'info') {
+      prompInfoRef.value.info(message)
+    } else if (type === 'warn') {
+      prompInfoRef.value.warn(message)
+    } else if (type === 'error') {
+      prompInfoRef.value.err(message)
+    }
+  }
+}
+
 // ==================== 监听 ====================
 /** 监听数据类型切换，更新表格数据 */
 watch(dataType, () => {
@@ -1341,6 +1357,7 @@ defineExpose({
     <div class="table-wrapper">
       <TableCross
         ref="tableCrossRef"
+        @message="handleTableCrossMessage"
         :rows="tableRows"
         :columns="tableColumns"
         :name-column-width="nameColumnWidth"

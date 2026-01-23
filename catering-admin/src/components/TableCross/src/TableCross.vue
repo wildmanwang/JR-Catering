@@ -126,6 +126,7 @@ export interface TableCrossEmits {
   (e: 'column-order-change', newColumns: TableCrossColumn[]): void
   (e: 'row-delete', rowIndex: number): void
   (e: 'column-delete', columnIndex: number): void
+  (e: 'message', type: 'info' | 'warn' | 'error', message: string): void
 }
 
 const props = withDefaults(defineProps<TableCrossProps>(), {
@@ -1241,12 +1242,16 @@ const deselectCell = (): [number, string] => {
  * 排除汇总行、操作行、汇总列、操作列
  */
 const selectCell = (rowIndex: number, columnIndex: number): [number, string] => {
+  console.log('[TableCross] selectCell 调用:', { rowIndex, columnIndex, rowsLength: props.rows.length, columnsLength: props.columns.length })
+  
   // 参数校验
   if (rowIndex < 0 || rowIndex >= props.rows.length) {
+    console.log('[TableCross] selectCell 失败: 行号无效', { rowIndex, rowsLength: props.rows.length })
     return [-1, `行号${rowIndex}无效`]
   }
   
   if (columnIndex < 0 || columnIndex >= props.columns.length) {
+    console.log('[TableCross] selectCell 失败: 列号无效', { columnIndex, columnsLength: props.columns.length })
     return [-1, `列号${columnIndex}无效`]
   }
   
@@ -1256,6 +1261,7 @@ const selectCell = (rowIndex: number, columnIndex: number): [number, string] => 
   
   // 退出当前编辑状态
   if (editingCell.value) {
+    console.log('[TableCross] selectCell: 退出编辑状态')
     endEdit()
   }
   
@@ -1269,27 +1275,36 @@ const selectCell = (rowIndex: number, columnIndex: number): [number, string] => 
   currentColumnIndex.value = columnIndex
   emit('update:currentRowIndex', rowIndex)
   emit('update:currentColumnIndex', columnIndex)
+  console.log('[TableCross] selectCell: 更新状态', { currentRowIndex: currentRowIndex.value, currentColumnIndex: currentColumnIndex.value })
   
   // 等待DOM更新后直接操作DOM添加选中类（参考TableGrid的实现）
   nextTick(() => {
     nextTick(() => {
       const tableEl = tableRef.value?.$el as HTMLElement
       if (!tableEl) {
+        console.log('[TableCross] selectCell: 表格元素不存在')
         return
       }
       
       // 注意：columnIndex + 2 是因为第1列是名称列，所以数据列从第2列开始
       const selector = `.el-table__body tbody tr:nth-child(${rowIndex + 1}) .el-table__cell:nth-child(${columnIndex + 2})`
+      console.log('[TableCross] selectCell: 查找单元格', { selector, rowIndex, columnIndex })
       const cellElement = tableEl.querySelector(selector) as HTMLElement
       if (cellElement) {
         // 直接操作DOM添加selected-cell类（参考TableGrid的实现）
         cellElement.classList.add('selected-cell')
+        console.log('[TableCross] selectCell: 添加 selected-cell 类成功')
         
         // 确保单元格获得焦点，这样键盘事件才能正确触发
         const focusElement = cellElement.querySelector('.table-cross-cell') as HTMLElement
         if (focusElement) {
           focusElement.focus()
+          console.log('[TableCross] selectCell: 单元格获得焦点')
+        } else {
+          console.log('[TableCross] selectCell: 未找到 .table-cross-cell 元素')
         }
+      } else {
+        console.log('[TableCross] selectCell: 未找到单元格元素', { selector })
       }
     })
   })
@@ -1481,6 +1496,14 @@ const calculateTargetCell = (
     | { rowIndex: number; columnIndex: number }
     | { direction: 'up' | 'down' | 'left' | 'right' | 'tab' | 'enter'; fromRowIndex?: number; fromColumnIndex?: number }
 ): { rowIndex: number; columnIndex: number } | null => {
+  console.log('[TableCross] calculateTargetCell 调用:', {
+    target,
+    currentRowIndex: currentRowIndex.value,
+    currentColumnIndex: currentColumnIndex.value,
+    rowsLength: props.rows.length,
+    columnsLength: props.columns.length
+  })
+  
   let targetRowIndex: number
   let targetColumnIndex: number
   
@@ -1489,45 +1512,55 @@ const calculateTargetCell = (
     // 精确单元格
     targetRowIndex = target.rowIndex
     targetColumnIndex = target.columnIndex
+    console.log('[TableCross] 精确单元格模式:', { targetRowIndex, targetColumnIndex })
   } else {
     // 相对位置
     const direction = target.direction
     const fromRowIndex = target.fromRowIndex ?? currentRowIndex.value ?? 0 // 默认从第0行开始（第一行数据单元）
     const fromColumnIndex = target.fromColumnIndex ?? currentColumnIndex.value ?? 0 // 默认从第0列开始（第一列数据单元）
     
+    console.log('[TableCross] 相对位置模式:', {
+      direction,
+      fromRowIndex,
+      fromColumnIndex,
+      rowsLength: props.rows.length,
+      columnsLength: props.columns.length
+    })
+    
     // 确保起始位置在有效范围内
     if (fromRowIndex < 0 || fromColumnIndex < 0) {
       // 如果当前不在数据单元格范围内，从第一个数据单元格开始（rowIndex=0, columnIndex=0）
       targetRowIndex = 0
       targetColumnIndex = 0
+      console.log('[TableCross] 起始位置无效，重置为 (0, 0)')
     } else {
       let nextRowIndex = fromRowIndex
       let nextColumnIndex = fromColumnIndex
       
       switch (direction) {
         case 'left':
-          // 向左：如果左边有数据单元格，则移动到左边，否则移动到上一行的最后一个数据单元格
+          // 向左：如果左边有数据单元格，则移动到左边，否则忽略（不跳转到上一行）
           if (nextColumnIndex > 0) {
             nextColumnIndex = fromColumnIndex - 1
-          } else if (nextRowIndex > 0) {
-            nextRowIndex = fromRowIndex - 1
-            nextColumnIndex = props.columns.length - 1
+            console.log('[TableCross] 向左: 同一行内左移', { nextRowIndex, nextColumnIndex })
           } else {
-            return null // 已经是第一个数据单元格（rowIndex=0, columnIndex=0）
+            // 已经是第一列，忽略继续向左
+            console.log('[TableCross] 向左: 已经是第一列，返回 null')
+            return null
           }
           break
           
         case 'right':
         case 'tab':
         case 'enter':
-          // 向右：如果右边有数据单元格，则移动到右边，否则移动到下一行的第一个数据单元格
+          // 向右：如果右边有数据单元格，则移动到右边，否则忽略（不跳转到下一行）
           if (nextColumnIndex < props.columns.length - 1) {
             nextColumnIndex = fromColumnIndex + 1
-          } else if (nextRowIndex < props.rows.length - 1) {
-            nextRowIndex = fromRowIndex + 1
-            nextColumnIndex = 0 // 从第0列开始（第一列数据单元）
+            console.log('[TableCross] 向右: 同一行内右移', { nextRowIndex, nextColumnIndex })
           } else {
-            return null // 已经是最后一个数据单元格
+            // 已经是最后一列，忽略继续向右
+            console.log('[TableCross] 向右: 已经是最后一列，返回 null')
+            return null
           }
           break
           
@@ -1535,8 +1568,10 @@ const calculateTargetCell = (
           // 向上：移动到上一行同列的数据单元格（可以移动到第一行数据单元rowIndex=0）
           if (nextRowIndex > 0) {
             nextRowIndex = fromRowIndex - 1
+            console.log('[TableCross] 向上: 移动到上一行同列', { nextRowIndex, nextColumnIndex })
           } else {
             // 如果已经在第一行数据单元，不能再向上
+            console.log('[TableCross] 向上: 已经在第一行，返回 null')
             return null
           }
           break
@@ -1545,7 +1580,9 @@ const calculateTargetCell = (
           // 向下：移动到下一行同列的数据单元格
           if (nextRowIndex < props.rows.length - 1) {
             nextRowIndex = fromRowIndex + 1
+            console.log('[TableCross] 向下: 移动到下一行同列', { nextRowIndex, nextColumnIndex })
           } else {
+            console.log('[TableCross] 向下: 已经是最后一行，返回 null')
             return null // 已经是最后一行数据单元格
           }
           break
@@ -1556,22 +1593,35 @@ const calculateTargetCell = (
     }
   }
   
+  console.log('[TableCross] 计算后的目标位置:', { targetRowIndex, targetColumnIndex })
+  
   // 校验目标单元格是否合法
   // 注意：rowIndex 是 props.rows 的索引，rowIndex=0 对应第一行数据单元（标题行在表头，不在 props.rows 中）
   // columnIndex 是 props.columns 的索引，columnIndex=0 对应第一列数据单元（名称列不在 props.columns 中）
   // 所以 rowIndex=0 和 columnIndex=0 都是允许的
   if (targetRowIndex < 0 || targetRowIndex >= props.rows.length) {
+    console.log('[TableCross] 目标行索引无效:', { targetRowIndex, rowsLength: props.rows.length })
     return null
   }
   
   if (targetColumnIndex < 0 || targetColumnIndex >= props.columns.length) {
+    console.log('[TableCross] 目标列索引无效:', { targetColumnIndex, columnsLength: props.columns.length })
     return null
   }
   
-  return {
+  // 确保目标单元格不是汇总行或操作行（虽然 props.rows 中不包含这些行，但为了安全还是检查一下）
+  const targetRow = props.rows[targetRowIndex]
+  if (targetRow && (targetRow.__row_type__ === 'sum' || targetRow.__row_type__ === 'action')) {
+    console.log('[TableCross] 目标是汇总行或操作行，返回 null:', { targetRow })
+    return null
+  }
+  
+  const result = {
     rowIndex: targetRowIndex,
     columnIndex: targetColumnIndex
   }
+  console.log('[TableCross] calculateTargetCell 返回有效结果:', result)
+  return result
 }
 
 /**
@@ -1586,8 +1636,17 @@ const navigateToCell = (
 ): [number, string] => {
   const { validateCurrent = true } = options
   
+  console.log('[TableCross] navigateToCell 调用:', {
+    target,
+    options,
+    editingCell: editingCell.value,
+    currentRowIndex: currentRowIndex.value,
+    currentColumnIndex: currentColumnIndex.value
+  })
+  
   // 处理编辑状态
   if (editingCell.value) {
+    console.log('[TableCross] 当前正在编辑，退出编辑模式')
     if (validateCurrent) {
       // 校验当前编辑的单元格值（仅对NumberInput类型）
       const { rowIndex, columnIndex } = editingCell.value
@@ -1599,6 +1658,7 @@ const navigateToCell = (
       if (componentType === 'NumberInput') {
         const value = getCellValue(rowIndex, columnIndex)
         if (value !== null && typeof value === 'number' && value <= 0) {
+          console.log('[TableCross] 校验失败: 单元格值必须大于0')
           return [-1, '单元格值必须大于0']
         }
       }
@@ -1608,20 +1668,24 @@ const navigateToCell = (
   
   // 计算目标单元格位置
   const targetCell = calculateTargetCell(target)
+  console.log('[TableCross] calculateTargetCell 返回:', targetCell)
   
-  // 如果目标单元格不合法，返回错误
+  // 如果目标单元格不合法（到达边缘），忽略跳转，直接返回成功
   if (!targetCell) {
-    return [-1, '目标单元格无效']
+    console.log('[TableCross] 目标单元格无效（到达边缘），忽略跳转')
+    return [1, '就绪']
   }
   
   const { rowIndex: targetRowIndex, columnIndex: targetColumnIndex } = targetCell
+  console.log('[TableCross] 准备选中目标单元格:', { targetRowIndex, targetColumnIndex })
   
   // 取消所有行选中和列选中
   deselectRow()
   deselectColumn()
   
   // 选中目标单元格
-  selectCell(targetRowIndex, targetColumnIndex)
+  const [selectCode, selectMsg] = selectCell(targetRowIndex, targetColumnIndex)
+  console.log('[TableCross] selectCell 返回:', { selectCode, selectMsg })
   
   return [1, '就绪']
 }
@@ -1885,26 +1949,64 @@ const handleCellDblclick = (row: any, column: any) => {
  * 处理单元格键盘事件（非编辑模式）
  */
 const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
-  const rowIndex = props.rows.indexOf(row)
-  const columnProperty = column.property || column.field
+  // 从 tableData 中查找行索引（因为传入的 row 是 tableData 中的对象）
+  // 使用行的 id 来查找（更可靠）
+  const rowId = row.id
+  let tableRowIndex = tableData.value.findIndex(r => r === row)
   
-  // 名称列不处理键盘事件
-  if (columnProperty === 'name' || columnProperty === '__name__') {
+  // 如果引用比较失败，使用 id 比较
+  if (tableRowIndex < 0 && rowId) {
+    tableRowIndex = tableData.value.findIndex(r => r.id === rowId)
+  }
+  
+  // tableData 的结构是：props.rows + 汇总行 + 操作行
+  // 所以如果 tableRowIndex >= props.rows.length，说明是汇总行或操作行
+  if (tableRowIndex < 0 || tableRowIndex >= props.rows.length) {
+    console.log('[TableCross] handleCellKeydown: 行索引无效或超出范围', {
+      tableRowIndex,
+      rowsLength: props.rows.length,
+      row: row ? { id: row.id, name: row.name, __row_type__: row.__row_type__ } : null
+    })
     return
   }
   
-  if (rowIndex === -1) {
+  // tableRowIndex 就是数据行的索引（因为汇总行和操作行在 tableData 的后面）
+  const rowIndex = tableRowIndex
+  const columnProperty = column.property || column.field
+  
+  console.log('[TableCross] handleCellKeydown 调用:', {
+    key: event.key,
+    rowIndex,
+    tableRowIndex,
+    columnProperty,
+    row: row ? { id: row.id, name: row.name, __row_type__: row.__row_type__ } : null,
+    column: column ? { property: column.property, field: column.field, id: column.id } : null
+  })
+  
+  // 名称列不处理键盘事件
+  if (columnProperty === 'name' || columnProperty === '__name__') {
+    console.log('[TableCross] handleCellKeydown: 名称列，忽略')
+    return
+  }
+  
+  // 检查是否是汇总行或操作行（确保只对数据单元格有效）
+  if (row && (row.__row_type__ === 'sum' || row.__row_type__ === 'action')) {
+    console.log('[TableCross] handleCellKeydown: 汇总行或操作行，忽略')
     return
   }
   
   // 统一转换为字符串比较（因为模板中使用 String(column.id) 作为 prop）
   const columnIndex = props.columns.findIndex(col => String(col.id) === String(columnProperty))
   if (columnIndex === -1) {
+    console.log('[TableCross] handleCellKeydown: 列索引无效，忽略', { columnProperty, columns: props.columns.map(c => ({ id: c.id, name: c.name })) })
     return
   }
   
+  console.log('[TableCross] handleCellKeydown: 单元格信息', { rowIndex, columnIndex })
+  
   // 如果已经在编辑状态，不处理（让输入框自己处理）
   if (isEditing(rowIndex, columnIndex)) {
+    console.log('[TableCross] handleCellKeydown: 正在编辑，忽略')
     return
   }
   
@@ -2024,7 +2126,7 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
     return
   }
   
-  // 方向键导航（只在有单元格被选中时处理）
+  // 方向键导航
   if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key)) {
     event.preventDefault()
     event.stopPropagation()
@@ -2038,16 +2140,25 @@ const handleCellKeydown = (event: KeyboardEvent, row: any, column: any) => {
     
     const direction = directionMap[key]
     
-    // 使用当前选中的单元格位置（如果有），否则使用当前单元格位置
-    // 注意：rowIndex=0 对应第一行数据单元，columnIndex=0 对应第一列数据单元，都可以导航
-    const fromRowIndex = currentRowIndex.value !== null ? currentRowIndex.value : rowIndex
-    const fromColumnIndex = currentColumnIndex.value !== null ? currentColumnIndex.value : columnIndex
+    console.log('[TableCross] 方向键按下:', {
+      key,
+      direction,
+      rowIndex,
+      columnIndex,
+      columnProperty,
+      currentRowIndex: currentRowIndex.value,
+      currentColumnIndex: currentColumnIndex.value,
+      rowsLength: props.rows.length,
+      columnsLength: props.columns.length
+    })
     
-    // 导航到目标单元格（包括第一行和第一列的数据单元）
-    navigateToCell(
-      { direction, fromRowIndex, fromColumnIndex },
+    // 直接使用事件参数中的 rowIndex 和 columnIndex（参考 TableGrid 的实现）
+    const [code, message] = navigateToCell(
+      { direction, fromRowIndex: rowIndex, fromColumnIndex: columnIndex },
       { validateCurrent: false }
     )
+    
+    console.log('[TableCross] navigateToCell 返回:', { code, message })
     return
   }
 }
@@ -2063,6 +2174,11 @@ const getSelectedCellInfo = () => {
   const rowElement = selectedCell.closest('tr')
   if (!rowElement) return null
   
+  // 检查是否是汇总行或操作行（通过类名判断）
+  if (rowElement.classList.contains('sum-row-type') || rowElement.classList.contains('action-row-type')) {
+    return null
+  }
+  
   const tbody = rowElement.parentElement
   if (!tbody) return null
   
@@ -2070,12 +2186,24 @@ const getSelectedCellInfo = () => {
   const rowIndex = rows.indexOf(rowElement)
   if (rowIndex === -1 || rowIndex >= props.rows.length) return null
   
+  // 检查是否是汇总行或操作行（通过数据判断）
+  const tableRow = tableData.value[rowIndex]
+  if (tableRow && (tableRow.__row_type__ === 'sum' || tableRow.__row_type__ === 'action')) {
+    return null
+  }
+  
   const cellIndex = Array.from(rowElement.children).indexOf(selectedCell)
   if (cellIndex === -1) return null
   
   // 跳过名称列
   const columnIndex = cellIndex - 1
   if (columnIndex < 0 || columnIndex >= props.columns.length) return null
+  
+  // 检查是否是汇总列或操作列（通过单元格内容判断）
+  const cellContent = selectedCell.querySelector('.sum-column-cell, .action-cell, .fill-column-cell')
+  if (cellContent) {
+    return null
+  }
   
   const column = props.columns[columnIndex]
   return { rowIndex, columnIndex, column }
@@ -2188,6 +2316,9 @@ const handlePaste = (event: ClipboardEvent) => {
   
   // 检查是否可编辑
   if (!isCellEditable(rowIndex, columnIndex, configIndex)) {
+    // 显示提示信息并阻止粘贴
+    emit('message', 'warn', '目标单元格不可编辑')
+    event.preventDefault()
     return
   }
   
@@ -2468,15 +2599,15 @@ defineExpose({
 
 <template>
   <ElTable
-    ref="tableRef"
-    :data="tableData"
-    border
-    class="table-cross"
-    :row-class-name="getRowClassName"
-    @cell-click="handleCellClick"
-    @cell-dblclick="handleCellDblclick"
-    @header-click="handleHeaderClick"
-  >
+      ref="tableRef"
+      :data="tableData"
+      border
+      class="table-cross"
+      :row-class-name="getRowClassName"
+      @cell-click="handleCellClick"
+      @cell-dblclick="handleCellDblclick"
+      @header-click="handleHeaderClick"
+    >
     <!-- 名称列 -->
     <ElTableColumn
       prop="__name__"
