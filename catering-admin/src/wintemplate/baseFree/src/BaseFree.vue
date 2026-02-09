@@ -1,6 +1,6 @@
 <script setup lang="tsx">
 import { computed, ref, watch, nextTick } from 'vue'
-import { ElScrollbar, ElTabs, ElTabPane, ElMessage, ElMessageBox } from 'element-plus'
+import { ElTabs, ElTabPane, ElMessage, ElMessageBox } from 'element-plus'
 import { WinDrawer, type ToolbarButton } from '@/wintemplate/WinDrawer'
 import { Form, FormSchema } from '@/components/Form'
 import { useForm } from '@/hooks/web/useForm'
