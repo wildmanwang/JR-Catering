@@ -106,6 +106,8 @@ export interface TableCrossProps {
    * @returns 是否可编辑
    */
   isCellEditable?: (rowIndex: number, columnIndex: number, dataConfigIndex: number) => boolean
+  /** 统一字体大小（默认12px） */
+  fontSize?: number
 }
 
 /**
@@ -139,7 +141,8 @@ const props = withDefaults(defineProps<TableCrossProps>(), {
   currentDataConfigIndex: 0,
   allowDeleteRow: false,
   allowDeleteColumn: false,
-  allowDirectEdit: false
+  allowDirectEdit: false,
+  fontSize: 12
 })
 
 const emit = defineEmits<TableCrossEmits>()
@@ -2604,6 +2607,7 @@ defineExpose({
       border
       class="table-cross"
       :row-class-name="getRowClassName"
+      :style="{ '--table-font-size': fontSize + 'px' }"
       @cell-click="handleCellClick"
       @cell-dblclick="handleCellDblclick"
       @header-click="handleHeaderClick"
@@ -3272,7 +3276,7 @@ defineExpose({
     .fill-container();
     display: block !important;
   }
-  
+
   :deep(.el-input__wrapper),
   :deep(.el-input-number__wrapper) {
     .fill-container();
@@ -3280,12 +3284,12 @@ defineExpose({
     padding: 0 4px !important;
     display: flex !important;
     align-items: center !important;
-    
+
     &:hover, &:focus, &:focus-within, &.is-focus {
       .remove-border-bg();
     }
   }
-  
+
   :deep(.el-input__inner) {
     .fill-container();
     .remove-border-bg();
@@ -3294,12 +3298,12 @@ defineExpose({
     display: flex !important;
     align-items: center !important;
     text-align: center !important;
-    
+
     &:hover, &:focus {
       .remove-border-bg();
     }
   }
-  
+
   :deep(.el-input-number__decrease),
   :deep(.el-input-number__increase) {
     display: none !important;
@@ -3314,11 +3318,11 @@ defineExpose({
     justify-content: center !important;
     width: 100% !important;
     height: 100% !important;
-    
+
     .el-checkbox__input {
       .remove-border-bg();
     }
-    
+
     .el-checkbox__label {
       padding-left: 0 !important;
     }
@@ -3387,7 +3391,7 @@ defineExpose({
   // 汇总行样式
   tr.sum-row-type {
     background-color: #fafafa !important;
-    font-size: 14px;
+    font-size: var(--table-font-size);
     
     .el-table__cell {
       background-color: #fafafa !important;
@@ -3414,7 +3418,7 @@ defineExpose({
   tr.action-row-type {
     background-color: #fafafa !important;
     border-top: 1px solid #ebeef5;
-    font-size: 14px;
+    font-size: var(--table-font-size);
     
     .el-table__cell {
       background-color: #fafafa !important;
@@ -3455,7 +3459,7 @@ defineExpose({
   justify-content: center;
   padding: 4px 8px;
   text-align: center;
-  font-size: 14px;
+  font-size: var(--table-font-size);
   cursor: default !important; // 汇总列单元格使用默认箭头指针
   user-select: none; // 行小计单元格文字不可选中
   -webkit-user-select: none;
@@ -3477,6 +3481,9 @@ defineExpose({
 <style lang="less">
 // ==================== 全局样式 ====================
 .table-cross {
+  // 使用 CSS 变量继承字体大小（通过行内样式 --table-font-size 设置）
+  font-size: var(--table-font-size);
+
   // 设置所有单元格的默认背景色为浅灰色
   .el-table__cell {
     background-color: #fafafa !important;
