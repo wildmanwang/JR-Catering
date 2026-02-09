@@ -5,6 +5,7 @@ import { WinDrawer, type ToolbarButton } from '@/wintemplate/WinDrawer'
 import { Form, FormSchema } from '@/components/Form'
 import { useForm } from '@/hooks/web/useForm'
 import { ImagePlus } from '@/components/ImagePlus'
+import { useAuthStore } from '@/store/modules/auth'
 import { processImageFields, ImageQuerySuffix, getImageUrlWithSuffix } from '@/utils/imageList'
 import { formatDataItem } from '@/utils/dsOptions'
 import { PromptInfo } from '@/components/PromptInfo'
@@ -165,7 +166,8 @@ const emit = defineEmits<{
 }>()
 
 // ==================== Store ====================
-// ImagePlus 组件内部会处理 token，这里不需要单独获取 token
+const authStore = useAuthStore()
+const token = computed(() => authStore.getToken || '')
 
 // ==================== 选项数据管理 ====================
 /** 存储各字段的选项数据（字段名 -> 选项数组） */
@@ -625,6 +627,7 @@ const convertFormSchema = (schema: FreeFormField[]): FormSchema[] => {
                   disabled={isViewMode.value}
                   limit={10}
                   size={field.size || 'normal'}
+                  token={token.value}
                 />
               )
             }

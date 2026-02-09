@@ -2,7 +2,6 @@
 import { computed, watch, toRefs } from 'vue'
 import { ElUpload, UploadProps, ElIcon, ElImage, ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
-import { useAuthStore } from '@/store/modules/auth'
 import {
   processImageList,
   removeSortPrefix,
@@ -25,6 +24,8 @@ interface Props {
   data?: Record<string, any>
   /** 上传时的请求头 */
   headers?: Record<string, string>
+  /** 上传认证 token */
+  token?: string
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -34,7 +35,8 @@ const props = withDefaults(defineProps<Props>(), {
   defaultImage: '/src/assets/imgs/no_image.png',
   action: '/api/vadmin/system/upload/image/to/local',
   data: () => ({ path: 'system' }),
-  headers: () => ({})
+  headers: () => ({}),
+  token: ''
 })
 
 // ==================== Emits 定义 ====================
@@ -42,9 +44,9 @@ const emit = defineEmits<{
   'update:modelValue': [value: string | null]
 }>()
 
-// ==================== Store ====================
-const authStore = useAuthStore()
-const token = computed(() => authStore.getToken)
+// ==================== 计算属性 ====================
+/** 上传 token */
+const token = computed(() => props.token || '')
 
 // 解构 props 以便在模板中直接使用（使用 toRefs 保持响应性）
 const { disabled, action, data, size, defaultImage } = toRefs(props)

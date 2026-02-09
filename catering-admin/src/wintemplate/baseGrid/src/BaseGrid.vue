@@ -10,6 +10,7 @@ import { PromptInfo } from '@/components/PromptInfo'
 import { QueryBar, type QueryCondition } from '@/components/QueryBar'
 import { WinSheet, type StatusStoreItem } from '@/wintemplate/WinSheet'
 import { ImageSingle } from '@/components/ImageSingle'
+import { useAuthStore } from '@/store/modules/auth'
 import { BaseFree, type FreeFormField, type FreeTab } from '@/wintemplate/BaseFree'
 import { formatDataItem } from '@/utils/dsOptions'
 
@@ -265,6 +266,10 @@ const props = withDefaults(defineProps<Props>(), {
   enableEdit: true,
   enableDelete: true
 })
+
+// ==================== Token ====================
+const authStore = useAuthStore()
+const token = computed(() => authStore.getToken || '')
 
 // ==================== 页面状态管理 ====================
 /** 页面加载状态，用于避免闪屏 */
@@ -1710,6 +1715,7 @@ const convertColumns = (columns: GridColumn[]): TableColumn[] => {
                     disabled={true}
                     size={imageSize}
                     defaultImage={DEFAULT_IMAGE}
+                    token={token}
                   />
                 </div>
               )

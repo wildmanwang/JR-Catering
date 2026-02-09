@@ -1,10 +1,11 @@
 <script setup lang="tsx">
-import { PropType, reactive, watch, ref } from 'vue'
+import { PropType, reactive, watch, ref, computed } from 'vue'
 import { Form, FormSchema } from '@/components/Form'
 import { useValidator } from '@/hooks/web/useValidator'
 import { useForm } from '@/hooks/web/useForm'
 import { getKitchenListApi } from '@/api/vadmin/product/kitchen'
 import { ImagePlus } from '@/components/ImagePlus'
+import { useAuthStore } from '@/store/modules/auth'
 
 const { required } = useValidator()
 
@@ -25,6 +26,10 @@ const props = defineProps({
     default: () => []
   }
 })
+
+// ==================== Token ====================
+const authStore = useAuthStore()
+const token = computed(() => authStore.getToken || '')
 
 const formSchema = reactive<FormSchema[]>([
   {
@@ -181,6 +186,7 @@ const formSchema = reactive<FormSchema[]>([
                 data.dish_images = val
               }}
               limit={10}
+              token={token.value}
             />
           )
         }

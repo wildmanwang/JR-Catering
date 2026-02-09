@@ -2,7 +2,6 @@
 import { computed, ref, toRefs, watch, nextTick } from 'vue'
 import { ElUpload, UploadProps, ElIcon, ElImage, ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
-import { useAuthStore } from '@/store/modules/auth'
 import {
   processImageList,
   normalizeImageUrl,
@@ -29,6 +28,8 @@ interface Props {
   headers?: Record<string, string>
   /** 图片尺寸：normal（100px*100px，默认）或 small（60px*60px） */
   size?: 'normal' | 'small'
+  /** 上传认证 token */
+  token?: string
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -38,7 +39,8 @@ const props = withDefaults(defineProps<Props>(), {
   action: '/api/vadmin/system/upload/image/to/local',
   data: () => ({ path: 'system' }),
   headers: () => ({}),
-  size: 'normal'
+  size: 'normal',
+  token: ''
 })
 
 // ==================== Emits 定义 ====================
@@ -46,11 +48,9 @@ const emit = defineEmits<{
   'update:modelValue': [value: any[]]
 }>()
 
-// ==================== Store ====================
-const authStore = useAuthStore()
-const token = computed(() => authStore.getToken)
-
 // ==================== 计算属性 ====================
+/** 上传 token */
+const token = computed(() => props.token || '')
 /** 当前图片数据 */
 const imageData = computed({
   get: () => props.modelValue || [],

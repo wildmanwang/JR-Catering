@@ -1,5 +1,5 @@
 <script setup lang="tsx">
-import { reactive, ref, unref, toRaw, onMounted, watch, onBeforeUnmount, nextTick } from 'vue'
+import { reactive, ref, unref, toRaw, onMounted, watch, onBeforeUnmount, nextTick, computed } from 'vue'
 import {
   getDishListApi,
   addDishListApi,
@@ -21,6 +21,7 @@ import Response from './components/Response.vue'
 import { BaseButton } from '@/components/Button'
 import { useRouter } from 'vue-router'
 import { ImagePlus } from '@/components/ImagePlus'
+import { useAuthStore } from '@/store/modules/auth'
 import { WinDrawer } from '@/wintemplate/WinDrawer'
 
 defineOptions({
@@ -67,6 +68,10 @@ let saveStateTimer: ReturnType<typeof setTimeout> | null = null
 
 // ImagePlus 组件实例（用于调用规范化方法）
 const imagePlusHelperRef = ref<InstanceType<typeof ImagePlus>>()
+
+// ==================== Token ====================
+const authStore = useAuthStore()
+const token = computed(() => authStore.getToken || '')
 
 // ==================== 测试抽屉弹窗 ====================
 /** 测试抽屉显示状态 */
@@ -931,7 +936,7 @@ fetchKitchens()
 
   <!-- 隐藏的 ImagePlus 组件实例，用于调用规范化方法 -->
   <div style="display: none">
-    <ImagePlus ref="imagePlusHelperRef" :model-value="[]" />
+    <ImagePlus ref="imagePlusHelperRef" :model-value="[]" :token="token" />
   </div>
 
   <!-- 测试抽屉弹窗 -->

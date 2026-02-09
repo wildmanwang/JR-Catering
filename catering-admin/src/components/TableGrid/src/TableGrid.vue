@@ -19,6 +19,7 @@ import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { ElTable, ElTableColumn, ElInput, ElInputNumber, ElSelect, ElOption, ElIcon } from 'element-plus'
 import { Delete } from '@element-plus/icons-vue'
 import { ImagePlus } from '@/components/ImagePlus'
+import { useAuthStore } from '@/store/modules/auth'
 
 /**
  * 列配置接口
@@ -99,6 +100,10 @@ const emit = defineEmits<TableGridEmits>()
 
 // 表格引用
 const tableRef = ref<InstanceType<typeof ElTable>>()
+
+// ==================== Token ====================
+const authStore = useAuthStore()
+const token = computed(() => authStore.getToken || '')
 
 // ==================== 编辑状态管理 ====================
 /** 当前正在编辑的单元格 */
@@ -2545,6 +2550,7 @@ defineExpose({
             :disabled="false"
             :limit="10"
             :size="column.size || 'small'"
+            :token="token"
           />
         </div>
         
